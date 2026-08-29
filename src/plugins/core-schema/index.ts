@@ -3,9 +3,11 @@ import type { SessionSummaryRow, MessageRow, SearchHit } from '../../shared/type
 import { CORE_MIGRATIONS } from './migrations'
 import { createIngestService, type IngestService } from './ingest'
 import { createSearchService, type SearchService } from './search'
+import { createMcpTools } from './mcp-tools'
 
 export interface MemoriesService {
   upsertMemory(input: { kind: string; content: string; source: string }): { id: number; changed: boolean }
+  addMemory(input: { kind: string; content: string; source: string }): { id: number }
 }
 
 const plugin: MemorySQLPlugin = {
@@ -30,6 +32,17 @@ const plugin: MemorySQLPlugin = {
     ctx.services.provide<IngestService>('ingest', ingest)
     ctx.services.provide<SearchService>('search', search)
     ctx.services.provide<MemoriesService>('memories', ingest)
+
+    // MCP tools served by the mcp-server plugin via the host registry
+    const mcpTools = createMcpTools({
+      sqlite: ctx.db.sqlite,
+      search,
+      memories: ingest
+    })
+    for (const tool of mcpTools) {
+      ctx.mcp.registerTool(tool)
+    }
+    ctx.log.info(`registered ${mcpTools.length} mcp tools`)
 
     // ----- renderer-facing IPC -------------------------------------------
     ctx.ipc.handle('sessions:list', (payload) => {

@@ -28,6 +28,8 @@ export default function App() {
   const [overview, setOverview] = useState<Overview | null>(null)
   const [statuses, setStatuses] = useState<Record<string, string>>({})
   const [scanning, setScanning] = useState(false)
+  const [mcp, setMcp] = useState<{ port: number; running: boolean; toolCount: number } | null>(null)
+  const [kbMsg, setKbMsg] = useState('')
 
   const refresh = useCallback(async () => {
     setSessions(await api.listSessions(filter))
@@ -51,6 +53,10 @@ export default function App() {
     })
     return api.onSessionsChanged(() => void refresh())
   }, [refresh])
+
+  useEffect(() => {
+    void api.mcpStatus().then(setMcp).catch(() => setMcp(null))
+  }, [])
 
   const openSession = useCallback(async (id: number) => {
     setSelected(await api.getSession(id))
@@ -152,6 +158,36 @@ export default function App() {
           <div className="side-section">
             <div className="side-title">知识库</div>
             <div className="kb-stat">记忆条目: {overview?.memories ?? 0}</div>
+            <div className="kb-actions">
+              <button
+                className="btn btn-small"
+                onClick={() => {
+                  void api.exportArchive().then(
+                    (r) => setKbMsg(`已导出 ${(r.bytes / 1024 / 1024).toFixed(1)} MB`),
+                    (e) => setKbMsg(`导出失败: ${String(e)}`)
+                  )
+                }}
+              >
+                导出备份
+              </button>
+              <button
+                className="btn btn-small"
+                onClick={() => {
+                  void api.importArchive().then(
+                    (r) => {
+                      if (!r.relaunched) setKbMsg('导入已取消')
+                    },
+                    (e) => setKbMsg(`导入失败: ${String(e)}`)
+                  )
+                }}
+              >
+                导入备份
+              </button>
+            </div>
+            {kbMsg && <div className="kb-stat kb-msg">{kbMsg}</div>}
+            <div className="kb-stat">
+              MCP: {mcp ? (mcp.running ? `127.0.0.1:${mcp.port} · ${mcp.toolCount} 工具` : '未运行') : '—'}
+            </div>
           </div>
         </aside>
 
@@ -222,6 +258,16 @@ export default function App() {
                     {selected.session.project && <span>项目: {selected.session.project}</span>}
                     <span>开始: {fmtTime(selected.session.started_at)}</span>
                     <span>消息: {selected.messages.length}</span>
+                    <button
+                      className="btn btn-small"
+                      onClick={() =>
+                        void api.exportSession(selected.session.id).then((r) => {
+                          if (r.saved) setKbMsg(`已导出(脱敏 ${r.redactions ?? 0} 处): ${r.filePath}`)
+                        })
+                      }
+                    >
+                      导出 MD(脱敏)
+                    </button>
                   </div>
                   {selected.session.summary && (
                     <pre className="detail-summary">{selected.session.summary}</pre>

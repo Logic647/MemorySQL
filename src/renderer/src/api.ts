@@ -52,5 +52,25 @@ export const api = {
     window.memorysql.invoke(`${pluginId}:status`) as Promise<CaptureStatus>,
   scanNow: (pluginId: string): Promise<CaptureStatus> =>
     window.memorysql.invoke(`${pluginId}:scanNow`) as Promise<CaptureStatus>,
-  onSessionsChanged: (cb: () => void): (() => void) => window.memorysql.on('push:sessions:changed', cb)
+  onSessionsChanged: (cb: () => void): (() => void) => window.memorysql.on('push:sessions:changed', cb),
+  // privacy-export
+  exportSession: (sessionId: number): Promise<{ saved: boolean; filePath?: string; redactions?: number }> =>
+    window.memorysql.invoke('privacy-export:exportSession', { sessionId }) as Promise<{
+      saved: boolean
+      filePath?: string
+      redactions?: number
+    }>,
+  // sync-archive
+  exportArchive: (): Promise<{ path: string; bytes: number }> =>
+    window.memorysql.invoke('sync-archive:export') as Promise<{ path: string; bytes: number }>,
+  importArchive: (): Promise<{ relaunched: boolean; reason?: string }> =>
+    window.memorysql.invoke('sync-archive:import') as Promise<{ relaunched: boolean; reason?: string }>,
+  // mcp-server
+  mcpStatus: (): Promise<{ enabled: boolean; port: number; running: boolean; toolCount: number }> =>
+    window.memorysql.invoke('mcp-server:status') as Promise<{
+      enabled: boolean
+      port: number
+      running: boolean
+      toolCount: number
+    }>
 }

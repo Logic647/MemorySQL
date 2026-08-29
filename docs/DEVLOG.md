@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-08-29 · M2 服务层完成:MCP server + 出口脱敏 + 归档迁移
+
+**mcp-server 插件:**
+- 手写 MCP JSON-RPC 2.0(`src/main/core/mcp-protocol.ts`,纯函数可单测):initialize / tools/list / tools/call / ping,无状态 Streamable HTTP 子集,**只绑 127.0.0.1**,端口默认 8642(设置 `mcp-server:port`)
+- stdio 桥:`scripts/mcp-bridge.mjs`(agent 只支持 stdio 时用,`env MEMORYSQL_MCP_PORT`);Codex 配置示例见脚本头注释
+- 三个工具由 core-schema 注册(经宿主 `ctx.mcp` 注册表,mcp-server 只负责服务):
+  - `memory_get_context(project?)` — **续接包**:画像 + 长期记忆 12 条 + 项目状态 + 最近 5 会话
+  - `memory_search(query, limit)` — trigram 中文全文检索
+  - `memory_write(kind, content)` — 逐条插入(新增 `MemoriesService.addMemory`,与文件型 upsert-by-source 分离)
+- 插件间调用新通道:`ctx.ipc.call(channel, payload)`(privacy-export 复用 core-schema:sessions:get)
+- 工具名规范:MCP 名只允许 `[a-zA-Z0-9_-]`,宿主存 `插件id.名` 作内部 key、对外暴露原始名并查重
+
+**privacy-export 插件(唯一脱敏出口):**
+- `src/main/core/redact.ts`:PEM 私钥/sk-/AKIA/ghp_/xox/JWT/`password=`类/URL user:pass 八类规则,`redactWithCount` 返回命中数
+- IPC `privacy-export:exportSession {sessionId}` → 组装 MD(头部元信息 + 摘要 + 时间线)→ 保存对话框 → 落盘;实测 RustDesk 会话导出正确遮蔽 `password='…'`
+
+**sync-archive 插件(.msqlv 迁移):**
+- 导出:`VACUUM INTO` 一致性快照 + vault 打 zip(manifest.json + memory.db + vault/**);UI 按钮 + headless `--export-archive <path>`
+- 导入:校验(manifest + 空库开包验核心表)→ 暂存 `data/.import-staging` + 标记 `.import-pending.json` → `app.relaunch()` → **下次启动 bootstrap 前换库**(旧库轮转 `.pre-import-<ts>`,staging 清理),实测换库往返成功
+- settings.json 不进归档(机器路径各异,首次启动用默认值)
+
+**UI:**侧栏知识库区新增 导出备份/导入备份 按钮 + MCP 状态行(端口/工具数);会话详情新增「导出 MD(脱敏)」
+
+**验收记录:**typecheck 零错 / vitest 17:17(新增 redact 6 + mcp-protocol 7)/ curl+python 客户端实测 initialize、tools/list、三工具(中文检索、写入回读)/ 无头导出 8.6MB 归档校验通过 / 启动导入换库实测 / 窗口实测新 UI 正常
+**坑:**Git Bash 里 curl -d 发中文会变 GBK 乱码(测试端问题),用 python urllib 保证 UTF-8
+
+**下一步(M3 记忆与同步):**memory-core 画像视图;summarizer-llm(设置页切换 + 配置模板 + 离线降级);记忆分发(反向生成 Hermes MEMORY.md / Codex AGENTS.md);sync-folder(同步文件夹增量双向,行级 LWW + tombstone,字段早已预留)
+
+---
+
 ## 2026-08-29 · UI 重设计(tape-archive)+ 全量代码审查修复
 
 **流程:**按用户要求,UI 动手前调用 frontend-design 技能;代码健康由 general-purpose 审查代理出具报告(P0×0 / P1×5 / P2×9)。

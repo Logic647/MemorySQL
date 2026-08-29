@@ -37,6 +37,7 @@ export interface IngestResult {
 export interface IngestService {
   ingestSessions(sessions: RawSession[]): IngestResult
   upsertMemory(input: { kind: string; content: string; source: string }): { id: number; changed: boolean }
+  addMemory(input: { kind: string; content: string; source: string }): { id: number }
 }
 
 export interface IngestDeps {
@@ -253,6 +254,22 @@ export function createIngestService(deps: IngestDeps): IngestService {
         }).lastInsertRowid
       )
       return { id, changed: true }
+    },
+
+    // agent-written memories are individual facts — insert always, never
+    // overwrite by source (unlike file-backed memories which replace by source)
+    addMemory(input): { id: number } {
+      const MEMORY_CAP = 4000
+      const content =
+        input.content.length > MEMORY_CAP
+          ? `${input.content.slice(0, MEMORY_CAP)}\n…[truncated]`
+          : input.content
+      const id = Number(
+        (memoryIns.run(input.kind, content, input.source, now(), 'local') as {
+          lastInsertRowid: number | bigint
+        }).lastInsertRowid
+      )
+      return { id }
     }
   }
 }

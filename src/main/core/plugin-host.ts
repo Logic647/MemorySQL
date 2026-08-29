@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import chokidar from 'chokidar'
+import type { AppEnv } from './env'
 import type { SettingsStore } from './settings'
 import type { EventBus } from './event-bus'
 import type { Migration } from './db'
@@ -58,6 +59,8 @@ export interface WatchOptions {
 export interface PluginContext {
   readonly id: string
   readonly log: PluginLogger
+  /** self-contained data dir layout (db / vault / settings paths) */
+  readonly env: AppEnv
   /** run this plugin's schema migrations (namespaced by plugin id) */
   readonly db: {
     migrate(migrations: Migration[]): void
@@ -71,10 +74,14 @@ export interface PluginContext {
   /** register a renderer-callable handler; full channel becomes `<id>:<name>` */
   readonly ipc: {
     handle(name: string, handler: IpcHandler): void
+    /** call another plugin's registered channel (plugin-to-plugin) */
+    call(channel: string, payload?: unknown): Promise<unknown>
   }
   /** register an MCP tool (host aggregates; mcp-server plugin serves them) */
   readonly mcp: {
     registerTool(def: McpToolDef): void
+    /** all tools registered so far (across plugins) */
+    list(): McpToolDef[]
   }
   /** filesystem watcher (chokidar wrapper, path-agnostic by design) */
   readonly watcher: {
@@ -118,6 +125,7 @@ export class PluginHost {
   private started = false
 
   constructor(
+    private readonly env: AppEnv,
     private readonly db: { migrate(pluginId: string, migrations: Migration[]): void; sqlite: Database.Database },
     private readonly settings: SettingsStore,
     private readonly events: EventBus
@@ -205,6 +213,7 @@ export class PluginHost {
     const ctx: PluginContext = {
       id,
       log,
+      env: this.env,
       db: {
         migrate: (migrations) => this.db.migrate(id, migrations),
         sqlite: this.db.sqlite
@@ -219,13 +228,27 @@ export class PluginHost {
           const channel = `${id}:${name}`
           if (this.handlers.has(channel)) throw new Error(`IPC channel already registered: ${channel}`)
           this.handlers.set(channel, { pluginId: id, handler })
-        }
+        },
+        call: async (channel, payload) => await this.invoke(channel, payload)
       },
       mcp: {
         registerTool: (def) => {
-          const name = `${id}.${def.name}`
-          this.mcpTools.set(name, { ...def, name, pluginId: id })
-        }
+          // MCP tool names must match ^[a-zA-Z0-9_-]+$ — serve the raw name,
+          // keep the plugin-prefixed key internally for ownership/uniqueness
+          for (const existing of this.mcpTools.values()) {
+            if (existing.name === def.name) {
+              throw new Error(`MCP tool name already registered: ${def.name}`)
+            }
+          }
+          this.mcpTools.set(`${id}.${def.name}`, { ...def, pluginId: id })
+        },
+        list: () =>
+          [...this.mcpTools.values()].map((t) => ({
+            name: t.name,
+            description: t.description,
+            inputSchema: t.inputSchema,
+            handler: t.handler
+          }))
       },
       watcher: {
         watch: (targets, onChange, opts) => {
