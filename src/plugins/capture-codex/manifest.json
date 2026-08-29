@@ -1,0 +1,6 @@
+{
+  "id": "capture-codex",
+  "name": "Capture: Codex CLI",
+  "version": "0.1.0",
+  "requires": ["core-schema"]
+}

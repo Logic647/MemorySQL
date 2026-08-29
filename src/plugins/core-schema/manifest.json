@@ -1,0 +1,7 @@
+{
+  "id": "core-schema",
+  "name": "Core Schema & Ingest",
+  "version": "0.1.0",
+  "requires": ["summarizer-rules"],
+  "provides": ["ingest", "search", "memories"]
+}

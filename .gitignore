@@ -1,0 +1,18 @@
+# dependencies / build output
+node_modules/
+out/
+dist/
+.vite/
+
+# local knowledge base data — memory.db holds PRIVATE agent sessions and
+# vault/ holds personal notes; this is user data, never publish to GitHub
+data/
+
+# editor / agent workspace metadata
+.zcode/
+
+# misc
+*.log
+.DS_Store
+.eslintcache
+*.tsbuildinfo

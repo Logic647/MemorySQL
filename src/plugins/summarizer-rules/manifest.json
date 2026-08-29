@@ -1,0 +1,6 @@
+{
+  "id": "summarizer-rules",
+  "name": "Rules Summarizer",
+  "version": "0.1.0",
+  "capabilities": ["summarizer"]
+}
