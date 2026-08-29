@@ -41,7 +41,7 @@ const plugin: MemorySQLPlugin = {
       return parseZcodeRollout(filePath, text)
     }
 
-    const scan = (): CaptureStatus => {
+    const scan = async (): Promise<CaptureStatus> => {
       try {
         const files = findZcodeRollouts(sourceRoot)
         const ingest = ctx.services.use<IngestService>('ingest')
@@ -53,7 +53,7 @@ const plugin: MemorySQLPlugin = {
             ctx.log.warn(`failed to parse ${f}:`, err)
           }
         }
-        const res = ingest.ingestSessions(sessions)
+        const res = await ingest.ingestSessions(sessions)
         lastStatus = {
           ...lastStatus,
           available: true,
@@ -84,15 +84,17 @@ const plugin: MemorySQLPlugin = {
       ctx.watcher.watch(
         [sourceRoot],
         (changed) => {
-          try {
-            const sessions = parseFile(changed)
-            const res = ctx.services.use<IngestService>('ingest').ingestSessions(sessions)
-            if (res.imported + res.updated > 0) {
-              ctx.log.info(`incremental import from ${path.basename(changed)}`)
+          void (async () => {
+            try {
+              const sessions = parseFile(changed)
+              const res = await ctx.services.use<IngestService>('ingest').ingestSessions(sessions)
+              if (res.imported + res.updated > 0) {
+                ctx.log.info(`incremental import from ${path.basename(changed)}`)
+              }
+            } catch (err) {
+              ctx.log.warn(`incremental parse failed for ${changed}:`, err)
             }
-          } catch (err) {
-            ctx.log.warn(`incremental parse failed for ${changed}:`, err)
-          }
+          })()
         },
         { match: JSONL_RE, debounceMs: 1000 }
       )

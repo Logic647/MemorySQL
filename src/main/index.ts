@@ -7,6 +7,7 @@ import { EventBus } from './core/event-bus'
 import { Db } from './core/db'
 import { PluginHost } from './core/plugin-host'
 import summarizerRules from '../plugins/summarizer-rules'
+import summarizerLlm from '../plugins/summarizer-llm'
 import coreSchema from '../plugins/core-schema'
 import captureCodex from '../plugins/capture-codex'
 import captureZcode from '../plugins/capture-zcode'
@@ -14,9 +15,15 @@ import captureHermes from '../plugins/capture-hermes'
 import mcpServer from '../plugins/mcp-server'
 import privacyExport from '../plugins/privacy-export'
 import syncArchive from '../plugins/sync-archive'
+import memoryCore from '../plugins/memory-core'
+import memoryDispatch from '../plugins/memory-dispatch'
+import syncFolder from '../plugins/sync-folder'
 
 // Order here is only a hint — the host topologically sorts by manifest.requires.
+// summarizer-llm BEFORE rules: the host picks the first *available* provider,
+// so a configured LLM wins and everything else falls back to local rules.
 const BUILTIN_PLUGINS = [
+  summarizerLlm,
   summarizerRules,
   coreSchema,
   captureCodex,
@@ -24,10 +31,18 @@ const BUILTIN_PLUGINS = [
   captureHermes,
   mcpServer,
   privacyExport,
-  syncArchive
+  syncArchive,
+  memoryCore,
+  memoryDispatch,
+  syncFolder
 ]
 
 const HEADLESS_SCAN = process.argv.includes('--scan')
+const SYNC_FOLDER = (() => {
+  const i = process.argv.indexOf('--sync')
+  return i >= 0 ? (process.argv[i + 1] ?? '') : null
+})()
+const DISPATCH = process.argv.includes('--dispatch')
 const EXPORT_ARCHIVE_DEST = (() => {
   const i = process.argv.indexOf('--export-archive')
   return i >= 0 ? (process.argv[i + 1] ?? '') : null
@@ -86,11 +101,13 @@ async function bootstrap(): Promise<{
 async function runHeadlessScan(): Promise<void> {
   const { host, db } = await bootstrap()
   const results: Record<string, unknown> = {}
-  for (const pluginId of ['capture-codex', 'capture-zcode', 'capture-hermes']) {
-    try {
-      results[pluginId] = await host.invoke(`${pluginId}:scanNow`)
-    } catch (err) {
-      results[pluginId] = { error: String(err) }
+  if (HEADLESS_SCAN) {
+    for (const pluginId of ['capture-codex', 'capture-zcode', 'capture-hermes']) {
+      try {
+        results[pluginId] = await host.invoke(`${pluginId}:scanNow`)
+      } catch (err) {
+        results[pluginId] = { error: String(err) }
+      }
     }
   }
   if (EXPORT_ARCHIVE_DEST !== null) {
@@ -98,6 +115,21 @@ async function runHeadlessScan(): Promise<void> {
       results['archive'] = await host.invoke('sync-archive:export', { dest: EXPORT_ARCHIVE_DEST || undefined })
     } catch (err) {
       results['archive'] = { error: String(err) }
+    }
+  }
+  if (SYNC_FOLDER !== null) {
+    try {
+      await host.invoke('sync-folder:configure', { folder: SYNC_FOLDER })
+      results['sync'] = await host.invoke('sync-folder:syncNow')
+    } catch (err) {
+      results['sync'] = { error: String(err) }
+    }
+  }
+  if (DISPATCH) {
+    try {
+      results['dispatch'] = await host.invoke('memory-dispatch:generate')
+    } catch (err) {
+      results['dispatch'] = { error: String(err) }
     }
   }
   try {
@@ -148,7 +180,7 @@ function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
 
 app.whenReady().then(async () => {
   try {
-    if (HEADLESS_SCAN) {
+    if (HEADLESS_SCAN || SYNC_FOLDER !== null || EXPORT_ARCHIVE_DEST !== null || DISPATCH) {
       await runHeadlessScan()
       return
     }

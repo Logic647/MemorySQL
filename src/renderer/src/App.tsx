@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
+import MemoriesView from './MemoriesView'
+import SettingsView from './SettingsView'
 
 const AGENTS = ['all', 'codex', 'zcode', 'hermes'] as const
 type AgentFilter = (typeof AGENTS)[number]
+type View = 'sessions' | 'memories' | 'settings'
+const VIEW_LABEL: Record<View, string> = { sessions: '会话', memories: '记忆', settings: '设置' }
 const CAPTURE_PLUGINS: Array<{ id: string; label: string }> = [
   { id: 'capture-codex', label: 'Codex' },
   { id: 'capture-zcode', label: 'ZCode' },
@@ -30,6 +34,7 @@ export default function App() {
   const [scanning, setScanning] = useState(false)
   const [mcp, setMcp] = useState<{ port: number; running: boolean; toolCount: number } | null>(null)
   const [kbMsg, setKbMsg] = useState('')
+  const [view, setView] = useState<View>('sessions')
 
   const refresh = useCallback(async () => {
     setSessions(await api.listSessions(filter))
@@ -123,6 +128,17 @@ export default function App() {
       <div className="body">
         <aside className="sidebar">
           <div className="side-section">
+            <div className="side-title">视图</div>
+            {(['sessions', 'memories', 'settings'] as View[]).map((v) => (
+              <button key={v} className={`side-item ${view === v ? 'active' : ''}`} onClick={() => setView(v)}>
+                {VIEW_LABEL[v]}
+              </button>
+            ))}
+          </div>
+
+          {view === 'sessions' && (
+            <>
+          <div className="side-section">
             <div className="side-title">Agent</div>
             {AGENTS.map((a) => {
               const stat = overview?.byAgent.find((x) => x.agent_type === a)
@@ -189,8 +205,15 @@ export default function App() {
               MCP: {mcp ? (mcp.running ? `127.0.0.1:${mcp.port} · ${mcp.toolCount} 工具` : '未运行') : '—'}
             </div>
           </div>
+            </>
+          )}
         </aside>
 
+        {view === 'memories' ? (
+          <MemoriesView />
+        ) : view === 'settings' ? (
+          <SettingsView />
+        ) : (
         <main className="main">
           {hits ? (
             <div className="list-pane">
@@ -290,6 +313,7 @@ export default function App() {
             )}
           </div>
         </main>
+        )}
       </div>
     </div>
   )

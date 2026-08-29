@@ -57,10 +57,7 @@ npm run import:scan  # 无头模式:扫描导入三个 agent 的真实会话(验
 
 ## 当前状态(接手 agent 从这里开始)
 
-- **M0 + M1 + M2 已完成并真实数据验收**(2026-08-29):55 会话入库;MCP server(127.0.0.1:8642,三工具:`memory_get_context`/`memory_search`/`memory_write`)实测可用;出口脱敏与会话导出 MD;.msqlv 归档导出/导入(启动期换库)
-- 精确进度与下一步:**M3 记忆与同步**(画像视图 / summarizer-llm / 记忆分发 / sync-folder),详见 `docs/DEVLOG.md` 最后一条(含踩坑记录)
-- 常用验证:`npm run import:scan`(无头导入)、`npx electron . --scan --export-archive <path>`(无头导出备份)、应用运行时 `curl http://127.0.0.1:8642/health`(MCP 存活)
-- 验收数据(本机真实存在):
-  - Codex:`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`(17 个 → 11 会话,续写文件按 hash 合并)
-  - ZCode:`~/.zcode/cli/rollout/`
-  - Hermes:`D:\Hermes Agent CN Desktop\data\hermes-home\profiles\daily\state.db`(SQLite+FTS5)+ `memories/MEMORY.md`、`USER.md`
+- **M0–M3 已完成并真实数据验收**(2026-08-29):55 会话入库;MCP server(127.0.0.1:8642,三工具)实测;出口脱敏 + MD 导出;.msqlv 归档迁移;LLM 摘要(可选,三 provider 模板 + 自动降级);记忆 CRUD + 分发文件(`--dispatch`);sync-folder 双设备往返实测(`--sync <folder>`,自然键并集 + LWW,删除不传播)
+- 精确进度与下一步:**M4 知识库完全体**(CodeMirror 6 笔记 / 双链 / 图谱 / capture-watcher / 插件 API 文档化),详见 `docs/DEVLOG.md` 最后一条
+- 常用验证:`npm run import:scan`;`npx electron . --sync <folder>`;`npx electron . --dispatch`;`npx electron . --scan --export-archive <path>`;运行中 `curl http://127.0.0.1:8642/health`
+- 验收数据(本机真实存在):Codex `~/.codex/sessions/**/rollout-*.jsonl`;ZCode `~/.zcode/cli/rollout/`;Hermes `D:\Hermes Agent CN Desktop\data\hermes-home\profiles\daily\state.db` + `memories/*.md`

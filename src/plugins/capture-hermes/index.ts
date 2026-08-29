@@ -178,7 +178,7 @@ const plugin: MemorySQLPlugin = {
     )
     lastStatus = { ...lastStatus, sourceRoot: profilesRoot, available: fs.existsSync(profilesRoot) }
 
-    const scan = (): CaptureStatus => {
+    const scan = async (): Promise<CaptureStatus> => {
       try {
         const ingest = ctx.services.use<IngestService>('ingest')
         const memories = ctx.services.use<MemoriesService>('memories')
@@ -191,7 +191,7 @@ const plugin: MemorySQLPlugin = {
           }
         }
         const memChanged = importHermesMemories(profilesRoot, memories)
-        const res = ingest.ingestSessions(sessions)
+        const res = await ingest.ingestSessions(sessions)
         lastStatus = {
           ...lastStatus,
           available: true,

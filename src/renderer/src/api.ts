@@ -72,5 +72,37 @@ export const api = {
       port: number
       running: boolean
       toolCount: number
+    }>,
+  // memory-core
+  memoriesSave: (input: { id?: number; kind: string; content: string }): Promise<{ id: number }> =>
+    window.memorysql.invoke('memory-core:save', input) as Promise<{ id: number }>,
+  memoriesDelete: (id: number): Promise<{ ok: boolean }> =>
+    window.memorysql.invoke('memory-core:delete', { id }) as Promise<{ ok: boolean }>,
+  memoriesSetStatus: (id: number, status: string): Promise<{ ok: boolean }> =>
+    window.memorysql.invoke('memory-core:setStatus', { id, status }) as Promise<{ ok: boolean }>,
+  // memory-dispatch
+  dispatchGenerate: (): Promise<{ files: string[] }> =>
+    window.memorysql.invoke('memory-dispatch:generate') as Promise<{ files: string[] }>,
+  // summarizer-llm
+  llmGetConfig: (): Promise<Record<string, unknown>> =>
+    window.memorysql.invoke('summarizer-llm:getConfig') as Promise<Record<string, unknown>>,
+  llmSetConfig: (patch: Record<string, unknown>): Promise<{ ok: boolean }> =>
+    window.memorysql.invoke('summarizer-llm:setConfig', patch) as Promise<{ ok: boolean }>,
+  // sync-folder
+  syncStatus: (): Promise<{ deviceId: string; folder: string; lastSyncAt: number }> =>
+    window.memorysql.invoke('sync-folder:status') as Promise<{
+      deviceId: string
+      folder: string
+      lastSyncAt: number
+    }>,
+  syncConfigure: (folder: string): Promise<{ folder: string }> =>
+    window.memorysql.invoke('sync-folder:configure', { folder }) as Promise<{ folder: string }>,
+  syncNow: (): Promise<{ pushed: string; filesPulled: number; sessionsAdded: number; sessionsUpdated: number; memoriesAdded: number }> =>
+    window.memorysql.invoke('sync-folder:syncNow') as Promise<{
+      pushed: string
+      filesPulled: number
+      sessionsAdded: number
+      sessionsUpdated: number
+      memoriesAdded: number
     }>
 }

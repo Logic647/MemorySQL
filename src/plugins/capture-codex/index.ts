@@ -40,7 +40,7 @@ const plugin: MemorySQLPlugin = {
       return parseCodexRollout(filePath, text)
     }
 
-    const scan = (): CaptureStatus => {
+    const scan = async (): Promise<CaptureStatus> => {
       try {
         const files = findCodexRollouts(sourceRoot)
         const ingest = ctx.services.use<IngestService>('ingest')
@@ -53,7 +53,7 @@ const plugin: MemorySQLPlugin = {
             ctx.log.warn(`failed to parse ${f}:`, err)
           }
         }
-        const res = ingest.ingestSessions(sessions)
+        const res = await ingest.ingestSessions(sessions)
         lastStatus = {
           ...lastStatus,
           available: true,
@@ -84,17 +84,19 @@ const plugin: MemorySQLPlugin = {
       ctx.watcher.watch(
         [sourceRoot],
         (changed) => {
-          try {
-            const s = parseFile(changed)
-            if (s) {
-              const res = ctx.services.use<IngestService>('ingest').ingestSessions([s])
-              if (res.imported + res.updated > 0) {
-                ctx.log.info(`incremental import from ${path.basename(changed)}`)
+          void (async () => {
+            try {
+              const s = parseFile(changed)
+              if (s) {
+                const res = await ctx.services.use<IngestService>('ingest').ingestSessions([s])
+                if (res.imported + res.updated > 0) {
+                  ctx.log.info(`incremental import from ${path.basename(changed)}`)
+                }
               }
+            } catch (err) {
+              ctx.log.warn(`incremental parse failed for ${changed}:`, err)
             }
-          } catch (err) {
-            ctx.log.warn(`incremental parse failed for ${changed}:`, err)
-          }
+          })()
         },
         { match: JSONL_RE, debounceMs: 1000 }
       )

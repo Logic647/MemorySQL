@@ -35,7 +35,7 @@ export interface IngestResult {
 }
 
 export interface IngestService {
-  ingestSessions(sessions: RawSession[]): IngestResult
+  ingestSessions(sessions: RawSession[]): Promise<IngestResult>
   upsertMemory(input: { kind: string; content: string; source: string }): { id: number; changed: boolean }
   addMemory(input: { kind: string; content: string; source: string }): { id: number }
 }
@@ -109,11 +109,13 @@ export function createIngestService(deps: IngestDeps): IngestService {
     )
   }
 
-  const summarize = (s: RawSession): { title: string; summary: string } => {
+  const summarizeSession = async (
+    s: RawSession
+  ): Promise<{ title: string; summary: string }> => {
     const provider = getSummarizer()
     if (provider) {
       try {
-        const out = provider.summarize({
+        const out = await provider.summarize({
           agentType: s.agentType,
           cwd: s.cwd,
           messages: s.messages,
@@ -127,7 +129,10 @@ export function createIngestService(deps: IngestDeps): IngestService {
     return { title: s.title ?? fallbackTitle(s), summary: '' }
   }
 
-  const ingestOne = (s: RawSession): { outcome: 'imported' | 'updated' | 'skipped'; id?: number } => {
+  const ingestOne = (
+    s: RawSession,
+    summary: { title: string; summary: string }
+  ): { outcome: 'imported' | 'updated' | 'skipped'; id?: number } => {
     const contentHash = hashSession(s)
     const existing = stmtSessionFind.get(s.agentType, s.externalId) as
       | { id: number; content_hash: string }
@@ -135,7 +140,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
     if (existing && existing.content_hash === contentHash) return { outcome: 'skipped' }
 
     const projectId = ensureProject(s.cwd)
-    const { title, summary } = summarize(s)
+    const { title, summary: summaryText } = summary
     const toolCalls = s.messages.filter((m) => m.role === 'tool').length
     const counts = {
       message_count: s.messages.length,
@@ -156,14 +161,14 @@ export function createIngestService(deps: IngestDeps): IngestService {
           started_at: s.startedAt ?? null,
           ended_at: s.endedAt ?? null,
           title,
-          summary,
+          summary: summaryText,
           content_hash: contentHash,
           ...counts,
           updated_at: now()
         })
         insertMessages(sessionId, s)
         stmtFtsSessionDel.run(sessionId)
-        stmtFtsSessionIns.run(sessionId, title, summary)
+        stmtFtsSessionIns.run(sessionId, title, summaryText)
       })
       tx()
       return { outcome: 'updated', id: sessionId }
@@ -180,7 +185,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
           started_at: s.startedAt ?? null,
           ended_at: s.endedAt ?? null,
           title,
-          summary,
+          summary: summaryText,
           raw_path: s.rawPath ?? null,
           content_hash: contentHash,
           ...counts,
@@ -189,7 +194,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
         }) as { lastInsertRowid: number | bigint }).lastInsertRowid
       )
       insertMessages(newId, s)
-      stmtFtsSessionIns.run(newId, title, summary)
+      stmtFtsSessionIns.run(newId, title, summaryText)
     })
     tx()
     return { outcome: 'imported', id: newId }
@@ -213,18 +218,20 @@ export function createIngestService(deps: IngestDeps): IngestService {
     })
   }
 
-  const ingestTx = sqlite.transaction((sessions: RawSession[]) => {
-    const result: IngestResult = { scanned: 0, imported: 0, updated: 0, skipped: 0, sessionIds: [] }
-    for (const s of sessions) {
-      result.scanned++
-      const { outcome, id } = ingestOne(s)
-      if (outcome !== 'skipped' && id !== undefined) result.sessionIds.push(id)
-      if (outcome === 'imported') result.imported++
-      else if (outcome === 'updated') result.updated++
-      else result.skipped++
+  const ingestTx = sqlite.transaction(
+    (sessions: RawSession[], summaries: Array<{ title: string; summary: string }>) => {
+      const result: IngestResult = { scanned: 0, imported: 0, updated: 0, skipped: 0, sessionIds: [] }
+      for (let i = 0; i < sessions.length; i++) {
+        result.scanned++
+        const { outcome, id } = ingestOne(sessions[i], summaries[i])
+        if (outcome !== 'skipped' && id !== undefined) result.sessionIds.push(id)
+        if (outcome === 'imported') result.imported++
+        else if (outcome === 'updated') result.updated++
+        else result.skipped++
+      }
+      return result
     }
-    return result
-  })
+  )
 
   const memoryFind = sqlite.prepare('SELECT id, content FROM memories WHERE source = ? AND deleted = 0')
   const memoryIns = sqlite.prepare(
@@ -235,8 +242,12 @@ export function createIngestService(deps: IngestDeps): IngestService {
   )
 
   return {
-    ingestSessions(sessions: RawSession[]): IngestResult {
-      const res = ingestTx(sessions)
+    // summarization happens OUTSIDE the transaction — an LLM call must not
+    // hold the write lock (sync providers just resolve immediately)
+    async ingestSessions(sessions: RawSession[]): Promise<IngestResult> {
+      const summaries: Array<{ title: string; summary: string }> = []
+      for (const s of sessions) summaries.push(await summarizeSession(s))
+      const res = ingestTx(sessions, summaries)
       if (res.imported + res.updated > 0) onIngest()
       return res
     },

@@ -17,9 +17,12 @@ export interface AppEnv {
 
 export function resolveAppEnv(): AppEnv {
   // app.getAppPath() = project root in dev, resources dir when packaged.
-  const dataDir = app.isPackaged
-    ? path.join(app.getPath('userData'), 'data')
-    : path.join(app.getAppPath(), 'data')
+  // MEMORYSQL_DATA_DIR overrides for tests / multi-profile (e.g. sync dev).
+  const dataDir =
+    process.env.MEMORYSQL_DATA_DIR ??
+    (app.isPackaged
+      ? path.join(app.getPath('userData'), 'data')
+      : path.join(app.getAppPath(), 'data'))
   for (const d of [dataDir, path.join(dataDir, 'vault')]) {
     fs.mkdirSync(d, { recursive: true })
   }

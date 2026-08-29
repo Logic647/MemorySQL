@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-08-29 · M3 记忆与同步完成
+
+**summarizer-llm(可选 LLM 摘要):**
+- provider 三模板:OpenAI 兼容 / Anthropic / Ollama;设置页切换;API Key 存 settings.json(本机明文,MVP 取舍);**注册在 rules 之前**,host 取第一个 available —— 配置了 LLM 用 LLM,没配/挂了自动落回本地规则
+- 摘要器接口异步化:`SummarizerProvider.summarize` 可返回 Promise;摄取管道重构为**摘要全部在事务外执行**(LLM 调用绝不持有 SQLite 写锁),三个捕获插件的 scan 改 async、watcher 回调 fire-and-forget
+- 解析容错:严格 JSON → ```json 围栏 → 行启发式,三级 fallback(单测覆盖)
+
+**memory-core + memory-dispatch:**
+- 记忆 CRUD IPC:save(增/改)/ delete(tombstone)/ setStatus(candidate|active|retired)
+- 记忆视图:按 画像/偏好/事实/决策 分组,新增/编辑/停用/删除;「生成分发文件」按钮
+- 记忆分发 `--dispatch`(也可 UI 触发):生成 `vault/dispatch/MEMORY.md`(画像+记忆汇编)与 `AGENTS-snippet.md`(粘贴进项目 AGENTS.md/CLAUDE.md 用的 `<memorysql_context>` 片段);**不直接改写 Hermes/Codex 的活记忆文件**(避免覆盖它们自己维护的内容),实测生成正确
+
+**sync-folder(增量同步,零服务器):**
+- 通过网盘同步文件夹(OneDrive/坚果云…):push 写 `<folder>/memorysql-sync/<deviceId>/bundle-<ts>.json`,pull 合并其他设备未导入过的 bundle(文件台账 cap 300)
+- 合并语义(自然键,**跨设备 id 永不冲突**):projects 按 path、sessions 按 (agent_type, external_id)(消息随会话,FTS 同步重建)、memories 按 content 并集;冲突 LWW on updated_at;**删除不传播**(MVP 限制,整库迁移走归档)
+- 真实 deviceId(随机生成,登记 devices 表);`MEMORYSQL_DATA_DIR` 环境变量支持多数据目录;headless `--sync <folder>`(可与 --scan 组合)
+- **双设备往返实测**:A(55 会话/5 记忆)⇄ B(新建目录扫同样来源 + 注入独有记忆)——B 收到 A 的 MCP 记忆、A 收到 B 的独有记忆,两边收敛为 55 会话/6 记忆 ✓
+- 插曲:验收断言一度"失败",实为更早 curl(GBK)写入的乱码残留记忆,数据清理后确认无碍(教训已在 M2 记录:测试中文一律走 python 客户端)
+
+**UI:**侧栏新增 视图 导航(会话/记忆/设置);设置页 = 摘要引擎表单(含"留空保持不变"的 key 掩码)+ 同步文件夹配置与立即同步
+
+**验证:**typecheck 零错 / vitest 22:22(新增 llm 解析+transcript 5)/ 构建 3 产物 / 双设备同步往返实测 / dispatch 文件实测 / 窗口实测
+**未竟:**记忆/设置视图的点击走查因自动化帧绑定限制未完成(构建与数据层已验),待人工点开确认;LLM 真实调用需配 Key 后人工验证
+
+**下一步(M4 知识库完全体):**CodeMirror 6 笔记编辑 + 双链/反链 + 图谱(Cytoscape.js);capture-watcher 项目文件监听(AGENTS.md/MEMORY.md 双向同步,与 dispatch 打通);插件 API 文档化(第三方插件)
+
+---
+
 ## 2026-08-29 · M2 服务层完成:MCP server + 出口脱敏 + 归档迁移
 
 **mcp-server 插件:**

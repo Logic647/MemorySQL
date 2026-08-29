@@ -35,7 +35,7 @@ export interface SummarizerProvider {
     cwd?: string
     messages: RawMessage[]
     currentTitle?: string
-  }): { title: string; summary: string } | null
+  }): Promise<{ title: string; summary: string } | null> | { title: string; summary: string } | null
 }
 
 export interface McpToolDef {
