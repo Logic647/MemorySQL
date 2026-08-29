@@ -42,9 +42,10 @@ const plugin: MemorySQLPlugin = {
       const params: unknown[] = agentType && agentType !== 'all' ? [agentType] : []
       const rows = ctx.db.sqlite
         .prepare(
-          `SELECT s.id, s.agent_type, s.external_id, s.title, s.summary,
-                  p.name AS project, s.started_at, s.ended_at,
-                  s.message_count, s.tool_call_count
+          `SELECT s.id, s.agent_type AS agentType, s.external_id AS externalId,
+                  s.title, s.summary, p.name AS project,
+                  s.started_at AS startedAt, s.ended_at AS endedAt,
+                  s.message_count AS messageCount, s.tool_call_count AS toolCallCount
            FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
            WHERE s.deleted = 0 ${where}
            ORDER BY COALESCE(s.started_at, s.updated_at) DESC
@@ -66,7 +67,8 @@ const plugin: MemorySQLPlugin = {
       if (!session) throw new Error(`session not found: ${id}`)
       const messages = ctx.db.sqlite
         .prepare(
-          'SELECT id, seq, role, content, ts, tool_name FROM session_messages WHERE session_id = ? ORDER BY seq'
+          `SELECT id, seq, role, content, ts, tool_name AS "toolName"
+           FROM session_messages WHERE session_id = ? ORDER BY seq`
         )
         .all(id)
       return { session, messages: messages as MessageRow[] }

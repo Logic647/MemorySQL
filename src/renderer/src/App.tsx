@@ -39,10 +39,12 @@ export default function App() {
     CAPTURE_PLUGINS.forEach(async ({ id }) => {
       try {
         const s = await api.captureStatus(id)
-        setStatuses((prev) => ({
-          ...prev,
-          [id]: s.lastError ? `错误: ${s.lastError}` : `${s.sessionsImported} 新导入 / ${s.sessionsFound} 扫描`
-        }))
+        const detail = s.lastError
+          ? `错误: ${s.lastError}`
+          : s.lastScanAt
+            ? `${s.sessionsImported} 新导入 / ${s.sessionsFound} 扫描`
+            : '本次运行未扫描(数据已在库)'
+        setStatuses((prev) => ({ ...prev, [id]: detail }))
       } catch {
         setStatuses((prev) => ({ ...prev, [id]: '不可用' }))
       }
@@ -162,6 +164,7 @@ export default function App() {
                   <button
                     key={`${h.kind}-${h.id}`}
                     className="hit"
+                    data-agent={h.agentType ?? undefined}
                     onClick={() => h.sessionId && void openSession(h.sessionId)}
                   >
                     <div className="hit-head">
@@ -180,7 +183,12 @@ export default function App() {
               <div className="pane-title">会话 ({sessions.length})</div>
               <div className="session-list">
                 {sessions.map((s) => (
-                  <button key={s.id} className="session" onClick={() => void openSession(s.id)}>
+                  <button
+                    key={s.id}
+                    className="session"
+                    data-agent={s.agentType}
+                    onClick={() => void openSession(s.id)}
+                  >
                     <div className="session-head">
                       <AgentBadge type={s.agentType} />
                       <span className="session-title">{s.title ?? s.externalId}</span>
@@ -208,6 +216,7 @@ export default function App() {
                   <div className="detail-title">
                     <AgentBadge type={selected.session.agent_type} />
                     {selected.session.title ?? selected.session.external_id}
+                    <span className="tape-id">{selected.session.external_id}</span>
                   </div>
                   <div className="detail-meta">
                     {selected.session.project && <span>项目: {selected.session.project}</span>}

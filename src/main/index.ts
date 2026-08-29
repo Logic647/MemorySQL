@@ -16,6 +16,9 @@ const BUILTIN_PLUGINS = [summarizerRules, coreSchema, captureCodex, captureZcode
 
 const HEADLESS_SCAN = process.argv.includes('--scan')
 
+// kept for graceful shutdown on window close
+let running: { host: PluginHost; db: Db } | null = null
+
 async function bootstrap(): Promise<{
   host: PluginHost
   db: Db
@@ -62,9 +65,9 @@ function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
     backgroundColor: '#101418',
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(import.meta.dirname, '../preload/index.mjs'),
+      preload: path.join(import.meta.dirname, '../preload/index.cjs'),
       contextIsolation: true,
-      sandbox: false,
+      sandbox: true,
       nodeIntegration: false
     }
   })
@@ -93,8 +96,9 @@ app.whenReady().then(async () => {
       await runHeadlessScan()
       return
     }
-    const { host, events } = await bootstrap()
-    createWindow(host, events)
+    const boot = await bootstrap()
+    running = { host: boot.host, db: boot.db }
+    createWindow(boot.host, boot.events)
   } catch (err) {
     console.error('Fatal bootstrap error:', err)
     app.exit(1)
@@ -102,5 +106,14 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  app.quit()
+  void (async () => {
+    try {
+      await running?.host.stopAll()
+      running?.db.close()
+    } catch (err) {
+      console.error('shutdown error:', err)
+    } finally {
+      app.quit()
+    }
+  })()
 })

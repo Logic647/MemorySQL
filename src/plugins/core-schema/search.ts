@@ -46,6 +46,7 @@ export function createSearchService(sqlite: Database.Database): SearchService {
           hits.push({
             kind: 'session',
             id: r.id as number,
+            sessionId: r.id as number,
             agentType: r.agent_type as SearchHit['agentType'],
             title: r.title as string,
             snippet: r.snip as string,
@@ -70,6 +71,7 @@ export function createSearchService(sqlite: Database.Database): SearchService {
           hits.push({
             kind: 'session',
             id: r.id as number,
+            sessionId: r.id as number,
             agentType: r.agent_type as SearchHit['agentType'],
             title: r.title as string,
             snippet: (r.summary as string) ?? '',

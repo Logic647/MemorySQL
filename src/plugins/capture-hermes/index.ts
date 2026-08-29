@@ -26,29 +26,34 @@ interface HermesRow {
   timestamp?: number | null
 }
 
-function openReadonlySnapshot(dbPath: string): Database.Database {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'memorysql-hermes-'))
-  for (const suffix of ['', '-wal', '-shm']) {
-    const src = `${dbPath}${suffix}`
-    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(tmpDir, `state.db${suffix}`))
-  }
-  return new Database(path.join(tmpDir, 'state.db'), { readonly: true, fileMustExist: true })
-}
-
-function openHermesDb(dbPath: string): Database.Database {
+function openHermesDb(dbPath: string): { db: Database.Database; cleanup: () => void } {
   try {
     const db = new Database(dbPath, { readonly: true, fileMustExist: true })
     db.pragma('busy_timeout = 3000')
     // touch a table to force any lock issue to surface early
     db.prepare('SELECT COUNT(*) FROM sessions').get()
-    return db
+    return { db, cleanup: () => db.close() }
   } catch {
-    return openReadonlySnapshot(dbPath)
+    // locked / unreadable in place — fall back to a temp snapshot and always
+    // remove it afterwards, or repeated scans leak copies into %TEMP%
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'memorysql-hermes-'))
+    for (const suffix of ['', '-wal', '-shm']) {
+      const src = `${dbPath}${suffix}`
+      if (fs.existsSync(src)) fs.copyFileSync(src, path.join(tmpDir, `state.db${suffix}`))
+    }
+    const db = new Database(path.join(tmpDir, 'state.db'), { readonly: true, fileMustExist: true })
+    return {
+      db,
+      cleanup: () => {
+        db.close()
+        fs.rmSync(tmpDir, { recursive: true, force: true })
+      }
+    }
   }
 }
 
-function parseHermesDb(dbPath: string): RawSession[] {
-  const db = openHermesDb(dbPath)
+function parseHermesDb(dbPath: string, externalIdPrefix: string): RawSession[] {
+  const { db, cleanup } = openHermesDb(dbPath)
   try {
     const sessions = db
       .prepare('SELECT id, source, display_name, model FROM sessions ORDER BY id')
@@ -74,7 +79,9 @@ function parseHermesDb(dbPath: string): RawSession[] {
       const startedAt = messages.find((m) => m.ts !== undefined)?.ts
       const endedAt = [...messages].reverse().find((m) => m.ts !== undefined)?.ts
       out.push({
-        externalId: s.id,
+        // profile-namespaced: two profiles can share numeric session ids,
+        // and (agent_type, external_id) is the dedup/unique key
+        externalId: `${externalIdPrefix}/${s.id}`,
         agentType: 'hermes',
         startedAt,
         endedAt,
@@ -84,25 +91,31 @@ function parseHermesDb(dbPath: string): RawSession[] {
     }
     return out
   } finally {
-    db.close()
+    cleanup()
   }
 }
 
-function findHermesDbs(profilesRoot: string): string[] {
-  const dbs: string[] = []
+interface HermesSource {
+  dbPath: string
+  /** namespace for externalIds, e.g. "profiles/daily" or "home" */
+  label: string
+}
+
+function findHermesDbs(profilesRoot: string): HermesSource[] {
+  const sources: HermesSource[] = []
   const rootDb = path.join(profilesRoot, 'state.db')
-  if (fs.existsSync(rootDb)) dbs.push(rootDb)
+  if (fs.existsSync(rootDb)) sources.push({ dbPath: rootDb, label: 'home' })
   const profilesDir = path.join(profilesRoot, 'profiles')
   try {
     for (const e of fs.readdirSync(profilesDir, { withFileTypes: true })) {
       if (!e.isDirectory()) continue
       const db = path.join(profilesDir, e.name, 'state.db')
-      if (fs.existsSync(db)) dbs.push(db)
+      if (fs.existsSync(db)) sources.push({ dbPath: db, label: `profiles/${e.name}` })
     }
   } catch {
     // no profiles dir — root db only
   }
-  return dbs
+  return sources
 }
 
 function importHermesMemories(profilesRoot: string, memories: MemoriesService): number {
@@ -170,9 +183,9 @@ const plugin: MemorySQLPlugin = {
         const ingest = ctx.services.use<IngestService>('ingest')
         const memories = ctx.services.use<MemoriesService>('memories')
         const sessions: RawSession[] = []
-        for (const dbPath of findHermesDbs(profilesRoot)) {
+        for (const { dbPath, label } of findHermesDbs(profilesRoot)) {
           try {
-            sessions.push(...parseHermesDb(dbPath))
+            sessions.push(...parseHermesDb(dbPath, label))
           } catch (err) {
             ctx.log.warn(`failed to read ${dbPath}:`, err)
           }

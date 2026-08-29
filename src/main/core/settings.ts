@@ -28,7 +28,11 @@ export class SettingsStore {
 
   set(key: string, value: unknown): void {
     this.data[key] = value
-    fs.writeFileSync(this.env.settingsPath, JSON.stringify(this.data, null, 2), 'utf-8')
+    // atomic-ish write: temp file + rename, so a crash mid-write can't
+    // wipe the whole settings file
+    const tmp = `${this.env.settingsPath}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2), 'utf-8')
+    fs.renameSync(tmp, this.env.settingsPath)
   }
 
   all(): Record<string, unknown> {

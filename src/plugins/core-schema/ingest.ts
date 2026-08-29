@@ -6,6 +6,26 @@ import type { SummarizerProvider } from '../../main/core/plugin-host'
 
 const CONTENT_CAP = 100_000
 
+/** stored content is capped before hashing, else >100KB-message sessions re-hash every scan */
+function cap(text: string): string {
+  return text.length > CONTENT_CAP ? `${text.slice(0, CONTENT_CAP)}\n…[truncated]` : text
+}
+
+function hashSession(s: RawSession): string {
+  const h = crypto.createHash('sha256')
+  h.update(s.agentType)
+  h.update('\0')
+  h.update(s.externalId)
+  h.update('\0')
+  for (const m of s.messages) {
+    h.update(m.role)
+    h.update('\0')
+    h.update(cap(m.content))
+    h.update('\0')
+  }
+  return h.digest('hex')
+}
+
 export interface IngestResult {
   scanned: number
   imported: number
@@ -23,25 +43,6 @@ export interface IngestDeps {
   sqlite: Database.Database
   getSummarizer: () => SummarizerProvider | null
   onIngest: () => void
-}
-
-function hashSession(s: RawSession): string {
-  const h = crypto.createHash('sha256')
-  h.update(s.agentType)
-  h.update('\0')
-  h.update(s.externalId)
-  h.update('\0')
-  for (const m of s.messages) {
-    h.update(m.role)
-    h.update('\0')
-    h.update(m.content)
-    h.update('\0')
-  }
-  return h.digest('hex')
-}
-
-function cap(text: string): string {
-  return text.length > CONTENT_CAP ? `${text.slice(0, CONTENT_CAP)}\n…[truncated]` : text
 }
 
 function clip(text: string, max: number): string {
