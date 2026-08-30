@@ -40,9 +40,14 @@ function post(body) {
       }
     )
     req.on('error', reject)
+    req.setTimeout(30000, () => req.destroy(new Error('timeout')))
     req.end(body)
   })
 }
+
+// Let the event loop drain naturally after stdin closes — calling
+// process.exit() here would truncate the async stdout pipe writes.
+process.exitCode = 0
 
 const rl = readline.createInterface({ input: process.stdin })
 // stdout carries ONLY JSON-RPC frames; diagnostics go to stderr
@@ -70,4 +75,3 @@ rl.on('line', (line) => {
       )
     })
 })
-rl.on('close', () => process.exit(0))
