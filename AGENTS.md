@@ -58,7 +58,7 @@ npm run dist         # 打包 Windows 安装包 + 免安装目录(需 ELECTRON_B
 
 ## 当前状态(接手 agent 从这里开始)
 
-- **M0–M4 全部完成 + 打包分发**(2026-08-30):`npm run dist` 产出 `dist/MemorySQL-Setup-0.1.0.exe`(NSIS 安装包)与 `dist/win-unpacked/`(免安装版),均已实测(免安装版 `--scan` 无头跑通、GUI 五视图正常);打包数据目录 = `%APPDATA%/MemorySQL/data`,与开发版 `data/` 隔离
-- 精确进度:规划里程碑全部完成;后续未排期方向见 `docs/DEVLOG.md` 最后一条(社区插件加载 / FTS external-content / sync 删除传播等)
+- **M0–M5 全部完成**(2026-08-30):M5 = 审计修复(P0×1/P1×5/P2×8)+ 会话 ID + 七 agent 捕获矩阵(设置页开关/路径)+ 登记式自定义 agent + 记忆 agent 维度/规则提炼/LLM 精炼 + 存储位置迁移 + MCP 端口避让与安全校验 + LLM 模型列表 + 外部插件加载(README 规范)+ 液态玻璃 UI 重设计(三 skill 链)
+- 精确进度:见 `docs/DEVLOG.md` 最后一条(含审查遗留 P2 清单);审查报告结论 = 修复后可发版
 - 常用验证:`npm run import:scan`;`npx electron . --dispatch`;`npx electron . --sync <folder>`;`npx electron . --scan --export-archive <path>`;运行中 `curl http://127.0.0.1:8642/health`
-- 验收数据(本机真实存在):Codex `~/.codex/sessions/**/rollout-*.jsonl`;ZCode `~/.zcode/cli/rollout/`;Hermes `D:\Hermes Agent CN Desktop\data\hermes-home\profiles\daily\state.db` + `memories/*.md`
+- 验收数据(本机真实存在):Codex `~/.codex/sessions/**/rollout-*.jsonl`;ZCode `~/.zcode/cli/rollout/`;Hermes `D:\Hermes Agent CN Desktop\data\hermes-home\profiles\daily\state.db` + `memories/*.md`;其余四适配器(Claude/Gemini/Cursor/OpenCode)本机未装,合成样本单测覆盖

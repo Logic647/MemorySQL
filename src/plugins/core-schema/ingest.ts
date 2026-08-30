@@ -36,14 +36,14 @@ export interface IngestResult {
 
 export interface IngestService {
   ingestSessions(sessions: RawSession[]): Promise<IngestResult>
-  upsertMemory(input: { kind: string; content: string; source: string }): { id: number; changed: boolean }
-  addMemory(input: { kind: string; content: string; source: string }): { id: number }
+  upsertMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string }): { id: number; changed: boolean }
+  addMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string }): { id: number }
 }
 
 export interface IngestDeps {
   sqlite: Database.Database
   getSummarizer: () => SummarizerProvider | null
-  onIngest: () => void
+  onIngest: (sessionIds: number[]) => void
 }
 
 function clip(text: string, max: number): string {
@@ -63,6 +63,8 @@ function firstLine(text: string): string {
 export function createIngestService(deps: IngestDeps): IngestService {
   const { sqlite, getSummarizer, onIngest } = deps
   const now = () => Date.now()
+  // serializes concurrent ingest invocations across their await boundaries
+  let ingestRunning: Promise<void> | null = null
 
   const stmtProjectFind = sqlite.prepare('SELECT id FROM projects WHERE path = ?')
   const stmtProjectIns = sqlite.prepare(
@@ -233,34 +235,46 @@ export function createIngestService(deps: IngestDeps): IngestService {
     }
   )
 
-  const memoryFind = sqlite.prepare('SELECT id, content FROM memories WHERE source = ? AND deleted = 0')
+  // deleted rows stay found: user deletion must not be resurrected by a re-import
+  const memoryFind = sqlite.prepare('SELECT id, content, deleted FROM memories WHERE source = ?')
   const memoryIns = sqlite.prepare(
-    'INSERT INTO memories (kind, content, source, updated_at, device_id) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO memories (kind, content, source, updated_at, device_id, agent_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
   )
   const memoryUpdate = sqlite.prepare(
-    'UPDATE memories SET kind = ?, content = ?, updated_at = ? WHERE id = ?'
+    'UPDATE memories SET kind = ?, content = ?, agent_type = ?, updated_at = ? WHERE id = ?'
   )
 
   return {
     // summarization happens OUTSIDE the transaction — an LLM call must not
-    // hold the write lock (sync providers just resolve immediately)
+    // hold the write lock (sync providers just resolve immediately).
+    // The run-lock keeps manual scans and watcher increments from
+    // interleaving their await boundaries.
     async ingestSessions(sessions: RawSession[]): Promise<IngestResult> {
-      const summaries: Array<{ title: string; summary: string }> = []
-      for (const s of sessions) summaries.push(await summarizeSession(s))
-      const res = ingestTx(sessions, summaries)
-      if (res.imported + res.updated > 0) onIngest()
-      return res
+      while (ingestRunning) await ingestRunning
+      let resolveLock: () => void = () => {}
+      ingestRunning = new Promise<void>((r) => (resolveLock = r))
+      try {
+        const summaries: Array<{ title: string; summary: string }> = []
+        for (const s of sessions) summaries.push(await summarizeSession(s))
+        const res = ingestTx(sessions, summaries)
+        if (res.imported + res.updated > 0) onIngest(res.sessionIds)
+        return res
+      } finally {
+        resolveLock()
+        ingestRunning = null
+      }
     },
 
     upsertMemory(input): { id: number; changed: boolean } {
-      const existing = memoryFind.get(input.source) as { id: number; content: string } | undefined
+      const existing = memoryFind.get(input.source) as { id: number; content: string; deleted: number } | undefined
+      if (existing?.deleted) return { id: existing.id, changed: false } // tombstone wins
       if (existing) {
         if (existing.content === input.content) return { id: existing.id, changed: false }
-        memoryUpdate.run(input.kind, input.content, now(), existing.id)
+        memoryUpdate.run(input.kind, input.content, input.agentType ?? null, now(), existing.id)
         return { id: existing.id, changed: true }
       }
       const id = Number(
-        (memoryIns.run(input.kind, input.content, input.source, now(), 'local') as {
+        (memoryIns.run(input.kind, input.content, input.source, now(), 'local', input.agentType ?? null, input.status ?? 'active') as {
           lastInsertRowid: number | bigint
         }).lastInsertRowid
       )
@@ -276,7 +290,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
           ? `${input.content.slice(0, MEMORY_CAP)}\n…[truncated]`
           : input.content
       const id = Number(
-        (memoryIns.run(input.kind, content, input.source, now(), 'local') as {
+        (memoryIns.run(input.kind, content, input.source, now(), 'local', input.agentType ?? null, input.status ?? 'active') as {
           lastInsertRowid: number | bigint
         }).lastInsertRowid
       )

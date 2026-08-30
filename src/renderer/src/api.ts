@@ -66,12 +66,14 @@ export const api = {
   importArchive: (): Promise<{ relaunched: boolean; reason?: string }> =>
     window.memorysql.invoke('sync-archive:import') as Promise<{ relaunched: boolean; reason?: string }>,
   // mcp-server
-  mcpStatus: (): Promise<{ enabled: boolean; port: number; running: boolean; toolCount: number }> =>
+  mcpStatus: (): Promise<{ enabled: boolean; port: number; requestedPort?: number; running: boolean; toolCount: number; portNote?: string | null }> =>
     window.memorysql.invoke('mcp-server:status') as Promise<{
       enabled: boolean
       port: number
+      requestedPort?: number
       running: boolean
       toolCount: number
+      portNote?: string | null
     }>,
   // memory-core
   memoriesSave: (input: { id?: number; kind: string; content: string }): Promise<{ id: number }> =>
@@ -80,6 +82,12 @@ export const api = {
     window.memorysql.invoke('memory-core:delete', { id }) as Promise<{ ok: boolean }>,
   memoriesSetStatus: (id: number, status: string): Promise<{ ok: boolean }> =>
     window.memorysql.invoke('memory-core:setStatus', { id, status }) as Promise<{ ok: boolean }>,
+  memoriesRefine: (agentType?: string): Promise<{ ok: boolean; inserted?: number; message: string }> =>
+    window.memorysql.invoke('memory-core:refine', { agentType }) as Promise<{
+      ok: boolean
+      inserted?: number
+      message: string
+    }>,
   // memory-dispatch
   dispatchGenerate: (): Promise<{ files: string[] }> =>
     window.memorysql.invoke('memory-dispatch:generate') as Promise<{ files: string[] }>,
@@ -88,6 +96,18 @@ export const api = {
     window.memorysql.invoke('summarizer-llm:getConfig') as Promise<Record<string, unknown>>,
   llmSetConfig: (patch: Record<string, unknown>): Promise<{ ok: boolean }> =>
     window.memorysql.invoke('summarizer-llm:setConfig', patch) as Promise<{ ok: boolean }>,
+  llmListModels: (): Promise<{ ok: boolean; models?: string[]; message?: string }> =>
+    window.memorysql.invoke('summarizer-llm:listModels') as Promise<{
+      ok: boolean
+      models?: string[]
+      message?: string
+    }>,
+  // storage relocation
+  hostDataDir: (dir?: string, reset?: boolean): Promise<{ ok: boolean; relaunching?: boolean }> =>
+    window.memorysql.invoke('memorysql:host:dataDir', { dir, reset }) as Promise<{
+      ok: boolean
+      relaunching?: boolean
+    }>,
   // sync-folder
   syncStatus: (): Promise<{ deviceId: string; folder: string; lastSyncAt: number }> =>
     window.memorysql.invoke('sync-folder:status') as Promise<{
@@ -128,14 +148,40 @@ export const api = {
       nodes: Array<{ id: number; title: string }>
       edges: Array<{ from: number; to: number }>
     }>,
-  // capture-watcher
-  watcherList: (): Promise<{ roots: string[]; projects: Array<{ id: number; name: string; path: string }> }> =>
+  // capture-watcher (登记式自定义 agent)
+  watcherList: (): Promise<{ entries: Array<{ agent: string; root: string; patterns: string }> }> =>
     window.memorysql.invoke('capture-watcher:list') as Promise<{
-      roots: string[]
-      projects: Array<{ id: number; name: string; path: string }>
+      entries: Array<{ agent: string; root: string; patterns: string }>
     }>,
-  watcherAddRoot: (root: string): Promise<{ roots: string[] }> =>
-    window.memorysql.invoke('capture-watcher:addRoot', { root }) as Promise<{ roots: string[] }>,
-  watcherRemoveRoot: (root: string): Promise<{ roots: string[] }> =>
-    window.memorysql.invoke('capture-watcher:removeRoot', { root }) as Promise<{ roots: string[] }>
+  watcherAdd: (agent: string, root: string, patterns: string): Promise<{ entries: Array<{ agent: string; root: string; patterns: string }> }> =>
+    window.memorysql.invoke('capture-watcher:add', { agent, root, patterns }) as Promise<{
+      entries: Array<{ agent: string; root: string; patterns: string }>
+    }>,
+  watcherRemove: (agent: string, root: string): Promise<{ entries: Array<{ agent: string; root: string; patterns: string }> }> =>
+    window.memorysql.invoke('capture-watcher:remove', { agent, root }) as Promise<{
+      entries: Array<{ agent: string; root: string; patterns: string }>
+    }>,
+  // host-level plugin management
+  hostPlugins: (): Promise<{
+    plugins: Array<{ id: string; name: string; version: string; enabled: boolean; external: boolean }>
+    skipped: string[]
+    loadErrors?: string[]
+    pluginsDir?: string
+  }> =>
+    window.memorysql.invoke('memorysql:host:plugins') as Promise<{
+      plugins: Array<{ id: string; name: string; version: string; enabled: boolean; external: boolean }>
+      skipped: string[]
+      loadErrors?: string[]
+      pluginsDir?: string
+    }>,
+  hostPluginEnable: (id: string, enabled: boolean): Promise<{ ok: boolean; restartNeeded: boolean }> =>
+    window.memorysql.invoke('memorysql:host:pluginEnable', { id, enabled }) as Promise<{
+      ok: boolean
+      restartNeeded: boolean
+    }>,
+  hostPluginSetting: (id: string, key: string, value: unknown): Promise<{ ok: boolean; restartNeeded: boolean }> =>
+    window.memorysql.invoke('memorysql:host:pluginSetting', { id, key, value }) as Promise<{
+      ok: boolean
+      restartNeeded: boolean
+    }>
 }

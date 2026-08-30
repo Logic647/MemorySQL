@@ -15,12 +15,31 @@ export default function SettingsView() {
   const [folder, setFolder] = useState('')
   const [syncInfo, setSyncInfo] = useState<{ deviceId: string; lastSyncAt: number } | null>(null)
   const [msg, setMsg] = useState('')
+  const [mcpPort, setMcpPort] = useState('')
+  const [dataDir, setDataDir] = useState('')
+  const [pluginList, setPluginList] = useState<Array<{ id: string; name: string; version: string; enabled: boolean; external: boolean }>>([])
+  const [loadErrors, setLoadErrors] = useState<string[]>([])
+  const [pluginsDir, setPluginsDir] = useState('')
 
   const load = useCallback(async () => {
     setCfg(await api.llmGetConfig())
     const s = await api.syncStatus()
     setFolder(s.folder)
     setSyncInfo(s)
+    try {
+      const hp = await api.hostPlugins()
+      setPluginList(hp.plugins)
+      setLoadErrors(hp.loadErrors ?? [])
+      setPluginsDir(hp.pluginsDir ?? '')
+    } catch {
+      /* host channels unavailable */
+    }
+    try {
+      const m = await api.mcpStatus()
+      setMcpPort(String(m.requestedPort ?? m.port))
+    } catch {
+      /* mcp disabled */
+    }
   }, [])
 
   useEffect(() => {
@@ -75,10 +94,19 @@ export default function SettingsView() {
                 <span>Base URL(可填兼容网关)</span>
                 <input value={String(cfg.openaiBaseUrl ?? '')} onChange={(e) => set('openaiBaseUrl', e.target.value)} />
               </label>
-              <label className="field">
-                <span>模型</span>
-                <input value={String(cfg.openaiModel ?? '')} onChange={(e) => set('openaiModel', e.target.value)} />
-              </label>
+              <ModelField
+                value={String(cfg.openaiModel ?? '')}
+                onChange={(v) => set('openaiModel', v)}
+                onFetch={() =>
+                  api.llmListModels().then((r) => {
+                    if (r.ok && r.models) {
+                      setCfg((c) => (c ? { ...c, _models: r.models } : c))
+                      setMsg(`已获取 ${r.models.length} 个模型`)
+                    } else setMsg(r.message ?? '获取失败')
+                  })
+                }
+                models={(cfg._models as string[] | undefined) ?? []}
+              />
             </>
           )}
 
@@ -96,10 +124,19 @@ export default function SettingsView() {
                 <span>Base URL</span>
                 <input value={String(cfg.anthropicBaseUrl ?? '')} onChange={(e) => set('anthropicBaseUrl', e.target.value)} />
               </label>
-              <label className="field">
-                <span>模型</span>
-                <input value={String(cfg.anthropicModel ?? '')} onChange={(e) => set('anthropicModel', e.target.value)} />
-              </label>
+              <ModelField
+                value={String(cfg.anthropicModel ?? '')}
+                onChange={(v) => set('anthropicModel', v)}
+                onFetch={() =>
+                  api.llmListModels().then((r) => {
+                    if (r.ok && r.models) {
+                      setCfg((c) => (c ? { ...c, _models: r.models } : c))
+                      setMsg(`已获取 ${r.models.length} 个模型`)
+                    } else setMsg(r.message ?? '获取失败')
+                  })
+                }
+                models={(cfg._models as string[] | undefined) ?? []}
+              />
             </>
           )}
 
@@ -109,10 +146,19 @@ export default function SettingsView() {
                 <span>Ollama 地址</span>
                 <input value={String(cfg.ollamaUrl ?? '')} onChange={(e) => set('ollamaUrl', e.target.value)} />
               </label>
-              <label className="field">
-                <span>模型</span>
-                <input value={String(cfg.ollamaModel ?? '')} onChange={(e) => set('ollamaModel', e.target.value)} />
-              </label>
+              <ModelField
+                value={String(cfg.ollamaModel ?? '')}
+                onChange={(v) => set('ollamaModel', v)}
+                onFetch={() =>
+                  api.llmListModels().then((r) => {
+                    if (r.ok && r.models) {
+                      setCfg((c) => (c ? { ...c, _models: r.models } : c))
+                      setMsg(`已获取 ${r.models.length} 个模型`)
+                    } else setMsg(r.message ?? '获取失败')
+                  })
+                }
+                models={(cfg._models as string[] | undefined) ?? []}
+              />
             </>
           )}
 
@@ -172,9 +218,114 @@ export default function SettingsView() {
         </section>
 
         <section>
-          <h3>项目文件监听</h3>
+          <h3>存储位置</h3>
           <p className="hint">
-            监听项目目录中的 AGENTS.md / CLAUDE.md / MEMORY.md(只读导入为记忆,不修改项目文件)。
+            整个知识库(数据库 + 笔记 + 设置)的存放目录。迁移会复制全部数据到新目录并在重启后切换,原目录保留可回退。
+          </p>
+          <label className="field">
+            <span>新目录</span>
+            <input value={dataDir} onChange={(e) => setDataDir(e.target.value)} placeholder="D:\MemorySQL-Data" />
+          </label>
+          <div className="field-row">
+            <button
+              className="btn btn-small"
+              disabled={!dataDir.trim()}
+              onClick={() =>
+                void api
+                  .hostDataDir(dataDir.trim())
+                  .then(() => setMsg('迁移完成,应用即将重启…'))
+                  .catch((e) => setMsg(`迁移失败: ${String(e)}`))
+              }
+            >
+              迁移到新目录
+            </button>
+            <button
+              className="btn btn-small"
+              onClick={() =>
+                void api
+                  .hostDataDir(undefined, true)
+                  .then(() => setMsg('将恢复默认位置,应用即将重启…'))
+                  .catch((e) => setMsg(`操作失败: ${String(e)}`))
+              }
+            >
+              恢复默认位置
+            </button>
+          </div>
+        </section>
+
+        <section>
+          <h3>MCP 服务</h3>
+          <p className="hint">agent 连接端点 http://127.0.0.1:端口/mcp。端口被占用时自动向后顺延并在侧栏提示。</p>
+          <label className="field">
+            <span>端口</span>
+            <input
+              value={mcpPort}
+              onChange={(e) => setMcpPort(e.target.value.replace(/\D/g, ''))}
+              placeholder="8642"
+            />
+          </label>
+          <button
+            className="btn btn-small"
+            onClick={() =>
+              void api
+                .hostPluginSetting('mcp-server', 'port', Number(mcpPort) || 8642)
+                .then(() => setMsg('端口已保存,重启生效'))
+                .catch((e) => setMsg(`保存失败: ${String(e)}`))
+            }
+          >
+            保存端口
+          </button>
+        </section>
+
+        <section>
+          <h3>插件管理</h3>
+          <p className="hint">
+            外部插件放 <code>{pluginsDir || '<数据目录>/plugins'}</code> 下(每个插件一个文件夹:manifest.json + main.js),
+            规范见 README。启停重启后生效。
+          </p>
+          {loadErrors.length > 0 && (
+            <div className="kb-msg">
+              {loadErrors.map((e) => (
+                <div key={e}>⚠ {e}</div>
+              ))}
+            </div>
+          )}
+          {pluginList.map((p) => (
+            <div key={p.id} className="field-row">
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={p.enabled}
+                  onChange={(e) =>
+                    void api
+                      .hostPluginEnable(p.id, e.target.checked)
+                      .then(() => setMsg(`${p.name} 已${e.target.checked ? '启用' : '停用'},重启生效`))
+                      .catch((err) => setMsg(`操作失败: ${String(err)}`))
+                  }
+                />
+                <span className="slider" />
+              </label>
+              <span className="mono-tag">
+                {p.name} ({p.id}@{p.version}){p.external ? ' · 外部' : ''}
+              </span>
+            </div>
+          ))}
+          <button className="btn btn-small" onClick={() => void window.memorysql.invoke('memorysql:host:openPluginsDir')}>
+            打开插件目录
+          </button>
+        </section>
+
+        <section>
+          <h3>Agent 会话捕获</h3>
+          <p className="hint">启停各家 agent 的会话自动导入(关闭后重启应用生效);数据路径可改。未检测到数据目录的 agent 会显示「未检测到」,装好后点立即扫描或等增量监听。</p>
+          <AgentCaptureSection onMsg={setMsg} />
+        </section>
+
+        <section>
+          <h3>自定义 agent 登记</h3>
+          <p className="hint">
+            使用未内置支持的 agent?登记它的项目目录与要捕获的文件(如 AGENTS.md / CLAUDE.md / MEMORY.md / *.jsonl),
+            命中文件将只读导入为该 agent 的记忆。
           </p>
           <WatcherSection onMsg={setMsg} />
         </section>
@@ -186,52 +337,194 @@ export default function SettingsView() {
 }
 
 function WatcherSection({ onMsg }: { onMsg: (s: string) => void }) {
-  const [roots, setRoots] = useState<string[]>([])
-  const [input, setInput] = useState('')
+  const [entries, setEntries] = useState<Array<{ agent: string; root: string; patterns: string }>>([])
+  const [agent, setAgent] = useState('')
+  const [root, setRoot] = useState('')
+  const [patterns, setPatterns] = useState('AGENTS.md, CLAUDE.md, MEMORY.md')
 
   useEffect(() => {
-    void api.watcherList().then((r) => setRoots(r.roots))
+    void api.watcherList().then((r) => setEntries(r.entries))
   }, [])
 
   return (
     <>
       <div className="field-row">
-        <input
-          className="grow"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="D:\projects\my-app"
-        />
+        <input className="grow-sm" value={agent} onChange={(e) => setAgent(e.target.value)} placeholder="agent 名(如 cline)" />
+        <input className="grow" value={root} onChange={(e) => setRoot(e.target.value)} placeholder="D:\projects\my-app" />
+        <input className="grow" value={patterns} onChange={(e) => setPatterns(e.target.value)} placeholder="AGENTS.md, CLAUDE.md, *.jsonl" />
         <button
           className="btn btn-small"
           onClick={() =>
             void api
-              .watcherAddRoot(input)
+              .watcherAdd(agent, root, patterns)
               .then((r) => {
-                setRoots(r.roots)
-                setInput('')
-                onMsg('项目目录已加入监听并导入记忆文件')
+                setEntries(r.entries)
+                setAgent('')
+                setRoot('')
+                onMsg('自定义 agent 已登记并导入')
               })
-              .catch((e) => onMsg(`添加失败: ${String(e)}`))
+              .catch((e) => onMsg(`登记失败: ${String(e)}`))
           }
         >
-          添加监听
+          登记
         </button>
       </div>
-      {roots.map((r) => (
-        <div key={r} className="field-row">
-          <span className="mono-tag">{r}</span>
+      {entries.map((e) => (
+        <div key={`${e.agent}|${e.root}`} className="field-row">
+          <span className="mono-tag">
+            {e.agent} · {e.root} · {e.patterns}
+          </span>
           <button
             className="link danger"
             onClick={() =>
-              void api.watcherRemoveRoot(r).then((res) => setRoots(res.roots))
+              void api.watcherRemove(e.agent, e.root).then((res) => setEntries(res.entries))
             }
           >
             移除
           </button>
         </div>
       ))}
-      {roots.length === 0 && <p className="hint">暂无监听目录</p>}
+      {entries.length === 0 && <p className="hint">暂无登记</p>}
     </>
+  )
+}
+
+interface CaptureAgent {
+  id: string
+  label: string
+  pathKey: string | null
+}
+
+const CAPTURE_AGENTS: CaptureAgent[] = [
+  { id: 'capture-codex', label: 'Codex CLI', pathKey: 'sourceRoot' },
+  { id: 'capture-zcode', label: 'ZCode', pathKey: 'sourceRoot' },
+  { id: 'capture-hermes', label: 'Hermes CN Desktop', pathKey: 'profilesRoot' },
+  { id: 'capture-claudecode', label: 'Claude Code', pathKey: 'sourceRoot' },
+  { id: 'capture-gemini', label: 'Gemini CLI', pathKey: 'sourceRoot' },
+  { id: 'capture-cursor', label: 'Cursor(实验性)', pathKey: null },
+  { id: 'capture-opencode', label: 'OpenCode / Copilot CLI', pathKey: null }
+]
+
+function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
+  const [enabled, setEnabled] = useState<Record<string, boolean>>({})
+  const [status, setStatus] = useState<Record<string, { available: boolean; sourceRoot: string; detail: string }>>({})
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+
+  const load = useCallback(async (): Promise<void> => {
+    const hp = await api.hostPlugins()
+    const enabledMap: Record<string, boolean> = {}
+    for (const p of hp.plugins) enabledMap[p.id] = p.enabled
+    setEnabled(enabledMap)
+    for (const a of CAPTURE_AGENTS) {
+      try {
+        const s = await api.captureStatus(a.id)
+        setStatus((prev) => ({
+          ...prev,
+          [a.id]: {
+            available: s.available,
+            sourceRoot: s.sourceRoot,
+            detail: s.lastError
+              ? `错误: ${s.lastError}`
+              : s.lastScanAt
+                ? `${s.sessionsImported} 新导入 / ${s.sessionsFound} 扫描`
+                : s.available
+                  ? '已检测到,待扫描'
+                  : '未检测到'
+          }
+        }))
+        setDrafts((prev) => ({ ...prev, [a.id]: prev[a.id] ?? s.sourceRoot }))
+      } catch {
+        /* plugin disabled — keep defaults */
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  return (
+    <div className="agent-capture">
+      {CAPTURE_AGENTS.map((a) => {
+        const on = enabled[a.id] ?? true
+        const st = status[a.id]
+        return (
+          <div key={a.id} className={`agent-row ${on ? '' : 'agent-off'}`}>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={on}
+                onChange={(e) =>
+                  void api
+                    .hostPluginEnable(a.id, e.target.checked)
+                    .then(() => {
+                      setEnabled((prev) => ({ ...prev, [a.id]: e.target.checked }))
+                      onMsg(`${a.label} 已${e.target.checked ? '启用' : '停用'},重启应用生效`)
+                    })
+                    .catch((err) => onMsg(`操作失败: ${String(err)}`))
+                }
+              />
+              <span className="slider" />
+            </label>
+            <div className="agent-main">
+              <div className="agent-name">
+                {a.label}
+                {st && <span className={`agent-state ${st.available ? 'ok' : 'dim'}`}>{st.detail}</span>}
+              </div>
+              {on && a.pathKey && st && (
+                <div className="field-row">
+                  <input
+                    className="grow"
+                    value={drafts[a.id] ?? ''}
+                    onChange={(e) => setDrafts((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                  />
+                  <button
+                    className="btn btn-small"
+                    onClick={() =>
+                      void api
+                        .hostPluginSetting(a.id, a.pathKey as string, (drafts[a.id] ?? '').trim())
+                        .then(() => onMsg(`${a.label} 数据路径已保存,重启生效`))
+                        .catch((err) => onMsg(`保存失败: ${String(err)}`))
+                    }
+                  >
+                    存路径
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function ModelField({
+  value,
+  onChange,
+  onFetch,
+  models
+}: {
+  value: string
+  onChange: (v: string) => void
+  onFetch: () => void
+  models: string[]
+}) {
+  const listId = `models-${value.length}-${models.length}`
+  return (
+    <label className="field">
+      <span>模型(可手输,或点「获取模型列表」)</span>
+      <div className="field-row">
+        <input className="grow" list={listId} value={value} onChange={(e) => onChange(e.target.value)} />
+        <button className="btn btn-small" onClick={onFetch}>
+          获取模型列表
+        </button>
+      </div>
+      <datalist id={listId}>
+        {models.map((m) => (
+          <option key={m} value={m} />
+        ))}
+      </datalist>
+    </label>
   )
 }

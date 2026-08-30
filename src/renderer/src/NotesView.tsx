@@ -18,13 +18,16 @@ const ExternalEdit = Annotation.define<boolean>()
 
 const editorTheme = EditorView.theme(
   {
-    '&': { backgroundColor: '#14171c', color: '#dee4ee', fontSize: '13.5px', height: '100%' },
-    '.cm-content': { fontFamily: "'Cascadia Code', Consolas, monospace", caretColor: '#e2a93e' },
-    '.cm-gutters': { backgroundColor: '#14171c', color: '#5c6980', border: 'none' },
-    '.cm-activeLine': { backgroundColor: '#1a1f27' },
-    '.cm-activeLineGutter': { backgroundColor: '#1a1f27' },
-    '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: '#2b3342' },
-    '.cm-panels': { backgroundColor: '#1a1f27', color: '#dee4ee' }
+    '&': { backgroundColor: 'transparent', color: '#f8fafc', fontSize: '13.5px', height: '100%' },
+    '.cm-content': {
+      fontFamily: "'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
+      caretColor: '#34d399'
+    },
+    '.cm-gutters': { backgroundColor: 'transparent', color: '#64748b', border: 'none' },
+    '.cm-activeLine': { backgroundColor: 'rgba(148, 163, 184, 0.07)' },
+    '.cm-activeLineGutter': { backgroundColor: 'rgba(148, 163, 184, 0.07)' },
+    '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'rgba(148, 163, 184, 0.22)' },
+    '.cm-panels': { backgroundColor: '#111827', color: '#f8fafc' }
   },
   { dark: true }
 )
@@ -36,6 +39,9 @@ export default function NotesView() {
   const [dirty, setDirty] = useState(false)
   const [msg, setMsg] = useState('')
   const [search, setSearch] = useState('')
+  // Electron renderers don't implement window.prompt — new notes use this inline form
+  const [creating, setCreating] = useState(false)
+  const [newTitle, setNewTitle] = useState('')
   const editorRef = useRef<EditorView | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const currentIdRef = useRef<number | null>(null)
@@ -110,6 +116,21 @@ export default function NotesView() {
     })
   }, [loadList, openNote])
 
+  const createNote = useCallback(async (): Promise<void> => {
+    const title = newTitle.trim()
+    if (!title) return
+    try {
+      const r = await api.notesCreate(title)
+      await loadList()
+      await openNote(r.id)
+      setCreating(false)
+      setNewTitle('')
+      setMsg('')
+    } catch (e) {
+      setMsg(`新建失败: ${String(e)}`)
+    }
+  }, [newTitle, loadList, openNote])
+
   const filtered = notes.filter(
     (n) =>
       !search.trim() ||
@@ -122,21 +143,27 @@ export default function NotesView() {
       <div className="notes-list">
         <div className="pane-title">
           笔记 ({notes.length})
-          <button
-            className="btn btn-small"
-            style={{ marginLeft: 8 }}
-            onClick={() => {
-              const title = prompt('新笔记标题:')
-              if (!title) return
-              void api
-                .notesCreate(title)
-                .then((r) => loadList().then(() => openNote(r.id)))
-                .catch((e) => setMsg(String(e)))
-            }}
-          >
+          <button className="btn btn-small" style={{ marginLeft: 8 }} onClick={() => setCreating((v) => !v)}>
             + 新建
           </button>
         </div>
+        {creating && (
+          <div className="note-create">
+            <input
+              autoFocus
+              value={newTitle}
+              placeholder="新笔记标题,Enter 确认"
+              onChange={(e) => setNewTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void createNote()
+                if (e.key === 'Escape') setCreating(false)
+              }}
+            />
+            <button className="btn btn-accent btn-small" disabled={!newTitle.trim()} onClick={() => void createNote()}>
+              创建
+            </button>
+          </div>
+        )}
         <input
           className="search notes-search"
           placeholder="筛选笔记…"

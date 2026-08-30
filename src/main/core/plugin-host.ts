@@ -123,6 +123,22 @@ export class PluginHost {
   private services = new Map<string, { service: unknown; pluginId: string }>()
   private unwatchers: UnwatchFn[] = []
   private started = false
+  /** plugins skipped due to being disabled (or depending on a disabled one) */
+  private skipped: string[] = []
+  private external: MemorySQLPlugin[] = []
+  private loadErrorLog: string[] = []
+
+  recordLoadError(message: string): void {
+    this.loadErrorLog.push(message)
+  }
+
+  loadErrors(): string[] {
+    return [...this.loadErrorLog]
+  }
+
+  externalPlugins(): MemorySQLPlugin[] {
+    return this.external
+  }
 
   constructor(
     private readonly env: AppEnv,
@@ -132,24 +148,40 @@ export class PluginHost {
   ) {}
 
   /** Register built-in plugins; external directory loading arrives in M4. */
-  add(plugin: MemorySQLPlugin): void {
+  add(plugin: MemorySQLPlugin, external = false): void {
     if (this.started) throw new Error('PluginHost already started')
     if (this.plugins.some((p) => p.manifest.id === plugin.manifest.id)) {
       throw new Error(`Duplicate plugin id: ${plugin.manifest.id}`)
     }
     this.plugins.push(plugin)
+    if (external) this.external.push(plugin)
   }
 
-  /** Topologically sort by manifest.requires, then init + start. */
+  /** Topologically sort by manifest.requires, then init + start.
+   * A plugin whose init/start throws is disabled for this run (recorded as a
+   * load error) instead of taking the whole app down. */
   async startAll(): Promise<void> {
     const order = this.topoSort()
+    const failedInit = new Set<string>()
     for (const plugin of order) {
       const ctx = this.createContext(plugin)
       this.contexts.set(plugin.manifest.id, ctx)
-      await plugin.init(ctx)
+      try {
+        await plugin.init(ctx)
+      } catch (err) {
+        failedInit.add(plugin.manifest.id)
+        this.loadErrorLog.push(`${plugin.manifest.id}: init 失败 — ${String(err)}`)
+        console.error(`[plugin-host] init failed for ${plugin.manifest.id}:`, err)
+      }
     }
     for (const plugin of order) {
-      await plugin.start?.()
+      if (failedInit.has(plugin.manifest.id)) continue
+      try {
+        await plugin.start?.()
+      } catch (err) {
+        this.loadErrorLog.push(`${plugin.manifest.id}: start 失败 — ${String(err)}`)
+        console.error(`[plugin-host] start failed for ${plugin.manifest.id}:`, err)
+      }
     }
     this.started = true
   }
@@ -178,24 +210,54 @@ export class PluginHost {
     return [...this.mcpTools.values()]
   }
 
+  /** ids of plugins not started this run (disabled or dependency-disabled) */
+  skippedPlugins(): string[] {
+    return [...this.skipped]
+  }
+
+  /** Topologically sort by manifest.requires, skipping disabled plugins
+   * (settings key `plugin.<id>.enabled`). Dependents of a disabled plugin
+   * are disabled too (cascading). */
   private topoSort(): MemorySQLPlugin[] {
+    this.skipped = []
+    const isDisabled = (id: string): boolean =>
+      this.settings.get(`plugin.${id}.enabled`, true as boolean) === false
     const byId = new Map(this.plugins.map((p) => [p.manifest.id, p]))
     const visited = new Set<string>()
+    const skippedIds = new Set<string>()
     const visiting = new Set<string>()
     const order: MemorySQLPlugin[] = []
 
     const visit = (id: string): void => {
-      if (visited.has(id)) return
       if (visiting.has(id)) throw new Error(`Circular plugin dependency at: ${id}`)
+      if (visited.has(id)) return
       visiting.add(id)
       const plugin = byId.get(id)
-      if (!plugin) throw new Error(`Plugin ${id} requires missing plugin`)
+      if (!plugin || isDisabled(id)) {
+        // absent or disabled → cascade-skips dependents
+        visited.add(id)
+        skippedIds.add(id)
+        visiting.delete(id)
+        if (isDisabled(id)) this.skipped.push(`${id} (已禁用)`)
+        return
+      }
       for (const dep of plugin.manifest.requires ?? []) visit(dep)
+      const unmet = (plugin.manifest.requires ?? []).filter(
+        (dep) => skippedIds.has(dep)
+      )
       visiting.delete(id)
       visited.add(id)
+      if (unmet.length > 0) {
+        skippedIds.add(id)
+        this.skipped.push(`${id} (依赖未启用: ${unmet.join(', ')})`)
+        return
+      }
       order.push(plugin)
     }
     for (const p of this.plugins) visit(p.manifest.id)
+    if (this.skipped.length > 0) {
+      console.warn('[plugin-host] disabled/skipped plugins:', this.skipped.join('; '))
+    }
     return order
   }
 

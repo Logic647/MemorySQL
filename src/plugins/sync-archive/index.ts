@@ -37,12 +37,13 @@ const plugin: MemorySQLPlugin = {
         zip.addFile(
           'manifest.json',
           JSON.stringify(
-            { format: 'msqlv', version: 1, app: 'memorysql', exportedAt: new Date().toISOString() },
+            { format: 'msqlv', version: 1, app: 'memorysql', exportedAt: new Date().toISOString(), includesSettings: true },
             null,
             2
           )
         )
         zip.addLocalFile(snapshot, '', 'memory.db')
+        if (fs.existsSync(ctx.env.settingsPath)) zip.addLocalFile(ctx.env.settingsPath, '', 'settings.json')
         if (fs.existsSync(ctx.env.vaultDir)) zip.addLocalFolder(ctx.env.vaultDir, 'vault')
         zip.writeZip(target)
       } finally {
@@ -97,6 +98,8 @@ const plugin: MemorySQLPlugin = {
       fs.rmSync(staging, { recursive: true, force: true })
       fs.mkdirSync(staging, { recursive: true })
       fs.renameSync(tmpDb, path.join(staging, 'memory.db'))
+      const settingsEntry = zip.getEntry('settings.json')
+      if (settingsEntry) fs.writeFileSync(path.join(staging, 'settings.json'), settingsEntry.getData())
       for (const entry of zip.getEntries()) {
         if (entry.entryName.startsWith('vault/') && !entry.isDirectory) {
           zip.extractEntryTo(entry, staging, true, true)

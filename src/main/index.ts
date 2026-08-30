@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import { resolveAppEnv } from './core/env'
+import { pathToFileURL } from 'node:url'
+import { resolveAppEnv, defaultDataDir } from './core/env'
 import { SettingsStore } from './core/settings'
 import { EventBus } from './core/event-bus'
 import { Db } from './core/db'
@@ -12,6 +13,10 @@ import coreSchema from '../plugins/core-schema'
 import captureCodex from '../plugins/capture-codex'
 import captureZcode from '../plugins/capture-zcode'
 import captureHermes from '../plugins/capture-hermes'
+import captureClaudecode from '../plugins/capture-claudecode'
+import captureGemini from '../plugins/capture-gemini'
+import captureCursor from '../plugins/capture-cursor'
+import captureOpencode from '../plugins/capture-opencode'
 import mcpServer from '../plugins/mcp-server'
 import privacyExport from '../plugins/privacy-export'
 import syncArchive from '../plugins/sync-archive'
@@ -20,6 +25,12 @@ import memoryDispatch from '../plugins/memory-dispatch'
 import syncFolder from '../plugins/sync-folder'
 import coreVault from '../plugins/core-vault'
 import captureWatcher from '../plugins/capture-watcher'
+import type { MemorySQLPlugin } from './core/plugin-host'
+
+type PluginLike = {
+  manifest?: { id?: string; name?: string; version?: string }
+  init?: (ctx: unknown) => void
+}
 
 // Order here is only a hint — the host topologically sorts by manifest.requires.
 // summarizer-llm BEFORE rules: the host picks the first *available* provider,
@@ -32,6 +43,10 @@ const BUILTIN_PLUGINS = [
   captureCodex,
   captureZcode,
   captureHermes,
+  captureClaudecode,
+  captureGemini,
+  captureCursor,
+  captureOpencode,
   captureWatcher,
   mcpServer,
   privacyExport,
@@ -74,6 +89,13 @@ function processPendingImport(dataDir: string, dbPath: string, vaultDir: string)
         fs.rmSync(vaultDir, { recursive: true, force: true })
         fs.renameSync(stagedVault, vaultDir)
       }
+      // archives may carry settings.json (agent paths etc.) — rotate aside
+      const stagedSettings = path.join(stagingDir, 'settings.json')
+      const settingsPath = path.join(dataDir, 'settings.json')
+      if (fs.existsSync(stagedSettings)) {
+        if (fs.existsSync(settingsPath)) fs.renameSync(settingsPath, `${settingsPath}.pre-import-${Date.now()}`)
+        fs.renameSync(stagedSettings, settingsPath)
+      }
     }
     fs.rmSync(markerPath, { force: true })
     fs.rmSync(stagingDir, { recursive: true, force: true })
@@ -90,6 +112,8 @@ async function bootstrap(): Promise<{
   host: PluginHost
   db: Db
   events: EventBus
+  settings: SettingsStore
+  env: ReturnType<typeof resolveAppEnv>
 }> {
   const env = resolveAppEnv()
   processPendingImport(env.dataDir, env.dbPath, env.vaultDir)
@@ -98,19 +122,20 @@ async function bootstrap(): Promise<{
   const events = new EventBus()
   const host = new PluginHost(env, db, settings, events)
   for (const p of BUILTIN_PLUGINS) host.add(p)
+  await loadExternalPlugins(env.dataDir, host)
   await host.startAll()
-  return { host, db, events }
+  return { host, db, events, settings, env }
 }
 
 async function runHeadlessScan(): Promise<void> {
   const { host, db } = await bootstrap()
   const results: Record<string, unknown> = {}
   if (HEADLESS_SCAN) {
-    for (const pluginId of ['capture-codex', 'capture-zcode', 'capture-hermes']) {
+    for (const p of BUILTIN_PLUGINS.filter((x) => x.manifest.id.startsWith('capture-'))) {
       try {
-        results[pluginId] = await host.invoke(`${pluginId}:scanNow`)
+        results[p.manifest.id] = await host.invoke(`${p.manifest.id}:scanNow`)
       } catch (err) {
-        results[pluginId] = { error: String(err) }
+        results[p.manifest.id] = { error: String(err) }
       }
     }
   }
@@ -148,6 +173,139 @@ async function runHeadlessScan(): Promise<void> {
   app.exit(0)
 }
 
+/**
+ * Host-level (infra) channels for the settings UI: plugin enable/disable
+ * (applies next launch) and per-plugin namespaced settings.
+ */
+/**
+ * 外部插件:<dataDir>/plugins/<id>/manifest.json + 单文件 CJS main.js。
+ * 隔离加载:单个插件失败不影响应用,只记录错误并在设置页展示。
+ */
+async function loadExternalPlugins(dataDir: string, host: PluginHost): Promise<void> {
+  const root = path.join(dataDir, 'plugins')
+  if (!fs.existsSync(root)) return
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const dir = path.join(root, entry.name)
+    try {
+      const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf-8')) as {
+        id?: string
+        name?: string
+        version?: string
+        main?: string
+      }
+      if (!manifest.id || !/^[a-z0-9_-]+$/.test(manifest.id)) throw new Error('manifest.id 缺失或非法')
+      if (!manifest.name || !manifest.version) throw new Error('manifest.name / version 缺失')
+      const mainFile = path.resolve(dir, manifest.main ?? 'main.js')
+      if (!mainFile.startsWith(path.resolve(dir) + path.sep)) throw new Error('main 不得逃出插件目录')
+      if (!fs.existsSync(mainFile)) throw new Error(`入口文件不存在: ${manifest.main ?? 'main.js'}`)
+      // Evaluate as CJS via injected module/exports/require — immune to the
+      // app's "type":"module" scope, and plugins can require('electron').
+      const { createRequire } = await import('node:module')
+      const localRequire = createRequire(pathToFileURL(mainFile).href)
+      const code = fs.readFileSync(mainFile, 'utf-8')
+      const module_ = { exports: {} as Record<string, unknown> }
+      // eslint-disable-next-line no-new-func
+      const factory = new Function('module', 'exports', 'require', code) as (
+        m: typeof module_,
+        e: Record<string, unknown>,
+        r: NodeJS.Require
+      ) => void
+      factory(module_, module_.exports, localRequire as unknown as NodeJS.Require)
+      const exported = (module_.exports as { default?: unknown }).default ?? module_.exports
+      const plugin = exported as PluginLike
+      if (!plugin?.manifest?.id || typeof plugin.init !== 'function') {
+        throw new Error('缺 default 导出或 init(ctx) 方法')
+      }
+      if (plugin.manifest.id !== manifest.id) throw new Error('代码 manifest.id 与 manifest.json 不一致')
+      host.add(plugin as unknown as MemorySQLPlugin, true)
+      console.info(`[plugins] external loaded: ${manifest.id}`)
+    } catch (err) {
+      const msg = `${entry.name}: ${String(err instanceof Error ? err.message : err)}`
+      host.recordLoadError(msg)
+      console.error(`[plugins] external load failed — ${msg}`)
+    }
+  }
+}
+
+const hostChannels = new Map<string, (payload: Record<string, unknown>) => unknown>()
+
+function registerHostChannels(host: PluginHost, settings: SettingsStore, env: ReturnType<typeof resolveAppEnv>, db: Db): void {
+  hostChannels.set('memorysql:host:plugins', () => ({
+    plugins: [
+      ...BUILTIN_PLUGINS.map((p) => ({
+        id: p.manifest.id,
+        name: p.manifest.name,
+        version: p.manifest.version,
+        enabled: settings.get(`plugin.${p.manifest.id}.enabled`, true),
+        external: false
+      })),
+      ...host.externalPlugins().map((p) => ({
+        id: p.manifest.id,
+        name: p.manifest.name,
+        version: p.manifest.version,
+        enabled: settings.get(`plugin.${p.manifest.id}.enabled`, true),
+        external: true
+      }))
+    ],
+    skipped: host.skippedPlugins(),
+    loadErrors: host.loadErrors(),
+    pluginsDir: path.join(env.dataDir, 'plugins')
+  }))
+  hostChannels.set('memorysql:host:pluginEnable', (payload) => {
+    const { id, enabled } = (payload ?? {}) as { id?: string; enabled?: boolean }
+    if (typeof id !== 'string' || !id || typeof enabled !== 'boolean') {
+      throw new Error('pluginEnable requires {id: string, enabled: boolean}')
+    }
+    settings.set(`plugin.${id}.enabled`, enabled)
+    return { ok: true, restartNeeded: true }
+  })
+  hostChannels.set('memorysql:host:pluginSetting', (payload) => {
+    const { id, key, value } = (payload ?? {}) as { id?: string; key?: string; value?: unknown }
+    if (typeof id !== 'string' || !id || typeof key !== 'string' || !key) {
+      throw new Error('pluginSetting requires {id, key, value}')
+    }
+    settings.set(`${id}:${key}`, value)
+    return { ok: true, restartNeeded: true }
+  })
+  hostChannels.set('memorysql:host:openPluginsDir', () => {
+    void shell.openPath(path.join(env.dataDir, 'plugins'))
+    return { ok: true }
+  })
+  // storage relocation: snapshot db into the target, copy vault+settings,
+  // drop a one-shot marker and relaunch. The old dir is left untouched.
+  hostChannels.set('memorysql:host:dataDir', (payload: { dir?: string; reset?: boolean }) => {
+    const defaultDir = defaultDataDir()
+    if (payload?.reset) {
+      fs.writeFileSync(
+        path.join(defaultDir, '.datadir-pending'),
+        JSON.stringify({ target: null }),
+        'utf-8'
+      )
+      app.relaunch()
+      app.exit(0)
+      return { ok: true, relaunching: true }
+    }
+    const target = path.resolve((payload?.dir ?? '').trim())
+    if (!target || target === path.resolve(env.dataDir)) throw new Error('请选择一个不同的目录')
+    if (path.resolve(target) === path.resolve(defaultDir) && env.dataDirIsCustom === false) {
+      throw new Error('该目录已是默认位置')
+    }
+    fs.mkdirSync(path.join(target, 'vault'), { recursive: true })
+    db.sqlite.exec(`VACUUM INTO '${path.join(target, 'memory.db').replace(/'/g, "''")}'`)
+    fs.cpSync(env.vaultDir, path.join(target, 'vault'), { recursive: true })
+    if (fs.existsSync(env.settingsPath)) fs.copyFileSync(env.settingsPath, path.join(target, 'settings.json'))
+    fs.writeFileSync(
+      path.join(defaultDir, '.datadir-pending'),
+      JSON.stringify({ target }),
+      'utf-8'
+    )
+    app.relaunch()
+    app.exit(0)
+    return { ok: true, relaunching: true }
+  })
+}
+
 function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
   const win = new BrowserWindow({
     width: 1360,
@@ -169,6 +327,12 @@ function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
   })
 
   ipcMain.handle('memorysql:invoke', (_event, channel: string, payload: unknown) => {
+    // host (infra) channels share the renderer bridge but bypass plugin space
+    if (typeof channel === 'string' && channel.startsWith('memorysql:host:')) {
+      const handler = hostChannels.get(channel)
+      if (!handler) throw new Error(`Unknown channel: ${channel}`)
+      return handler((payload ?? {}) as Record<string, unknown>)
+    }
     return host.invoke(channel, payload)
   })
   ipcMain.handle('memorysql:channels', () => host.listChannels())
@@ -190,6 +354,7 @@ app.whenReady().then(async () => {
     }
     const boot = await bootstrap()
     running = { host: boot.host, db: boot.db }
+    registerHostChannels(boot.host, boot.settings, boot.env, boot.db)
     createWindow(boot.host, boot.events)
   } catch (err) {
     console.error('Fatal bootstrap error:', err)

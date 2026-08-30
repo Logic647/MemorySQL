@@ -1,6 +1,16 @@
 // Shared types between main, plugins, and renderer.
 
-export type AgentType = 'codex' | 'zcode' | 'hermes'
+// Known agents get literal typing; `(string & {})` keeps autocomplete while
+// allowing user-registered custom agents (capture-watcher 登记式).
+export type AgentType =
+  | 'codex'
+  | 'zcode'
+  | 'hermes'
+  | 'claudecode'
+  | 'gemini'
+  | 'cursor'
+  | 'opencode'
+  | (string & {})
 export type MessageRole = 'user' | 'assistant' | 'tool' | 'system'
 
 /** Normalized message produced by capture adapters. */

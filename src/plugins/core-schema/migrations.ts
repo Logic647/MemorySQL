@@ -4,9 +4,6 @@ export const CORE_MIGRATIONS: Migration[] = [
   {
     version: 1,
     up: `
--- v1: core business schema. All business tables carry the sync triple
--- (updated_at / device_id / deleted) reserved for incremental sync.
-
 CREATE TABLE projects (
   id         INTEGER PRIMARY KEY,
   path       TEXT UNIQUE,
@@ -74,6 +71,14 @@ CREATE TABLE devices (
 -- without a segmenter. rowid mirrors the source table id.
 CREATE VIRTUAL TABLE sessions_fts USING fts5(title, summary, tokenize='trigram');
 CREATE VIRTUAL TABLE messages_fts USING fts5(content, tokenize='trigram');
+`
+  },
+  {
+    version: 2,
+    up: `
+-- v2: per-agent memory dimension (NULL = global across agents)
+ALTER TABLE memories ADD COLUMN agent_type TEXT;
+CREATE INDEX idx_memories_agent ON memories(agent_type, kind, status);
 `
   }
 ]

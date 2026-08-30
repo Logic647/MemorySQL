@@ -21,6 +21,24 @@
 
 **数据 100% 本地**(`data/` 目录已被 gitignore,永不入库):会话原文、记忆、笔记全部明文存本机,自己可见;任何"导出/分享"路径统一经过脱敏模块后才对外。
 
+## 插件技术规范(社区插件)
+
+MemorySQL 一切功能皆插件,并支持**外部插件**。把插件放进 `<数据目录>/plugins/<id>/`(设置 → 插件管理 → 打开插件目录),重启即加载:
+
+```
+plugins/my-plugin/
+├── manifest.json   # {"id":"my-plugin","name":"My Plugin","version":"0.1.0","main":"main.js"}
+└── main.js         # CommonJS 单文件,export default {manifest, init(ctx), start?, stop?}
+```
+
+约定与技术约束:
+
+- `main.js` 必须是 **CommonJS 单文件 bundle**,入口 `module.exports.default = {manifest:{id,name,version}, init(ctx){…}}`;id 与 manifest.json 一致,只含 `[a-z0-9_-]`
+- **不得携带 npm 依赖与原生模块**——文件监听用 `ctx.watcher`,SQLite 用 `ctx.db.sqlite`,HTTP 用 Node 全局 fetch
+- `ctx` 提供:db(迁移/句柄)、settings(命名空间键值)、ipc(注册渲染通道)、mcp(注册 MCP 工具)、watcher、events、services(插件间服务)、env(数据目录路径)——完整 API 见 [docs/plugins.md](docs/plugins.md)
+- 单个插件加载失败只禁用自身并在设置页展示原因,不影响应用与其它插件;每个插件可在设置中启停(重启生效)
+- API 版本随 manifest `version` 演进;破坏性变更会在 DEVLOG 标注
+
 ## 开发
 
 ```bash

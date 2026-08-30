@@ -148,6 +148,44 @@ export function createMcpTools(deps: {
 
   return [
     {
+      name: 'memory_get_session',
+      description:
+        '按会话 id 获取完整消息时间线(角色/内容/时间/工具名),用于 agent 回读历史上下文。会话列表与标题旁均展示 id。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'number', description: '会话数字 id' },
+          tail: { type: 'number', description: '只取最后 N 条消息(省略则全量)' }
+        },
+        required: ['id']
+      },
+      handler: (args) => {
+        const id = Number(args.id)
+        if (!id || Number.isNaN(id)) return '参数错误:需要数字 id'
+        const session = sqlite
+          .prepare('SELECT title, agent_type, started_at, summary FROM sessions WHERE id = ? AND deleted = 0')
+          .get(id) as { title: string | null; agent_type: string; started_at: number | null; summary: string | null } | undefined
+        if (!session) return `未找到会话 #${id}`
+        let messages = sqlite
+          .prepare('SELECT role, content, ts, tool_name FROM session_messages WHERE session_id = ? ORDER BY seq')
+          .all(id) as Array<{ role: string; content: string; ts: number | null; tool_name: string | null }>
+        const tail = Number(args.tail)
+        const omitted = tail > 0 && messages.length > tail ? messages.length - tail : 0
+        if (omitted > 0) messages = messages.slice(-tail)
+        const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n)}…[截断]` : s)
+        const when = (ts: number | null): string =>
+          ts ? new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }) : ''
+        const body = messages
+          .map((m) => {
+            const label = m.role === 'tool' ? `TOOL(${m.tool_name ?? 'tool'})` : m.role.toUpperCase()
+            return `**${label}** ${when(m.ts)}\n${clip(m.content, 2000)}`
+          })
+          .join('\n\n---\n\n')
+        const head = `# ${session.title ?? `会话 #${id}`}\n- id: ${id}\n- agent: ${session.agent_type}\n- 开始: ${when(session.started_at)}\n- 消息数: ${messages.length}${omitted > 0 ? `(已省略前 ${omitted} 条,可用 tail=0 获取全量)` : ''}\n`
+        return `${head}\n${session.summary ? `> 摘要: ${clip(session.summary, 200)}\n\n` : ''}${body}`
+      }
+    },
+    {
       name: 'memory_get_context',
       description:
         '获取"续接包":开发者画像 + 长期记忆 + 项目状态 + 最近会话摘要。agent 新会话开始时调用一次即可恢复上下文。',

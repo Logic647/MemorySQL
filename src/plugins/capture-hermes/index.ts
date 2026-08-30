@@ -1,11 +1,10 @@
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
-import Database from 'better-sqlite3'
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import type { CaptureStatus, RawMessage, RawSession } from '../../shared/types'
 import type { IngestService } from '../core-schema/ingest'
 import type { MemoriesService } from '../core-schema'
+import { openForeignDb } from '../../main/core/sqlite-ro'
 
 /**
  * Hermes Agent CN Desktop data layout (user-provided):
@@ -26,30 +25,8 @@ interface HermesRow {
   timestamp?: number | null
 }
 
-function openHermesDb(dbPath: string): { db: Database.Database; cleanup: () => void } {
-  try {
-    const db = new Database(dbPath, { readonly: true, fileMustExist: true })
-    db.pragma('busy_timeout = 3000')
-    // touch a table to force any lock issue to surface early
-    db.prepare('SELECT COUNT(*) FROM sessions').get()
-    return { db, cleanup: () => db.close() }
-  } catch {
-    // locked / unreadable in place — fall back to a temp snapshot and always
-    // remove it afterwards, or repeated scans leak copies into %TEMP%
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'memorysql-hermes-'))
-    for (const suffix of ['', '-wal', '-shm']) {
-      const src = `${dbPath}${suffix}`
-      if (fs.existsSync(src)) fs.copyFileSync(src, path.join(tmpDir, `state.db${suffix}`))
-    }
-    const db = new Database(path.join(tmpDir, 'state.db'), { readonly: true, fileMustExist: true })
-    return {
-      db,
-      cleanup: () => {
-        db.close()
-        fs.rmSync(tmpDir, { recursive: true, force: true })
-      }
-    }
-  }
+function openHermesDb(dbPath: string): { db: import('better-sqlite3').Database; cleanup: () => void } {
+  return openForeignDb(dbPath)
 }
 
 function parseHermesDb(dbPath: string, externalIdPrefix: string): RawSession[] {

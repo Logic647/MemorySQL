@@ -6,8 +6,8 @@ import { createSearchService, type SearchService } from './search'
 import { createMcpTools } from './mcp-tools'
 
 export interface MemoriesService {
-  upsertMemory(input: { kind: string; content: string; source: string }): { id: number; changed: boolean }
-  addMemory(input: { kind: string; content: string; source: string }): { id: number }
+  upsertMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string }): { id: number; changed: boolean }
+  addMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string }): { id: number }
 }
 
 const plugin: MemorySQLPlugin = {
@@ -15,7 +15,6 @@ const plugin: MemorySQLPlugin = {
     id: 'core-schema',
     name: 'Core Schema & Ingest',
     version: '0.1.0',
-    requires: ['summarizer-rules']
   },
 
   init(ctx) {
@@ -25,7 +24,10 @@ const plugin: MemorySQLPlugin = {
     const ingest = createIngestService({
       sqlite: ctx.db.sqlite,
       getSummarizer: () => ctx.summarizer.pickActive(),
-      onIngest: () => ctx.events.emit('sessions:changed')
+      onIngest: (sessionIds) => {
+        if (sessionIds.length > 0) ctx.events.emit('ingest:result', sessionIds)
+        ctx.events.emit('sessions:changed')
+      }
     })
     const search = createSearchService(ctx.db.sqlite)
 
@@ -95,7 +97,7 @@ const plugin: MemorySQLPlugin = {
     ctx.ipc.handle('memories:list', () => {
       return ctx.db.sqlite
         .prepare(
-          `SELECT id, kind, content, source, status, updated_at FROM memories
+          `SELECT id, kind, content, source, status, agent_type AS agentType, updated_at FROM memories
            WHERE deleted = 0 ORDER BY kind, updated_at DESC`
         )
         .all()

@@ -7,6 +7,7 @@ interface MemoryRow {
   content: string
   source: string | null
   status: string
+  agentType: string | null
   updated_at: number
 }
 
@@ -28,8 +29,10 @@ export default function MemoriesView() {
   const [rows, setRows] = useState<MemoryRow[]>([])
   const [draft, setDraft] = useState<Draft | null>(null)
   const [msg, setMsg] = useState('')
+  const [agentFilter, setAgentFilter] = useState<string>('all')
+  const [refining, setRefining] = useState(false)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<void> => {
     setRows((await api.memories()) as unknown as MemoryRow[])
   }, [])
 
@@ -37,7 +40,10 @@ export default function MemoriesView() {
     void load()
   }, [load])
 
-  const save = useCallback(async () => {
+  const agents = [...new Set(rows.map((r) => r.agentType).filter((a): a is string => Boolean(a)))]
+  const visible = rows.filter((r) => agentFilter === 'all' || r.agentType === agentFilter || (!r.agentType && agentFilter === 'global'))
+
+  const save = useCallback(async (): Promise<void> => {
     if (!draft) return
     try {
       await api.memoriesSave({ id: draft.id, kind: draft.kind, content: draft.content })
@@ -48,6 +54,19 @@ export default function MemoriesView() {
       setMsg(`保存失败: ${String(e)}`)
     }
   }, [draft, load])
+
+  const refine = useCallback(async (): Promise<void> => {
+    setRefining(true)
+    try {
+      const r = await api.memoriesRefine(agentFilter === 'all' ? undefined : agentFilter)
+      setMsg(r.message)
+      await load()
+    } catch (e) {
+      setMsg(`精炼失败: ${String(e)}`)
+    } finally {
+      setRefining(false)
+    }
+  }, [agentFilter, load])
 
   return (
     <div className="memories-pane">
@@ -68,7 +87,18 @@ export default function MemoriesView() {
         >
           生成分发文件
         </button>
+        <button className="btn btn-small" style={{ marginLeft: 6 }} disabled={refining} onClick={() => void refine()}>
+          {refining ? '精炼中…' : 'LLM 精炼候选'}
+        </button>
         {msg && <span className="pane-msg">{msg}</span>}
+      </div>
+
+      <div className="mem-filters">
+        {['all', 'global', ...agents].map((a) => (
+          <button key={a} className={`chip ${agentFilter === a ? 'chip-active' : ''}`} onClick={() => setAgentFilter(a)}>
+            {a === 'all' ? '全部' : a === 'global' ? '全局' : a}
+          </button>
+        ))}
       </div>
 
       {draft && (
@@ -99,7 +129,7 @@ export default function MemoriesView() {
 
       <div className="mem-list">
         {KINDS.map((kind) => {
-          const group = rows.filter((r) => r.kind === kind)
+          const group = visible.filter((r) => r.kind === kind)
           if (group.length === 0) return null
           return (
             <div key={kind}>
@@ -111,6 +141,7 @@ export default function MemoriesView() {
                   <pre className="mem-content">{r.content}</pre>
                   <div className="mem-meta">
                     <span className="mem-source">{r.source ?? 'manual'}</span>
+                    {r.agentType && <span className="mono-tag">· {r.agentType}</span>}
                     {r.status !== 'active' && <span>· {r.status}</span>}
                     <span className="mem-actions">
                       <button className="link" onClick={() => setDraft({ id: r.id, kind: r.kind, content: r.content })}>

@@ -27,9 +27,10 @@ export default function GraphView() {
           selector: 'node',
           style: {
             label: 'data(label)',
-            'background-color': '#e2a93e',
+            'background-color': '#34d399',
+            'background-opacity': 0.9,
             'font-size': 9,
-            color: '#dee4ee',
+            color: '#f8fafc',
             'text-valign': 'bottom',
             'text-margin-y': 4,
             width: 14,
@@ -41,15 +42,15 @@ export default function GraphView() {
           selector: 'edge',
           style: {
             width: 1.2,
-            'line-color': '#2b3342',
+            'line-color': 'rgba(148, 163, 184, 0.25)',
             'curve-style': 'bezier',
-            'target-arrow-color': '#2b3342',
+            'target-arrow-color': 'rgba(148, 163, 184, 0.25)',
             'target-arrow-shape': 'triangle'
           }
         },
         {
           selector: 'node:selected',
-          style: { 'background-color': '#5fa8ff', 'font-size': 12 }
+          style: { 'background-color': '#7dd3fc', 'font-size': 12 }
         }
       ],
       layout: { name: 'cose', animate: false, padding: 30, idealEdgeLength: 90 },

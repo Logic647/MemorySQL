@@ -12,6 +12,8 @@ import { handleRpc, parseRpcMessage, type JsonRpcRequest } from '../../main/core
 let server: http.Server | null = null
 let running = false
 let runtimeCtx: PluginContext | null = null
+let effectivePort = 0
+let portNote: string | null = null
 
 function currentPort(): number {
   return Number(runtimeCtx?.settings.get('port', 8642) ?? 8642)
@@ -25,49 +27,100 @@ function startServer(): void {
     ctx.log.info('disabled in settings, not starting')
     return
   }
-  const port = currentPort()
-  server = http.createServer((req, res) => {
-    if (req.method === 'GET' && req.url === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, server: 'memorysql-mcp' }))
-      return
-    }
-    if (req.method !== 'POST' || req.url !== '/mcp') {
-      res.writeHead(404).end()
-      return
-    }
-    const chunks: Buffer[] = []
-    req.on('data', (c: Buffer) => chunks.push(c))
-    req.on('end', () => {
-      void (async () => {
-        const msg = parseRpcMessage(Buffer.concat(chunks).toString('utf-8'))
-        if (!msg) {
-          res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(
-            JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } })
-          )
-          return
-        }
-        const response = await handleRpc(msg as JsonRpcRequest, ctx.mcp.list())
-        if (response === null) {
-          res.writeHead(202).end()
-          return
-        }
+  const requested = currentPort()
+  let attempts = 0
+  let port = requested
+  portNote = null
+
+  const listen = (): void => {
+    server = http.createServer((req, res) => {
+      // DNS-rebinding / cross-origin hardening: browsers always send Origin on
+      // cross-site POSTs; MCP clients send neither. Anything unexpected → 403.
+      const hostHeader = String(req.headers.host ?? '')
+      if (!hostHeader.startsWith(`127.0.0.1:${port}`) && !hostHeader.startsWith(`localhost:${port}`)) {
+        res.writeHead(403).end()
+        return
+      }
+      const origin = req.headers.origin
+      if (origin && origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) {
+        res.writeHead(403).end()
+        return
+      }
+      if (req.method === 'GET' && req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify(response))
-      })().catch((e) => {
-        ctx.log.error('mcp request failed:', e)
-        if (!res.headersSent) res.writeHead(500)
-        res.end()
+        res.end(JSON.stringify({ ok: true, server: 'memorysql-mcp', port }))
+        return
+      }
+      if (req.method !== 'POST' || req.url !== '/mcp') {
+        res.writeHead(404).end()
+        return
+      }
+      const chunks: Buffer[] = []
+      let bytes = 0
+      let tooLarge = false
+      req.on('data', (c: Buffer) => {
+        bytes += c.length
+        if (bytes > 10 * 1024 * 1024) {
+          tooLarge = true
+          res.writeHead(413).end()
+          req.destroy()
+          return
+        }
+        if (!tooLarge) chunks.push(c)
+      })
+      req.on('error', () => {
+        /* client aborted mid-request — nothing to answer */
+      })
+      res.on('error', () => {
+        /* socket closed before response finished */
+      })
+      req.on('end', () => {
+        if (tooLarge || res.writableEnded) return
+        void (async () => {
+          const msg = parseRpcMessage(Buffer.concat(chunks).toString('utf-8'))
+          if (!msg) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(
+              JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } })
+            )
+            return
+          }
+          const response = await handleRpc(msg as JsonRpcRequest, ctx.mcp.list())
+          if (response === null) {
+            res.writeHead(202).end()
+            return
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(response))
+        })().catch((e) => {
+          ctx.log.error('mcp request failed:', e)
+          if (!res.headersSent) res.writeHead(500)
+          res.end()
+        })
       })
     })
-  })
-  server.on('error', (e) => ctx.log.error(`MCP server error on port ${port}:`, e))
-  // localhost only — the knowledge base is private, never expose it
-  server.listen(port, '127.0.0.1', () => {
-    running = true
-    ctx.log.info(`MCP server on http://127.0.0.1:${port}/mcp (${ctx.mcp.list().length} tools)`)
-  })
+    server.on('error', (e: NodeJS.ErrnoException) => {
+      if (e.code === 'EADDRINUSE' && attempts < 10) {
+        attempts++
+        portNote = `端口 ${port} 被占用,已自动改用 ${port + 1}(可在设置中固定)`
+        ctx.log.warn(portNote)
+        port += 1
+        server?.close()
+        listen()
+        return
+      }
+      ctx.log.error(`MCP server error on port ${port}:`, e)
+    })
+    // localhost only — the knowledge base is private, never expose it
+    server.listen(port, '127.0.0.1', () => {
+      running = true
+      effectivePort = port
+      if (port !== requested) ctx.settings.set('port', port)
+      ctx.log.info(`MCP server on http://127.0.0.1:${port}/mcp (${ctx.mcp.list().length} tools)`)
+    })
+  }
+
+  listen()
 }
 
 function stopServer(): void {
@@ -90,9 +143,11 @@ const plugin: MemorySQLPlugin = {
 
     ctx.ipc.handle('status', () => ({
       enabled: ctx.settings.get('enabled', true),
-      port: currentPort(),
+      port: effectivePort || currentPort(),
+      requestedPort: currentPort(),
       running,
-      toolCount: ctx.mcp.list().length
+      toolCount: ctx.mcp.list().length,
+      portNote
     }))
 
     ctx.ipc.handle('restart', () => {

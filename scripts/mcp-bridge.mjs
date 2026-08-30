@@ -45,7 +45,8 @@ function post(body) {
 }
 
 const rl = readline.createInterface({ input: process.stdin })
-process.stdout.write(`[memorysql-bridge] -> ${endpoint}\n`)
+// stdout carries ONLY JSON-RPC frames; diagnostics go to stderr
+process.stderr.write(`[memorysql-bridge] -> ${endpoint}\n`)
 
 rl.on('line', (line) => {
   const trimmed = line.trim()

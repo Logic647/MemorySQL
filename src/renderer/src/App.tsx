@@ -263,13 +263,14 @@ export default function App() {
                     <div className="session-head">
                       <AgentBadge type={s.agentType} />
                       <span className="session-title">{s.title ?? s.externalId}</span>
+                      <span className="sess-id">#{s.id}</span>
                       <span className="session-time">{fmtTime(s.startedAt)}</span>
                     </div>
                     {s.summary && <div className="session-summary">{s.summary.split('\n')[0]}</div>}
                     <div className="session-meta">
-                      {s.project && <span>📁 {s.project}</span>}
-                      <span>💬 {s.messageCount}</span>
-                      <span>🔧 {s.toolCallCount}</span>
+                      {s.project && <span>{s.project}</span>}
+                      <span>{s.messageCount} msg</span>
+                      <span>{s.toolCallCount} tool</span>
                     </div>
                   </button>
                 ))}
@@ -290,6 +291,13 @@ export default function App() {
                     <span className="tape-id">{selected.session.external_id}</span>
                   </div>
                   <div className="detail-meta">
+                    <button
+                      className="sess-id copyable"
+                      title="复制会话 id(agent 可用 memory_get_session 读取)"
+                      onClick={() => void navigator.clipboard.writeText(String(selected.session.id)).then(() => setKbMsg(`已复制会话 id: ${selected.session.id}`))}
+                    >
+                      #{selected.session.id} ⧉
+                    </button>
                     {selected.session.project && <span>项目: {selected.session.project}</span>}
                     <span>开始: {fmtTime(selected.session.started_at)}</span>
                     <span>消息: {selected.messages.length}</span>

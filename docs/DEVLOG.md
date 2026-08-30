@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-08-30 · M5 全量增强:11 项需求 + 液态玻璃重设计 + 审查修复
+
+**审计修复(代码审查代理二轮):**P0×1(宿主 IPC 通道与 preload 桥路径脱节,设置页宿主功能全不可用 → 单 payload + `memorysql:host:` 前缀分流)、P1×5(claude startedAt 恒等 ended_at;gemini externalId 跨项目同名覆盖 → home 相对路径命名空间;refine 复用 300 token 截断 → maxTokens 参数化 2000;MCP 端点无 Origin/Host 校验 → rebinding/CSRF 防护 + 10MB body 上限;外部插件 init/start 异常炸启动 → 逐插件隔离)。P2 修了 8 项(tombstone 不复活、refine 按行退役+产物仍 candidate、skipped 重置、core-schema 解除 rules 依赖、--scan 遍历全部 capture-*、main 路径逃逸防护、空路径守卫、sqlite-ro 泄漏)。
+
+**新能力:**
+- **会话 ID**:列表徽标 + 详情一键复制 + MCP `memory_get_session(id, tail?)`
+- **Agent 矩阵**:新增 Claude Code / Gemini CLI / Cursor(实验)/ OpenCode+Copilot CLI 四适配器(capture-factory 统一骨架,未安装优雅降级);`AgentType` 放宽支持自定义;设置页逐 agent 开关(重启生效)+ 数据路径修改;宿主级联禁用
+- **自定义 agent 登记**:capture-watcher 改登记式(agent 名 + 目录 + 文件模式),命中只读导入
+- **记忆体系**:memories 加 agent_type(迁移 v2);规则提炼引擎(偏好/决策句、极简风格 persona → candidate 待确认,每会话 ≤3 条);记忆页 agent 筛选 chips;LLM 精炼按钮(产物仍 candidate 待确认)
+- **存储位置**:设置中迁移整库(快照+复制+标记+重启切换,可恢复默认)
+- **MCP 端口**:设置可改 + EADDRINUSE 自动顺延(≤10 次)+ Origin/Host 校验
+- **LLM 模型列表**:三家 /models 拉取,模型输入框带 datalist
+- **外部插件**:`<数据目录>/plugins/<id>/{manifest.json, main.js}`,new Function CJS 加载(对 ESM 应用 scope 免疫,可 require electron),单插件失败只记录不炸启动;设置页启停管理;README + docs/plugins.md 规范
+- **备份含 settings.json**(导入一并恢复,旧配置轮转保留)
+
+**UI 重设计(用户指定的三 skill 链:ui-ux-pro-max → design-taste-frontend → impeccable):**
+- 「蓝黑精密仪器 × 液态玻璃」:环境光场(双色 radial)+ 玻璃面板(blur 18px saturate 160% + 顶部 1px 高光 + 内描边),石板蓝 token(#0F172A 系),单一薄荷绿强调(#34D399),JetBrains Mono 元数据,10px 圆角锁定,15-200ms 克制动效;reduced-motion / reduced-transparency 回退
+- 元数据行去 emoji 改 mono 文案;图谱节点配色同步;CodeMirror 主题同步;图标重绘为液态玻璃菱形(多层半透明 + 高光刻面)
+- 实测截图验收(列表卡片脊线/ID 徽标/玻璃质感全部呈现)
+
+**验证:**typecheck 零错 / vitest 36:36(新增四适配器解析器 6 测)/ 构建 3 产物 / 7 适配器无头扫描优雅降级 / 外部插件 hello 实测加载且 MCP tools/list 暴露 hello_greet(5 工具)/ GUI 实测
+**遗留(审查 P2 已记录未修):**端口避让结果不持久化语义、setConfig 类型校验、sync-archive manifest 严格化、外部插件产物确认 UI 清单化
+
+**下一步候选:**GitHub 推送与 Release(安装包产物)、记忆页候选确认流优化、capture-cursor 实机格式校准(装 Cursor 后)
+
+---
+
 ## 2026-08-30 · 打包分发(electron-builder → Windows 安装包)
 
 **产物:**

@@ -67,9 +67,9 @@ export function parseLlmResponse(text: string): { title: string; summary: string
   return { title: title.replace(/^["']|["']$/g, '').slice(0, 80), summary: lines.slice(1).join('\n').slice(0, 600) }
 }
 
-async function callLlm(cfg: LlmConfig, transcript: string): Promise<string> {
+async function callLlm(cfg: LlmConfig, transcript: string, maxTokens = 300): Promise<string> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 25_000)
+  const timer = setTimeout(() => controller.abort(), 45_000)
   try {
     let url: string
     let headers: Record<string, string>
@@ -84,7 +84,7 @@ async function callLlm(cfg: LlmConfig, transcript: string): Promise<string> {
           { role: 'user', content: transcript }
         ],
         temperature: 0.2,
-        max_tokens: 300
+        max_tokens: maxTokens
       }
     } else if (cfg.provider === 'anthropic') {
       url = `${cfg.anthropicBaseUrl.replace(/\/$/, '')}/v1/messages`
@@ -95,7 +95,7 @@ async function callLlm(cfg: LlmConfig, transcript: string): Promise<string> {
       }
       body = {
         model: cfg.anthropicModel,
-        max_tokens: 300,
+        max_tokens: maxTokens,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: transcript }]
       }
@@ -172,6 +172,55 @@ const plugin: MemorySQLPlugin = {
     // registered BEFORE summarizer-rules (host picks the first available),
     // so a configured LLM wins and everything falls back to rules otherwise
     ctx.summarizer.registerProvider(provider)
+
+    // raw completion access for other plugins (memory refinement etc.)
+    ctx.services.provide('llm-refine', {
+      available: () => provider.available(),
+      refine: async (prompt: string): Promise<string> => callLlm(getConfig(), prompt, 2000)
+    })
+
+    // fetch available models from the configured provider
+    ctx.ipc.handle('listModels', async () => {
+      const cfg = getConfig()
+      try {
+        if (cfg.provider === 'none') return { ok: false as const, message: '请先选择 LLM 引擎' }
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 15_000)
+        let models: string[]
+        try {
+          if (cfg.provider === 'openai') {
+            const res = await fetch(`${cfg.openaiBaseUrl.replace(/\/$/, '')}/models`, {
+              headers: { Authorization: `Bearer ${cfg.openaiKey}` },
+              signal: controller.signal
+            })
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            const data = (await res.json()) as { data?: Array<{ id?: string }> }
+            models = (data.data ?? []).map((m) => m.id ?? '').filter(Boolean)
+          } else if (cfg.provider === 'anthropic') {
+            const res = await fetch(`${cfg.anthropicBaseUrl.replace(/\/$/, '')}/v1/models`, {
+              headers: { 'x-api-key': cfg.anthropicKey, 'anthropic-version': '2023-06-01' },
+              signal: controller.signal
+            })
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            const data = (await res.json()) as { data?: Array<{ id?: string }> }
+            models = (data.data ?? []).map((m) => m.id ?? '').filter(Boolean)
+          } else {
+            const res = await fetch(`${cfg.ollamaUrl.replace(/\/$/, '')}/api/tags`, {
+              signal: controller.signal
+            })
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            const data = (await res.json()) as { models?: Array<{ name?: string }> }
+            models = (data.models ?? []).map((m) => m.name ?? '').filter(Boolean)
+          }
+        } finally {
+          clearTimeout(timer)
+        }
+        if (models.length === 0) return { ok: false as const, message: '提供商返回了空模型列表' }
+        return { ok: true as const, models }
+      } catch (e) {
+        return { ok: false as const, message: `获取模型列表失败: ${String(e)}` }
+      }
+    })
 
     ctx.ipc.handle('getConfig', () => {
       const cfg = getConfig()
