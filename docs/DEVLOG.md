@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-08-30 · M5.1 追加:Cursor 格式校准 + 记忆批量确认 + P2 三修
+
+- **Cursor 解析器按社区资料重写**(依据 cursor-chat-export 等项目与 vibe-replay 的存储分析):主存储 = globalStorage state.vscdb 的 `cursorDiskKV` —— `composerData:<id>` 只含 `fullConversationHeadersOnly` 头数组(type 1=用户/2=AI,定顺序),正文在 `bubbleId:<sessionId>:<bubbleId>` 行(text + toolFormerData 工具调用);旧 inline conversation 与 ItemTable chatdata 作回退。时间戳用 composer 的 lastUpdatedAt/createdAt,bubble 级无时间戳(与社区结论一致)
+- **记忆批量确认**:memory-core 新 `confirmAll`(可按 agent/kind 收窄),记忆页按钮按当前筛选批量转 active
+- **P2 三修**:MCP 端口避让只存运行时不覆盖用户配置;summarizer-llm setConfig 全字段字符串类型校验(provider 白名单、掩码 key 不覆盖);.msqlv 导入要求 manifest 必须存在
+- 验证:typecheck 零错 / vitest 36:36 / 构建 3 产物
+- Cursor 适配仍标 EXPERIMENTAL:本机未装,格式以 2025 社区资料为准,装 Cursor 后跑一次扫描即可校准
+
+---
+
 ## 2026-08-30 · M5 全量增强:11 项需求 + 液态玻璃重设计 + 审查修复
 
 **审计修复(代码审查代理二轮):**P0×1(宿主 IPC 通道与 preload 桥路径脱节,设置页宿主功能全不可用 → 单 payload + `memorysql:host:` 前缀分流)、P1×5(claude startedAt 恒等 ended_at;gemini externalId 跨项目同名覆盖 → home 相对路径命名空间;refine 复用 300 token 截断 → maxTokens 参数化 2000;MCP 端点无 Origin/Host 校验 → rebinding/CSRF 防护 + 10MB body 上限;外部插件 init/start 异常炸启动 → 逐插件隔离)。P2 修了 8 项(tombstone 不复活、refine 按行退役+产物仍 candidate、skipped 重置、core-schema 解除 rules 依赖、--scan 遍历全部 capture-*、main 路径逃逸防护、空路径守卫、sqlite-ro 泄漏)。

@@ -68,10 +68,11 @@ const plugin: MemorySQLPlugin = {
       }
 
       const zip = new AdmZip(archivePath)
+      const manifestEntry = zip.getEntry('manifest.json')
       const dbEntry = zip.getEntry('memory.db')
       if (!dbEntry) throw new Error('归档缺少 memory.db')
-      const manifestEntry = zip.getEntry('manifest.json')
-      if (manifestEntry) {
+      if (!manifestEntry) throw new Error('归档缺少 manifest.json(不是 MemorySQL 导出的包)')
+      {
         const manifest = JSON.parse(manifestEntry.getData().toString('utf-8')) as { format?: string }
         if (manifest.format !== 'msqlv') throw new Error('manifest.format 不是 msqlv')
       }

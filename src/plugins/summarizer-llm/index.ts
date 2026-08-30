@@ -236,12 +236,16 @@ const plugin: MemorySQLPlugin = {
     })
     ctx.ipc.handle('setConfig', (payload) => {
       const next = (payload ?? {}) as Partial<LlmConfig>
+      const VALID_PROVIDERS = new Set<string>(['none', 'openai', 'anthropic', 'ollama'])
       for (const key of Object.keys(LLM_DEFAULTS) as Array<keyof LlmConfig>) {
-        if (key in next) {
-          // masked values from the UI never overwrite a stored key
-          if ((key === 'openaiKey' || key === 'anthropicKey') && String(next[key]).startsWith('•')) continue
-          ctx.settings.set(key, next[key])
-        }
+        if (!(key in next)) continue
+        const value = next[key]
+        // every field is a string; anything else would poison available()/URL building
+        if (typeof value !== 'string') continue
+        if (key === 'provider' && !VALID_PROVIDERS.has(value)) continue
+        // masked values from the UI never overwrite a stored key
+        if ((key === 'openaiKey' || key === 'anthropicKey') && value.startsWith('•')) continue
+        ctx.settings.set(key, value)
       }
       return { ok: true }
     })

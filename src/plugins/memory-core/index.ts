@@ -59,6 +59,26 @@ const plugin: MemorySQLPlugin = {
       return { ok: true }
     })
 
+    // batch-confirm candidates (optionally scoped to one agent / one kind)
+    ctx.ipc.handle('confirmAll', (payload) => {
+      const { agentType, kind } = (payload ?? {}) as { agentType?: string; kind?: string }
+      const where: string[] = ["status = 'candidate'", 'deleted = 0']
+      const params: unknown[] = []
+      if (agentType && agentType !== 'all') {
+        where.push(agentType === 'global' ? 'agent_type IS NULL' : 'agent_type = ?')
+        if (agentType !== 'global') params.push(agentType)
+      }
+      if (kind && VALID_KINDS.has(kind)) {
+        where.push('kind = ?')
+        params.push(kind)
+      }
+      const res = ctx.db.sqlite
+        .prepare(`UPDATE memories SET status = 'active', updated_at = ? WHERE ${where.join(' AND ')}`)
+        .run(Date.now(), ...params)
+      ctx.events.emit('sessions:changed')
+      return { confirmed: Number(res.changes) }
+    })
+
     // ---- rule-based distillation: fired after every ingest ----------------
     const distillSession = (sessionId: number): number => {
       const session = ctx.db.sqlite

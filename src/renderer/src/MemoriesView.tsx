@@ -90,6 +90,21 @@ export default function MemoriesView() {
         <button className="btn btn-small" style={{ marginLeft: 6 }} disabled={refining} onClick={() => void refine()}>
           {refining ? '精炼中…' : 'LLM 精炼候选'}
         </button>
+        <button
+          className="btn btn-small"
+          style={{ marginLeft: 6 }}
+          onClick={() =>
+            void api
+              .memoriesConfirmAll(agentFilter === 'all' ? undefined : agentFilter)
+              .then((r) => {
+                setMsg(`已确认 ${r.confirmed} 条候选`)
+                return load()
+              })
+              .catch((e) => setMsg(`确认失败: ${String(e)}`))
+          }
+        >
+          确认候选
+        </button>
         {msg && <span className="pane-msg">{msg}</span>}
       </div>
 

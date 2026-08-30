@@ -82,6 +82,10 @@ export const api = {
     window.memorysql.invoke('memory-core:delete', { id }) as Promise<{ ok: boolean }>,
   memoriesSetStatus: (id: number, status: string): Promise<{ ok: boolean }> =>
     window.memorysql.invoke('memory-core:setStatus', { id, status }) as Promise<{ ok: boolean }>,
+  memoriesConfirmAll: (agentType?: string, kind?: string): Promise<{ confirmed: number }> =>
+    window.memorysql.invoke('memory-core:confirmAll', { agentType, kind }) as Promise<{
+      confirmed: number
+    }>,
   memoriesRefine: (agentType?: string): Promise<{ ok: boolean; inserted?: number; message: string }> =>
     window.memorysql.invoke('memory-core:refine', { agentType }) as Promise<{
       ok: boolean

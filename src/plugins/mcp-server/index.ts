@@ -115,7 +115,7 @@ function startServer(): void {
     server.listen(port, '127.0.0.1', () => {
       running = true
       effectivePort = port
-      if (port !== requested) ctx.settings.set('port', port)
+      // conflict bump is runtime-only — the user's configured port stays put
       ctx.log.info(`MCP server on http://127.0.0.1:${port}/mcp (${ctx.mcp.list().length} tools)`)
     })
   }
