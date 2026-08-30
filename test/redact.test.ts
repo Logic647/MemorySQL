@@ -10,9 +10,9 @@ describe('redact (出口脱敏)', () => {
   })
 
   it('redacts keyword=value credentials', () => {
-    const r = redactWithCount("s.connect('1.2.3.4', password='Logic647')")
+    const r = redactWithCount("s.connect('1.2.3.4', password='example-pass-9137')")
     expect(r.text).toContain("[REDACTED:credential]")
-    expect(r.text).not.toContain('Logic647')
+    expect(r.text).not.toContain('example-pass-9137')
   })
 
   it('redacts user:pass@host URLs entirely', () => {
