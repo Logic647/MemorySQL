@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { resolveAppEnv, defaultDataDir } from './core/env'
+import { connectAgent, agentSnippet } from './core/agent-connect'
 import { SettingsStore } from './core/settings'
 import { EventBus } from './core/event-bus'
 import { Db } from './core/db'
@@ -267,6 +268,17 @@ function registerHostChannels(host: PluginHost, settings: SettingsStore, env: Re
     }
     settings.set(`${id}:${key}`, value)
     return { ok: true, restartNeeded: true }
+  })
+  // 连接向导:一键为检测到的 agent 写入 MCP 配置(幂等,写入前备份)
+  hostChannels.set('memorysql:host:agentConnect', (payload) => {
+    const { agent } = (payload ?? {}) as { agent?: string }
+    const port = Number(settings.get('mcp-server:port', 8642)) || 8642
+    return connectAgent(String(agent ?? ''), port, process.env.APPDATA, process.env.LOCALAPPDATA)
+  })
+  hostChannels.set('memorysql:host:agentSnippet', (payload) => {
+    const { agent } = (payload ?? {}) as { agent?: string }
+    const port = Number(settings.get('mcp-server:port', 8642)) || 8642
+    return agentSnippet(String(agent ?? ''), port, process.env.APPDATA, process.env.LOCALAPPDATA)
   })
   hostChannels.set('memorysql:host:openPluginsDir', () => {
     void shell.openPath(path.join(env.dataDir, 'plugins'))

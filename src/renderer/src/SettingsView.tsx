@@ -64,6 +64,15 @@ export default function SettingsView() {
       <div className="pane-title">设置</div>
       <div className="settings-body">
         <section>
+          <h3>连接 Agent 向导</h3>
+          <p className="hint">
+            应用运行中时,点「一键连接」把 MemorySQL 的 MCP 服务写入对应 agent 的配置文件(自动备份原配置),
+            重启该 agent 后即可使用 memory_get_context / memory_search 等工具。「复制配置」给出可手工粘贴的片段。
+          </p>
+          <AgentConnectSection onMsg={setMsg} />
+        </section>
+
+        <section>
           <h3>摘要引擎</h3>
           <p className="hint">
             默认本地规则,零成本零依赖。切换为 LLM 后新导入的会话用模型生成标题与摘要;LLM 不可用时自动降级回规则。
@@ -526,5 +535,83 @@ function ModelField({
         ))}
       </datalist>
     </label>
+  )
+}
+
+const CONNECT_AGENTS = [
+  { id: 'codex', label: 'Codex CLI' },
+  { id: 'zcode', label: 'ZCode' },
+  { id: 'claudecode', label: 'Claude Code' },
+  { id: 'gemini', label: 'Gemini CLI' },
+  { id: 'cursor', label: 'Cursor' },
+  { id: 'opencode', label: 'OpenCode / Copilot CLI' }
+]
+
+function AgentConnectSection({ onMsg }: { onMsg: (s: string) => void }) {
+  const [rows, setRows] = useState<
+    Record<string, { label: string; detected: boolean; snippet: string }>
+  >({})
+
+  useEffect(() => {
+    for (const a of CONNECT_AGENTS) {
+      void api
+        .agentSnippet(a.id)
+        .then((r) => setRows((prev) => ({ ...prev, [a.id]: { label: a.label, detected: r.detected, snippet: r.snippet } })))
+        .catch(() => {})
+    }
+  }, [])
+
+  const connect = (id: string): void => {
+    void api
+      .agentConnect(id)
+      .then((r) => {
+        if (!r.detected) {
+          onMsg(`${r.label} 未在本机检测到,未写入配置`)
+          return
+        }
+        onMsg(`${r.label} 已连接 → ${r.configPath}(重启该 agent 生效)`)
+        return api.agentSnippet(id).then((s) => {
+          setRows((prev) => ({ ...prev, [id]: { ...prev[id], snippet: s.snippet } }))
+        })
+      })
+      .catch((e) => onMsg(`连接失败: ${String(e)}`))
+  }
+
+  return (
+    <div className="agent-capture">
+      {CONNECT_AGENTS.map(({ id, label }) => {
+        const row = rows[id]
+        return (
+          <div key={id} className="agent-row">
+            <div className="agent-main">
+              <div className="agent-name">
+                {label}
+                {row && (
+                  <span className={`agent-state ${row.detected ? 'ok' : 'dim'}`}>
+                    {row.detected ? '已检测到' : '未检测到'}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="field-row" style={{ margin: 0 }}>
+              <button className="btn btn-small" onClick={() => connect(id)}>
+                一键连接
+              </button>
+              <button
+                className="btn btn-small"
+                onClick={() =>
+                  row &&
+                  void navigator.clipboard
+                    .writeText(row.snippet)
+                    .then(() => onMsg(`${label} 手动配置片段已复制`))
+                }
+              >
+                复制配置
+              </button>
+            </div>
+          </div>
+        )
+      })}
+    </div>
   )
 }

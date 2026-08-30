@@ -112,6 +112,28 @@ export const api = {
       ok: boolean
       relaunching?: boolean
     }>,
+  // 连接向导
+  agentConnect: (agent: string): Promise<{
+    id: string
+    label: string
+    detected: boolean
+    configured: boolean
+    configPath: string | null
+    snippet: string
+  }> =>
+    window.memorysql.invoke('memorysql:host:agentConnect', { agent }) as Promise<{
+      id: string
+      label: string
+      detected: boolean
+      configured: boolean
+      configPath: string | null
+      snippet: string
+    }>,
+  agentSnippet: (agent: string): Promise<{ snippet: string; detected: boolean }> =>
+    window.memorysql.invoke('memorysql:host:agentSnippet', { agent }) as Promise<{
+      snippet: string
+      detected: boolean
+    }>,
   // sync-folder
   syncStatus: (): Promise<{ deviceId: string; folder: string; lastSyncAt: number }> =>
     window.memorysql.invoke('sync-folder:status') as Promise<{

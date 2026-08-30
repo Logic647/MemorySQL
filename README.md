@@ -21,6 +21,17 @@
 
 **数据 100% 本地**(`data/` 目录已被 gitignore,永不入库):会话原文、记忆、笔记全部明文存本机,自己可见;任何"导出/分享"路径统一经过脱敏模块后才对外。
 
+## 快速连接 Agent
+
+前提:**MemorySQL 应用处于运行状态**(它就是 MCP 服务端)。
+
+1. 打开应用 → 设置 → **连接 Agent 向导**
+2. 对你已安装的 agent 点「一键连接」——应用会自动把 MCP 配置写入该 agent 的配置文件(写入前自动备份为 `*.bak-memorysql`),状态列会显示"已检测到 / 未检测到"
+3. 重启该 agent,即可使用 `memory_get_context`(续接包)、`memory_search`、`memory_write`、`memory_get_session` 四个工具
+
+已支持自动写入:Codex CLI(`config.toml`)、ZCode(`config.json`,http 直连)、Claude Code(`~/.claude.json`)、Gemini CLI(`settings.json`)、Cursor(`mcp.json`)、OpenCode(`opencode.json`)。
+想手工配置:每行有「复制配置」按钮给出精确片段。Hermes 等无 MCP 能力的 agent 走记忆文件桥:其记忆文件会被自动导入,`vault/dispatch/` 下的分发文件可反向喂给 agent。
+
 ## 插件技术规范(社区插件)
 
 MemorySQL 一切功能皆插件,并支持**外部插件**。把插件放进 `<数据目录>/plugins/<id>/`(设置 → 插件管理 → 打开插件目录),重启即加载:
