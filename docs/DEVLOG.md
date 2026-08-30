@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-08-30 · 打包分发(electron-builder → Windows 安装包)
+
+**产物:**
+- `dist/MemorySQL-Setup-0.1.0.exe`(NSIS 安装包,115MB,可选安装目录 + 桌面快捷方式)
+- `dist/win-unpacked/`(免安装目录,396MB,直接运行 MemorySQL.exe)
+- 应用图标:琥珀菱形 × 石墨圆角方(tape-archive 设计语言),PIL 生成 `build/icon.ico|png`
+
+**配置要点(electron-builder.yml):**
+- `files`: 只打 `out/**` + package.json;**渲染层依赖全部移到 devDependencies**(react/codemirror/cytoscape 已被 vite 打进 bundle),生产依赖只剩主进程三件套(adm-zip / better-sqlite3 / chokidar)
+- `asarUnpack: better-sqlite3`(原生模块不能从 asar 加载);`npmRebuild: false`(node_modules 里已是 electron ABI,避免构建期再下载工具链)
+- `extraResources`: scripts/mcp-bridge.mjs → 安装后 `resources/mcp-bridge.mjs`(agent stdio 配置指向它)
+- 数据目录:打包版走 `%APPDATA%/MemorySQL/data/`(env.ts 的 isPackaged 分支),与开发版隔离
+- **构建镜像(国内必配)**:`ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`(NSIS/7zip 工具链),连同 `ELECTRON_MIRROR` 一起 export 后再 `npm run dist`
+
+**验证:**免安装版 `MemorySQL.exe --scan` 无头跑通(61 会话写入正确的打包数据目录);GUI 启动正常,五视图可用(记忆视图已由用户实测点开使用)
+
+**命令:**`npm run dist`(先 electron-vite build 再 electron-builder --win)
+
+---
+
 ## 2026-08-29 · M4 知识库完全体完成 —— 四个里程碑全部落地
 
 **core-vault(笔记系统):**

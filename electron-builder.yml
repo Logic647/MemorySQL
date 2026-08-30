@@ -1,0 +1,37 @@
+# electron-builder 配置 — MemorySQL Windows 打包
+appId: org.memorysql.app
+productName: MemorySQL
+directories:
+  buildResources: build
+  output: dist
+
+# 只打包构建产物 + 生产依赖(主进程三件套);渲染层依赖已由 vite 打进 bundle
+files:
+  - out/**
+  - "!**/.vite"
+
+# 原生模块不能从 asar 内加载
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+
+# agent stdio 桥脚本 → 安装后位于 resources/mcp-bridge.mjs
+extraResources:
+  - from: scripts/mcp-bridge.mjs
+    to: mcp-bridge.mjs
+
+# 当前 node_modules 里的 better-sqlite3 已经是 electron ABI(electron-rebuild 完成),
+# 关闭重复重建以避免构建期再下载工具链
+npmRebuild: false
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+    - target: dir
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  artifactName: MemorySQL-Setup-${version}.${ext}
+  shortcutName: MemorySQL
