@@ -29,7 +29,7 @@
 2. 对你已安装的 agent 点「一键连接」——应用会自动把 MCP 配置写入该 agent 的配置文件(写入前自动备份为 `*.bak-memorysql`),状态列会显示"已检测到 / 未检测到"
 3. 重启该 agent,即可使用 `memory_get_context`(续接包)、`memory_search`、`memory_write`、`memory_get_session` 四个工具
 
-已支持自动写入:Codex CLI(`config.toml`)、ZCode(`config.json`,http 直连)、Claude Code(`~/.claude.json`)、Gemini CLI(`settings.json`)、Cursor(`mcp.json`)、OpenCode(`opencode.json`)。
+已支持自动写入:Codex CLI(`config.toml`)、ZCode(`config.json`,http 直连)、Claude Code(`~/.claude.json`)、Gemini CLI(`settings.json`)、Cursor(`mcp.json`)、OpenCode(`opencode.json`)、**Hermes Agent**(`config.yaml` 的 `mcp_servers:`,streamable http + stateless,写入后 `/reload-mcp` 或重启生效)。
 想手工配置:每行有「复制配置」按钮给出精确片段。Hermes 等无 MCP 能力的 agent 走记忆文件桥:其记忆文件会被自动导入,`vault/dispatch/` 下的分发文件可反向喂给 agent。
 
 ## 插件技术规范(社区插件)

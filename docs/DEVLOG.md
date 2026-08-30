@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-08-30 · Hermes MCP 直连适配(连接向导第七家)
+
+- 定位:Hermes Agent CN Desktop 是 **NousResearch/hermes-agent** 的打包发行版(本机 config.yaml 出现 hermes auth/Nous Portal/tirith 等特征),MCP 配置根键为 `mcp_servers:`(snake_case),原生支持 Streamable HTTP `url:` 与 `protocol: stateless`、`trust: untrusted`,改后 `/reload-mcp` 热加载
+- 连接向导新增第七家:Hermes(定位活跃 profile 的 config.yaml:daily 优先 → mtime 兜底);YAML 无解析依赖文本手术(mcp_servers 已存在则插入条目,否则追加整块;memorysql 子块幂等替换),写前备份 `.bak-memorysql`
+- **已实测写入本机** `profiles/daily/config.yaml`(PyYAML 结构校验通过:url/protocol/trust 三字段就位);Hermes 重启或 `/reload-mcp` 后即可用 memory_get_context 等四工具
+- 顺带:stdio 桥修复退出竞态(process.exit 截断管道 stdout → 自然排空 + 30s 超时),Codex 类客户端关键路径
+
+---
+
 ## 2026-08-30 · M5.1 追加:Cursor 格式校准 + 记忆批量确认 + P2 三修
 
 - **Cursor 解析器按社区资料重写**(依据 cursor-chat-export 等项目与 vibe-replay 的存储分析):主存储 = globalStorage state.vscdb 的 `cursorDiskKV` —— `composerData:<id>` 只含 `fullConversationHeadersOnly` 头数组(type 1=用户/2=AI,定顺序),正文在 `bubbleId:<sessionId>:<bubbleId>` 行(text + toolFormerData 工具调用);旧 inline conversation 与 ItemTable chatdata 作回退。时间戳用 composer 的 lastUpdatedAt/createdAt,bubble 级无时间戳(与社区结论一致)

@@ -544,7 +544,8 @@ const CONNECT_AGENTS = [
   { id: 'claudecode', label: 'Claude Code' },
   { id: 'gemini', label: 'Gemini CLI' },
   { id: 'cursor', label: 'Cursor' },
-  { id: 'opencode', label: 'OpenCode / Copilot CLI' }
+  { id: 'opencode', label: 'OpenCode / Copilot CLI' },
+  { id: 'hermes', label: 'Hermes Agent (CN Desktop)' }
 ]
 
 function AgentConnectSection({ onMsg }: { onMsg: (s: string) => void }) {

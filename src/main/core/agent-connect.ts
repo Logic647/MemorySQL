@@ -73,7 +73,69 @@ export function mcpUrl(port: number): string {
   return `http://127.0.0.1:${port}/mcp`
 }
 
+/** Locate the ACTIVE Hermes profile config.yaml: the CN Desktop install
+ * default first, then the profile whose config was touched most recently. */
+function hermesProfileConfig(): string | null {
+  const roots = [
+    'D:\\Hermes Agent CN Desktop\\data\\hermes-home',
+    path.join(os.homedir(), 'hermes-home')
+  ]
+  const direct: string[] = []
+  for (const root of roots) {
+    direct.push(path.join(root, 'profiles', 'daily', 'config.yaml'), path.join(root, 'config.yaml'))
+  }
+  for (const c of direct) {
+    if (fs.existsSync(c)) return c
+  }
+  for (const root of roots) {
+    const profilesDir = path.join(root, 'profiles')
+    let best: { p: string; m: number } | null = null
+    try {
+      for (const e of fs.readdirSync(profilesDir, { withFileTypes: true })) {
+        if (!e.isDirectory()) continue
+        const p = path.join(profilesDir, e.name, 'config.yaml')
+        if (fs.existsSync(p)) {
+          const m = fs.statSync(p).mtimeMs
+          if (!best || m > best.m) best = { p, m }
+        }
+      }
+    } catch {
+      /* no profiles dir */
+    }
+    if (best) return best.p
+  }
+  return null
+}
+
 const HTTP_ENTRY = (url: string) => ({ type: 'http', url })
+
+/**
+ * Hermes Agent(NousResearch/hermes-agent,含 CN Desktop 打包版):
+ * config.yaml 顶层 `mcp_servers:`,支持 Streamable HTTP `url:`。
+ * YAML 无解析依赖的文本手术:文件里已有 mcp_servers 时把条目插到其下,
+ * 否则整块追加到文件末尾;写前备份,幂等(重跑替换同一子块)。
+ */
+function upsertHermesYaml(configPath: string, mcpUrl: string): string {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true })
+  let content = fs.existsSync(configPath) ? fs.readFileSync(configPath, 'utf-8') : ''
+  fs.copyFileSync(configPath, `${configPath}.bak-memorysql`)
+  const block = [
+    '  memorysql:',
+    `    url: "${mcpUrl}"`,
+    '    protocol: "stateless"',
+    '    trust: "untrusted"'
+  ].join('\n')
+  if (/^  memorysql:\s*$/m.test(content)) {
+    // replace our previous sub-block (from its header to the next 2-space sibling)
+    content = content.replace(/^  memorysql:\n(?:    .*\n?)+/m, block + '\n')
+  } else if (/^mcp_servers:\s*$/m.test(content)) {
+    content = content.replace(/^mcp_servers:\s*$/m, 'mcp_servers:\n' + block)
+  } else {
+    content = content.replace(/\s*$/, '\n\n') + 'mcp_servers:\n' + block + '\n'
+  }
+  fs.writeFileSync(configPath, content, 'utf-8')
+  return configPath
+}
 
 export const AGENT_CONNECTORS: AgentConnector[] = [
   {
@@ -159,6 +221,19 @@ startup_timeout_sec = 30`,
       }),
     snippet: (url) =>
       `// ~/.config/opencode/opencode.json:\n{\n  "mcp": {\n    "memorysql": { "url": "${url}", "enabled": true }\n  }\n}`
+  },
+  {
+    id: 'hermes',
+    label: 'Hermes Agent (CN Desktop)',
+    detect: (_home, _appData) => hermesProfileConfig() !== null,
+    configPath: () => hermesProfileConfig() ?? '',
+    apply: (_configPath, url) => {
+      const cfg = hermesProfileConfig()
+      if (!cfg) throw new Error('未找到 Hermes 配置(config.yaml)')
+      return upsertHermesYaml(cfg, url)
+    },
+    snippet: (url) =>
+      `# Hermes profile 的 config.yaml 追加:\nmcp_servers:\n  memorysql:\n    url: "${url}"\n    protocol: "stateless"\n    trust: "untrusted"\n\n# 修改后在 Hermes 里执行 /reload-mcp 热加载`
   }
 ]
 
