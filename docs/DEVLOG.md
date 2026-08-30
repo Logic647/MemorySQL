@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-08-29 · M4 知识库完全体完成 —— 四个里程碑全部落地
+
+**core-vault(笔记系统):**
+- 迁移 v2:`notes` 表 + `notes_fts`(trigram);**.md 文件为事实来源**,db 只做索引
+- 解析器(纯函数,单测):`[[链接#锚|别名]]`、内联 #标签(CJK 支持,过滤十六进制色/纯数字伪标签)、frontmatter `tags:`、标题取首个 H1
+- vault 全量扫描 + chokidar 增量监听(新建/修改/删除→tombstone)
+- IPC:notes:list/get/save/create/delete/search/backlinks/graph(反链按链接标题解析;图数据只保留解析到的边)
+
+**UI:**
+- 笔记视图:CodeMirror 6(markdown 语法、行包裹、暗色 tape 主题、Ctrl+S 保存、外部更新标注防误报 dirty)+ 笔记列表 + 标签条 + 反向链接面板
+- 图谱视图:cytoscape(cose 布局,琥珀节点/暗边,节点点击显示标题)
+- 视图导航扩为五项:会话 / 记忆 / 笔记 / 图谱 / 设置
+
+**capture-watcher(项目文件监听):**
+- 设置页添加/移除监听目录;只读导入 AGENTS.md / CLAUDE.md / MEMORY.md 为记忆(source=`project:<path>`);变更增量导入
+
+**插件 API 文档化:**
+- `docs/plugins.md`:插件解剖、生命周期、PluginContext 全能力表、内置插件清单、约定(铁律映射)、最小 Hello 插件示例
+
+**验证:**typecheck 零错 / vitest 27:27(新增 note-parser 5)/ 构建 3 产物 / `--dispatch` 启动实跑:5 篇笔记索引正确(双链/标签/FTS 中文检索全对)/ GUI 全 14 插件启动正常(watcher×3 + vault + MCP)
+**遗留:**笔记/图谱视图的自动化点击走查同 M3 受帧绑定限制未截图(编译与 IPC 层已验),待人工点开;图谱布局参数(边长/斥力)可再调
+
+**项目状态:规划的全部里程碑(M0–M4)已完成。**后续方向(未排期):打包分发(electron-builder)、外部社区插件目录加载、FTS external-content 省存储、会话时间线可视化增强、sync-folder 删除传播(tombstone 已预留)。
+
+---
+
 ## 2026-08-29 · M3 记忆与同步完成
 
 **summarizer-llm(可选 LLM 摘要):**

@@ -3,11 +3,19 @@ import type { SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
 import MemoriesView from './MemoriesView'
 import SettingsView from './SettingsView'
+import NotesView from './NotesView'
+import GraphView from './GraphView'
 
 const AGENTS = ['all', 'codex', 'zcode', 'hermes'] as const
 type AgentFilter = (typeof AGENTS)[number]
-type View = 'sessions' | 'memories' | 'settings'
-const VIEW_LABEL: Record<View, string> = { sessions: '会话', memories: '记忆', settings: '设置' }
+type View = 'sessions' | 'memories' | 'notes' | 'graph' | 'settings'
+const VIEW_LABEL: Record<View, string> = {
+  sessions: '会话',
+  memories: '记忆',
+  notes: '笔记',
+  graph: '图谱',
+  settings: '设置'
+}
 const CAPTURE_PLUGINS: Array<{ id: string; label: string }> = [
   { id: 'capture-codex', label: 'Codex' },
   { id: 'capture-zcode', label: 'ZCode' },
@@ -129,7 +137,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="side-section">
             <div className="side-title">视图</div>
-            {(['sessions', 'memories', 'settings'] as View[]).map((v) => (
+            {(['sessions', 'memories', 'notes', 'graph', 'settings'] as View[]).map((v) => (
               <button key={v} className={`side-item ${view === v ? 'active' : ''}`} onClick={() => setView(v)}>
                 {VIEW_LABEL[v]}
               </button>
@@ -211,6 +219,10 @@ export default function App() {
 
         {view === 'memories' ? (
           <MemoriesView />
+        ) : view === 'notes' ? (
+          <NotesView />
+        ) : view === 'graph' ? (
+          <GraphView />
         ) : view === 'settings' ? (
           <SettingsView />
         ) : (

@@ -18,6 +18,8 @@ import syncArchive from '../plugins/sync-archive'
 import memoryCore from '../plugins/memory-core'
 import memoryDispatch from '../plugins/memory-dispatch'
 import syncFolder from '../plugins/sync-folder'
+import coreVault from '../plugins/core-vault'
+import captureWatcher from '../plugins/capture-watcher'
 
 // Order here is only a hint — the host topologically sorts by manifest.requires.
 // summarizer-llm BEFORE rules: the host picks the first *available* provider,
@@ -26,9 +28,11 @@ const BUILTIN_PLUGINS = [
   summarizerLlm,
   summarizerRules,
   coreSchema,
+  coreVault,
   captureCodex,
   captureZcode,
   captureHermes,
+  captureWatcher,
   mcpServer,
   privacyExport,
   syncArchive,

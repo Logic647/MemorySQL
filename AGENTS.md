@@ -57,7 +57,7 @@ npm run import:scan  # 无头模式:扫描导入三个 agent 的真实会话(验
 
 ## 当前状态(接手 agent 从这里开始)
 
-- **M0–M3 已完成并真实数据验收**(2026-08-29):55 会话入库;MCP server(127.0.0.1:8642,三工具)实测;出口脱敏 + MD 导出;.msqlv 归档迁移;LLM 摘要(可选,三 provider 模板 + 自动降级);记忆 CRUD + 分发文件(`--dispatch`);sync-folder 双设备往返实测(`--sync <folder>`,自然键并集 + LWW,删除不传播)
-- 精确进度与下一步:**M4 知识库完全体**(CodeMirror 6 笔记 / 双链 / 图谱 / capture-watcher / 插件 API 文档化),详见 `docs/DEVLOG.md` 最后一条
-- 常用验证:`npm run import:scan`;`npx electron . --sync <folder>`;`npx electron . --dispatch`;`npx electron . --scan --export-archive <path>`;运行中 `curl http://127.0.0.1:8642/health`
+- **M0–M4 全部完成**(2026-08-29):55 会话入库;MCP server(127.0.0.1:8642,三工具);出口脱敏 + MD 导出;.msqlv 归档迁移;LLM 摘要(可选 + 自动降级);记忆 CRUD + 分发(`--dispatch`);sync-folder 双设备往返实测;**笔记(CodeMirror 6 + 双链/反链/FTS)+ 图谱(cytoscape)+ capture-watcher 项目监听 + 插件 API 文档(docs/plugins.md)**
+- 精确进度:规划里程碑全部完成;后续未排期方向见 `docs/DEVLOG.md` 最后一条(打包分发 / 社区插件加载 / FTS external-content 等)
+- 常用验证:`npm run import:scan`;`npx electron . --dispatch`;`npx electron . --sync <folder>`;`npx electron . --scan --export-archive <path>`;运行中 `curl http://127.0.0.1:8642/health`
 - 验收数据(本机真实存在):Codex `~/.codex/sessions/**/rollout-*.jsonl`;ZCode `~/.zcode/cli/rollout/`;Hermes `D:\Hermes Agent CN Desktop\data\hermes-home\profiles\daily\state.db` + `memories/*.md`

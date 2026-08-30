@@ -171,8 +171,67 @@ export default function SettingsView() {
           )}
         </section>
 
+        <section>
+          <h3>项目文件监听</h3>
+          <p className="hint">
+            监听项目目录中的 AGENTS.md / CLAUDE.md / MEMORY.md(只读导入为记忆,不修改项目文件)。
+          </p>
+          <WatcherSection onMsg={setMsg} />
+        </section>
+
         {msg && <div className="kb-msg">{msg}</div>}
       </div>
     </div>
+  )
+}
+
+function WatcherSection({ onMsg }: { onMsg: (s: string) => void }) {
+  const [roots, setRoots] = useState<string[]>([])
+  const [input, setInput] = useState('')
+
+  useEffect(() => {
+    void api.watcherList().then((r) => setRoots(r.roots))
+  }, [])
+
+  return (
+    <>
+      <div className="field-row">
+        <input
+          className="grow"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="D:\projects\my-app"
+        />
+        <button
+          className="btn btn-small"
+          onClick={() =>
+            void api
+              .watcherAddRoot(input)
+              .then((r) => {
+                setRoots(r.roots)
+                setInput('')
+                onMsg('项目目录已加入监听并导入记忆文件')
+              })
+              .catch((e) => onMsg(`添加失败: ${String(e)}`))
+          }
+        >
+          添加监听
+        </button>
+      </div>
+      {roots.map((r) => (
+        <div key={r} className="field-row">
+          <span className="mono-tag">{r}</span>
+          <button
+            className="link danger"
+            onClick={() =>
+              void api.watcherRemoveRoot(r).then((res) => setRoots(res.roots))
+            }
+          >
+            移除
+          </button>
+        </div>
+      ))}
+      {roots.length === 0 && <p className="hint">暂无监听目录</p>}
+    </>
   )
 }

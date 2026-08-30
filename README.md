@@ -10,9 +10,10 @@
 - ✅ **MCP server**:任意 agent 连接即续接 —— `memory_get_context`(画像+项目+近况一次拉齐)/ `memory_search` / `memory_write`,仅监听 127.0.0.1,stdio agent 用 `scripts/mcp-bridge.mjs`
 - ✅ **出口脱敏**:导出会话 MD 时自动遮蔽密钥/口令/JWT 等(本地数据永远明文自可见)
 - ✅ **归档迁移**:`.msqlv` 一键导出/导入(VACUUM INTO 一致性快照 + 启动期原子换库)
-- ✅ **插件化架构**:核心功能即内置插件,统一生命周期与能力注册接口
-- 🔲 M3:画像管理、LLM 摘要(可选)、记忆分发(反向生成各家记忆文件)、增量同步
-- 🔲 M4:Markdown 笔记编辑与图谱
+- ✅ **笔记与图谱**:vault/ 内 Markdown 笔记(CodeMirror 6 编辑、Ctrl+S 保存)、[[双向链接]] + 反向链接、标签、知识图谱;Obsidian 兼容(直接用 Obsidian 打开 vault/)
+- ✅ **项目文件监听**:只读导入项目内 AGENTS.md / CLAUDE.md / MEMORY.md 为记忆
+- ✅ **插件化架构**:核心功能即内置插件,统一生命周期与能力注册接口,API 文档见 docs/plugins.md
+- 🔲 后续:打包分发、外部社区插件目录加载、FTS 存储优化
 
 完整规划见 [AGENTS.md](AGENTS.md) 与 [docs/architecture.md](docs/architecture.md)。
 

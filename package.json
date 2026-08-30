@@ -14,9 +14,12 @@
     "import:scan": "electron-vite build && electron . --scan"
   },
   "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.2",
     "adm-zip": "^0.6.0",
     "better-sqlite3": "^13.0.3",
     "chokidar": "^5.0.0",
+    "codemirror": "^6.0.2",
+    "cytoscape": "^3.34.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
@@ -24,6 +27,7 @@
     "@electron/rebuild": "^4.2.0",
     "@types/adm-zip": "^0.5.8",
     "@types/better-sqlite3": "^9.6.0",
+    "@types/cytoscape": "^3.31.0",
     "@types/node": "^26.4.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",

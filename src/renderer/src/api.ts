@@ -104,5 +104,38 @@ export const api = {
       sessionsAdded: number
       sessionsUpdated: number
       memoriesAdded: number
-    }>
+    }>,
+  // core-vault
+  notesList: (): Promise<Array<{ id: number; relPath: string; title: string; tags: string[]; updatedAt: number }>> =>
+    window.memorysql.invoke('core-vault:notes:list') as Promise<
+      Array<{ id: number; relPath: string; title: string; tags: string[]; updatedAt: number }>
+    >,
+  notesGet: (id: number): Promise<{ note: { id: number; relPath: string; title: string; tags: string[] }; content: string }> =>
+    window.memorysql.invoke('core-vault:notes:get', { id }) as Promise<{
+      note: { id: number; relPath: string; title: string; tags: string[] }
+      content: string
+    }>,
+  notesSave: (id: number, content: string): Promise<{ ok: boolean }> =>
+    window.memorysql.invoke('core-vault:notes:save', { id, content }) as Promise<{ ok: boolean }>,
+  notesCreate: (title: string): Promise<{ id: number; relPath: string }> =>
+    window.memorysql.invoke('core-vault:notes:create', { title }) as Promise<{ id: number; relPath: string }>,
+  notesDelete: (id: number): Promise<{ ok: boolean }> =>
+    window.memorysql.invoke('core-vault:notes:delete', { id }) as Promise<{ ok: boolean }>,
+  notesBacklinks: (id: number): Promise<Array<{ id: number; title: string }>> =>
+    window.memorysql.invoke('core-vault:notes:backlinks', { id }) as Promise<Array<{ id: number; title: string }>>,
+  notesGraph: (): Promise<{ nodes: Array<{ id: number; title: string }>; edges: Array<{ from: number; to: number }> }> =>
+    window.memorysql.invoke('core-vault:notes:graph') as Promise<{
+      nodes: Array<{ id: number; title: string }>
+      edges: Array<{ from: number; to: number }>
+    }>,
+  // capture-watcher
+  watcherList: (): Promise<{ roots: string[]; projects: Array<{ id: number; name: string; path: string }> }> =>
+    window.memorysql.invoke('capture-watcher:list') as Promise<{
+      roots: string[]
+      projects: Array<{ id: number; name: string; path: string }>
+    }>,
+  watcherAddRoot: (root: string): Promise<{ roots: string[] }> =>
+    window.memorysql.invoke('capture-watcher:addRoot', { root }) as Promise<{ roots: string[] }>,
+  watcherRemoveRoot: (root: string): Promise<{ roots: string[] }> =>
+    window.memorysql.invoke('capture-watcher:removeRoot', { root }) as Promise<{ roots: string[] }>
 }
