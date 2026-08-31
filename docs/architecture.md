@@ -140,7 +140,7 @@ FTS: sessions_fts(title, summary) · messages_fts(content)  — contentless + �
 
 ### M7 壁垒(1–2 个月)
 
-1. **本地语义检索**:sqlite-vec 扩展 + 本地小模型 embedding(fastembed/ONNX 级),FTS + 向量混合排序;全程离线,不破 local-first 承诺。「语义召回全部开发史,且不上云」是独一无二的卖点
+1. **本地语义检索**:sqlite-vec 扩展 + 本地小模型 embedding(fastembed/ONNX 级),FTS + 向量混合排序;全程离线,不破 local-first 承诺。「语义召回全部开发史,且不上云」是独一无二的卖点。✅ 基建完成(2026-08-31,semantic-search 插件:bge-small-zh-v1.5 向量化活跃记忆+会话,memory_search 字面未命中时语义补足;**默认关闭,启用即下载 ~100MB 模型,属用户显式动作**;UI 开关与 messages 级向量待后续)
 2. **自动 DEVLOG**:从会话历史自动生成/维护每个项目的开发日志(用户手写 DEVLOG 的纪律就是需求证明);与 capture-watcher 双向打通,形成「项目文件 ↔ 知识库」活同步。✅ 第一期已完成(2026-08-31,project-devlog 插件:时间线+决策+待办,vault/devlog/ 下按项目生成,UI 按钮 + headless --devlog + ingest 防抖自动更新;LLM 精炼与手工编辑保护后续叠加)
 3. **每日打开的理由**:托盘常驻 + 全局热键 Spotlight 式秒搜(会话/记忆/笔记一起搜);轻量「本周开发轨迹」仪表盘(按 agent/项目分布、活跃曲线,纯只读视图)。MCP 服务端常驻的前提是用户有每天打开它的动机
 4. **静态加密(可选)**:SQLCipher,把「数据 100% 本地」升级为「100% 本地且加密」

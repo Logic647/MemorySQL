@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-08-31 · M7 第三块:语义检索基建完成(默认关闭,待用户确认启用)
+
+- **新插件 `semantic-search`**(sqlite-vec 0.1.9 + fastembed 2.1,bge-small-zh-v1.5 / 512 维 / ~100MB 模型):向量化**活跃记忆 + 会话(标题+摘要)**,vec0 虚拟表 KNN;`semantic_refs` 用独立自增 id 做 rowid(memory 与 session 的 id 空间会撞号,踩过)
+- **默认关闭,模型下载是显式动作**:`settings.json` 的 `semantic:enabled: true` 才启用;模型(~100MB)在**首次 sync/search 时才下载**(缓存到 `<dataDir>/fastembed-cache`),启动零开销;vec0/fastembed 任一失败 → 插件降级为不可用,`memory_search` 纯 FTS 照常(铁律 3)
+- **memory_search 混合召回**:字面未命中时语义补足,命中行带 `·语义` 标注;agent/kind/project/since 过滤对语义命中同样生效;UI 搜索未接入(下轮)
+- 索引同步:ingest/sessions:changed 后 **30s 防抖**增量 sync(content-hash 比较,只嵌变化行);IPC `status`/`reindex` 备 UI 用
+- 验证:typecheck 零错 / vitest **66:66**(新增 core×4 假 embedder + 混合检索×1;vec0 需在测试里 loadExtension——与生产一致的加载路径)/ 真机冒烟:默认关闭日志正确、FTS 正常
+- **坑:**vec0 的 rowid 不能用参数绑定(Only integers are allowed),只内联自家表的自增 id;better-sqlite3 的 `exec()` 不接受参数
+- **待确认:**启用即下载模型(~100MB,走 HuggingFace,本机网络可能需代理)——等用户点头
+
+---
+
 ## 2026-08-31 · M7 第二块:托盘常驻 + 全局热键秒搜(spotlight)
 
 「每日打开的理由」核心件:应用退到托盘,MCP 服务端真正常驻;任意界面 Alt+Shift+M 一键秒搜。
