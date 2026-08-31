@@ -69,6 +69,7 @@ const SYNC_FOLDER = (() => {
 })()
 const DISPATCH = process.argv.includes('--dispatch')
 const GENERATE_DEVLOG = process.argv.includes('--devlog')
+const SEMANTIC_REINDEX = process.argv.includes('--reindex')
 const EXPORT_ARCHIVE_DEST = (() => {
   const i = process.argv.indexOf('--export-archive')
   return i >= 0 ? (process.argv[i + 1] ?? '') : null
@@ -178,6 +179,13 @@ async function runHeadlessScan(): Promise<void> {
       results['devlog'] = await host.invoke('project-devlog:generate')
     } catch (err) {
       results['devlog'] = { error: String(err) }
+    }
+  }
+  if (SEMANTIC_REINDEX) {
+    try {
+      results['semantic'] = await host.invoke('semantic-search:reindex')
+    } catch (err) {
+      results['semantic'] = { error: String(err) }
     }
   }
   try {
@@ -394,7 +402,14 @@ function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
 
 app.whenReady().then(async () => {
   try {
-    if (HEADLESS_SCAN || SYNC_FOLDER !== null || EXPORT_ARCHIVE_DEST !== null || DISPATCH) {
+    if (
+      HEADLESS_SCAN ||
+      SYNC_FOLDER !== null ||
+      EXPORT_ARCHIVE_DEST !== null ||
+      DISPATCH ||
+      GENERATE_DEVLOG ||
+      SEMANTIC_REINDEX
+    ) {
       await runHeadlessScan()
       return
     }

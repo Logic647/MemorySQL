@@ -30,10 +30,12 @@ const plugin: MemorySQLPlugin = {
   },
 
   async init(ctx) {
-    const enabled = ctx.settings.get<boolean>('semantic:enabled', false)
+    // plugin settings are namespaced automatically: this reads the flat key
+    // `semantic-search:enabled` in settings.json
+    const enabled = ctx.settings.get<boolean>('enabled', false)
     if (!enabled) {
       ctx.ipc.handle('status', (): SemanticStatus => ({ enabled: false, available: false, reason: '未启用(设置 semantic:enabled)' }))
-      ctx.log.info('semantic search disabled (semantic:enabled=false) — MCP memory_search runs pure FTS')
+      ctx.log.info('semantic search disabled (semantic-search:enabled=false) — MCP memory_search runs pure FTS')
       return
     }
 

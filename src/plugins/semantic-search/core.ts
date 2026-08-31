@@ -14,6 +14,14 @@ export interface SemanticCore {
   stats(): { rows: number; dims: number; model: string }
 }
 
+/** fastembed yields Float32Array; tests may pass plain arrays */
+type VecInput = Float32Array | number[]
+
+const vecParam = (v: VecInput): Buffer | string =>
+  v instanceof Float32Array
+    ? Buffer.from(v.buffer, v.byteOffset, v.byteLength)
+    : JSON.stringify(v)
+
 const hashText = (t: string): string => crypto.createHash('sha1').update(t).digest('hex')
 
 /**
@@ -23,8 +31,8 @@ const hashText = (t: string): string => crypto.createHash('sha1').update(t).dige
  */
 export function createSemanticCore(deps: {
   sqlite: Database.Database
-  embedDocs: (texts: string[]) => Promise<number[][]>
-  embedQuery: (q: string) => Promise<number[]>
+  embedDocs: (texts: string[]) => Promise<VecInput[]>
+  embedQuery: (q: string) => Promise<VecInput>
   dims: number
   model: string
 }): SemanticCore {
@@ -106,19 +114,23 @@ export function createSemanticCore(deps: {
       let embedded = 0
       if (stale.length > 0) {
         const vectors = await embedDocs(stale.map(([, w]) => w.text))
-        for (let i = 0; i < stale.length; i++) {
-          const [key, w] = stale[i]
-          const oldId = existing.get(key)
+        // one transaction per row: a ref row must never exist without its vector
+        const insertRow = sqlite.transaction(
+          (w: { kind: string; refId: number; text: string }, vec: VecInput, oldId?: number) => {
           if (oldId != null) vecDel.run(oldId)
           const refRow = refFind.get(w.kind, w.refId) as { id: number } | undefined
           if (refRow != null) refDel.run(refRow.id)
           const newId = Number(
-            (refIns.run(w.kind, w.refId, w.hash) as { lastInsertRowid: number | bigint }).lastInsertRowid
+            (refIns.run(w.kind, w.refId, hashText(w.text)) as { lastInsertRowid: number | bigint }).lastInsertRowid
           )
           // vec0 rejects bound rowid params — inline our own integer id
           sqlite
             .prepare(`INSERT INTO semantic_vec (rowid, embedding) VALUES (${newId}, ?)`)
-            .run(JSON.stringify(vectors[i]))
+            .run(vecParam(vec))
+        })
+        for (let i = 0; i < stale.length; i++) {
+          const [key, w] = stale[i]
+          insertRow(w, vectors[i], existing.get(key))
           embedded++
         }
       }
@@ -132,7 +144,7 @@ export function createSemanticCore(deps: {
           `SELECT v.rowid AS id, v.distance FROM semantic_vec v
            WHERE v.embedding MATCH ? AND k = ? ORDER BY distance`
         )
-        .all(JSON.stringify(qv), limit) as Array<{ id: number; distance: number }>
+        .all(vecParam(qv), limit) as Array<{ id: number; distance: number }>
       const hits: SemanticHit[] = []
       for (const r of knn) {
         const ref = sqlite

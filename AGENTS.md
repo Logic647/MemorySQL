@@ -59,6 +59,6 @@ npm run dist         # 打包 Windows 安装包 + 免安装目录(需 ELECTRON_B
 ## 当前状态(接手 agent 从这里开始)
 
 - **M0–M6 全部完成**(2026-08-31):M5 = 审计修复 + 会话 ID + 七 agent 捕获矩阵 + 记忆 agent 维度/规则提炼/LLM 精炼 + 外部插件加载 + 液态玻璃 UI(细节见 DEVLOG);M5.2 = 外部测试修复(记忆/笔记进 MCP 全文检索、Hermes 记忆 § 分段、版本号、get_context 会话 id);**M6 = MCP 工具矩阵 v2(4→7 工具:get_context agent 过滤+交接摘要、memory_list_sessions、memory_get_session full、memory_search kind/agent/project/since 过滤、memory_write 归因+tags/project、memory_log_progress 收工汇报→候选记忆)+ 交接简报 memory_get_project_brief + 写入去重**(LLM 冲突检测顺延 M7)
-- 精确进度:见 `docs/DEVLOG.md` 最后一条;路线图 architecture.md §8,**M7 进行中**(✅ 自动项目日志、✅ 托盘 + Alt+Shift+M 秒搜、✅ 语义检索基建(默认关闭,**启用即下载 ~100MB 模型,需用户确认**);剩:SQLCipher、LLM 冲突检测、语义检索 UI 开关)
+- 精确进度:见 `docs/DEVLOG.md` 最后一条;路线图 architecture.md §8,**M7 进行中**(✅ 自动项目日志、✅ 托盘 + Alt+Shift+M 秒搜、✅ 语义检索已启用并端到端验证(开发库,`semantic-search:enabled`,91MB 模型已缓存);剩:SQLCipher、LLM 冲突检测、语义检索 UI 开关)
 - 常用验证:`npm run import:scan`;`npx electron . --dispatch`;`npx electron . --sync <folder>`;`npx electron . --scan --export-archive <path>`;运行中 `curl http://127.0.0.1:8642/health`
 - 验收数据(本机真实存在):Codex `~/.codex/sessions/**/rollout-*.jsonl`;ZCode `~/.zcode/cli/rollout/`;Hermes `D:\Hermes Agent CN Desktop\data\hermes-home\profiles\daily\state.db` + `memories/*.md`;其余四适配器(Claude/Gemini/Cursor/OpenCode)本机未装,合成样本单测覆盖

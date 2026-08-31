@@ -12,7 +12,8 @@
 - 索引同步:ingest/sessions:changed 后 **30s 防抖**增量 sync(content-hash 比较,只嵌变化行);IPC `status`/`reindex` 备 UI 用
 - 验证:typecheck 零错 / vitest **66:66**(新增 core×4 假 embedder + 混合检索×1;vec0 需在测试里 loadExtension——与生产一致的加载路径)/ 真机冒烟:默认关闭日志正确、FTS 正常
 - **坑:**vec0 的 rowid 不能用参数绑定(Only integers are allowed),只内联自家表的自增 id;better-sqlite3 的 `exec()` 不接受参数
-- **待确认:**启用即下载模型(~100MB,走 HuggingFace,本机网络可能需代理)——等用户点头
+- **启用验证(用户确认后同日完成):**模型实际 91MB,本机直连 HuggingFace 下载成功(无需代理);75 行向量(21 记忆 + 56 会话)入库;端到端实测:概念性查询「换电脑时知识库怎么迁移到另一台机器」字面零命中 → 语义补足 4 条高度相关(GitHub 同步布局记忆 + 3 个同步/迁移会话), 标注与过滤维度全部生效
+- **启用方式(实测修正):**插件 ctx.settings 自动加 `${id}:` 前缀,实际键为 settings.json 的 `"semantic-search:enabled": true`(不是 semantic:enabled);headless `--reindex` 可手动重建索引(比防抖等待可靠)
 
 ---
 
