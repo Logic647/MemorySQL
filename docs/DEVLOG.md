@@ -21,6 +21,12 @@
 
 **待办(需用户确认):**push main(本地累计 M5.2→M8 共 16 个 commit)+ `gh release create v0.4.0` 三件套;之后验收自动更新、提交 winget/scoop。
 
+**同日完成(推送与发版):**
+- 直连 github.com:443 全断(reset/timeout,重试无效;api.github.com 与 22 端口 SSH 通)→ 走**服务器 bundle 中转**(用户 QA 项目同款流程):`git bundle`(main + tag)→ scp 阿里云 → 服务器 `git clone bundle` → `git push gh origin/main:main`。**坑:**bundle 无 HEAD,clone 不建本地分支,push 要用 `refs/remotes/origin/main` 显式 refspec
+- 本机 gh 的 token 缺 `admin:public_key` scope,本机 SSH 密钥无法自动登记(设备授权端点也被墙)——后续想本机直推需人工补 scope 或在网页登记密钥
+- **v0.4.0 Release 已发**:exe + blockmap + latest.yml 三件套上传成功(uploads.github.com 可达),CI 在 GitHub 端自动触发 ✓
+- 自动更新真实拉取的验收要等下一个版本(0.4.0 是第一个带 updater 的版);winget/scoop 提交素材在 docs/RELEASE.md
+
 ---
 
 ## 2026-08-31 · M7 收尾:实库启用语义检索 + 设置页开关 + LLM 冲突检测(M7 完成)

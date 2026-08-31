@@ -59,7 +59,7 @@ npm run dist         # 打包 Windows 安装包 + 免安装目录(需 ELECTRON_B
 ## 当前状态(接手 agent 从这里开始)
 
 - **M0–M6 全部完成**(2026-08-31):M5 = 审计修复 + 会话 ID + 七 agent 捕获矩阵 + 记忆 agent 维度/规则提炼/LLM 精炼 + 外部插件加载 + 液态玻璃 UI(细节见 DEVLOG);M5.2 = 外部测试修复(记忆/笔记进 MCP 全文检索、Hermes 记忆 § 分段、版本号、get_context 会话 id);**M6 = MCP 工具矩阵 v2(4→7 工具:get_context agent 过滤+交接摘要、memory_list_sessions、memory_get_session full、memory_search kind/agent/project/since 过滤、memory_write 归因+tags/project、memory_log_progress 收工汇报→候选记忆)+ 交接简报 memory_get_project_brief + 写入去重**(LLM 冲突检测顺延 M7)
-- **M0–M7 全部完成;M8 进行中**(2026-08-31):M7 = 自动项目日志 + 托盘秒搜 + 语义检索(实库已启用)+ 设置页开关 + LLM 冲突检测;SQLCipher 显式暂缓(architecture.md §8);M8 已就绪 = CI(.github/workflows/ci.yml:ci+package 双 job)+ electron-updater(app-update.yml 已入包)+ docs/RELEASE.md 发版清单(winget/scoop 步骤);**本地累计 16 个 commit 未推送,发 v0.4.0 Release 待用户确认**
-- 精确进度:见 `docs/DEVLOG.md` 最后一条;下一步:**推送 + 发 v0.4.0 Release**(流程 docs/RELEASE.md),随后验收自动更新、提交 winget/scoop、MCP 目录登记
+- **M0–M7 完成;M8 大半完成**(2026-08-31):语义检索/托盘秒搜/项目日志/冲突检测均已上线;CI 已接(main 推送自动 ci+package);**v0.4.0 已发版**(GitHub Release 三件套,自动更新链路待下一版本验收);推送走服务器 bundle 中转(本机直连 github.com:443 被墙,见 DEVLOG);winget/scoop 提交未做(步骤在 docs/RELEASE.md)
+- 精确进度:见 `docs/DEVLOG.md` 最后一条;下一步:验收 CI 绿灯与自动更新(需 v0.4.1)、winget/scoop 提交、demo 与社区发布
 - 常用验证:`npm run import:scan`;`npx electron . --dispatch`;`npx electron . --sync <folder>`;`npx electron . --scan --export-archive <path>`;运行中 `curl http://127.0.0.1:8642/health`
 - 验收数据(本机真实存在):Codex `~/.codex/sessions/**/rollout-*.jsonl`;ZCode `~/.zcode/cli/rollout/`;Hermes `D:\Hermes Agent CN Desktop\data\hermes-home\profiles\daily\state.db` + `memories/*.md`;其余四适配器(Claude/Gemini/Cursor/OpenCode)本机未装,合成样本单测覆盖
