@@ -58,7 +58,7 @@ npm run dist         # 打包 Windows 安装包 + 免安装目录(需 ELECTRON_B
 
 ## 当前状态(接手 agent 从这里开始)
 
-- **M0–M5 全部完成**(2026-08-30):M5 = 审计修复(P0×1/P1×5/P2×8)+ 会话 ID + 七 agent 捕获矩阵(设置页开关/路径)+ 登记式自定义 agent + 记忆 agent 维度/规则提炼/LLM 精炼 + 存储位置迁移 + MCP 端口避让与安全校验 + LLM 模型列表 + 外部插件加载(README 规范)+ 液态玻璃 UI 重设计(三 skill 链)
-- 精确进度:见 `docs/DEVLOG.md` 最后一条(含审查遗留 P2 清单);审查报告结论 = 修复后可发版
+- **M0–M5.2 全部完成**(2026-08-31):M5 = 审计修复(P0×1/P1×5/P2×8)+ 会话 ID + 七 agent 捕获矩阵(设置页开关/路径)+ 登记式自定义 agent + 记忆 agent 维度/规则提炼/LLM 精炼 + 存储位置迁移 + MCP 端口避让与安全校验 + LLM 模型列表 + 外部插件加载(README 规范)+ 液态玻璃 UI 重设计(三 skill 链);M5.2 = 外部测试修复(Hermes 全量测试):记忆/笔记进 MCP 全文检索(v3 触发器自动同步)、Hermes 记忆 § 分段导入(内容寻址 + legacy 清理)、MCP serverInfo 版本号接 app.getVersion()、headless scanNow 通道过滤、get_context 会话带 id
+- 精确进度:见 `docs/DEVLOG.md` 最后一条;**路线图已细化到 M8**(architecture.md §8),下一步 **M6 = MCP 工具矩阵 v2 + 交接简报 + 回流闭环 + 记忆治理**
 - 常用验证:`npm run import:scan`;`npx electron . --dispatch`;`npx electron . --sync <folder>`;`npx electron . --scan --export-archive <path>`;运行中 `curl http://127.0.0.1:8642/health`
 - 验收数据(本机真实存在):Codex `~/.codex/sessions/**/rollout-*.jsonl`;ZCode `~/.zcode/cli/rollout/`;Hermes `D:\Hermes Agent CN Desktop\data\hermes-home\profiles\daily\state.db` + `memories/*.md`;其余四适配器(Claude/Gemini/Cursor/OpenCode)本机未装,合成样本单测覆盖

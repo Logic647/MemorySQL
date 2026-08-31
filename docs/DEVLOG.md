@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-08-31 · M5.2 外部测试修复 + 计划书细化到 M8
+
+**背景:** Hermes agent 对 v0.2.0 做了全量功能测试(会话 #59):环境链路全绿(typecheck / vitest 36 / 构建 / 无头扫描 56 会话 / 归档 / sync / dispatch / stdio 桥 / 端口避让),但抓出 4 个 bug + 一批 MCP 调用断点。本轮全部修复,并按测试报告的后续开发建议把路线图细化到 M8。
+
+**修复:**
+- **P0 记忆/笔记进全文检索**:migrations v3 建 `memories_fts`(trigram)+ 存量回填 + 三个触发器(AI/AU/AD)自动同步索引——一次覆盖 ingest / memory-core / sync-folder 共 10 处写路径;`search.ts` 四路查询(memory + note,含 <3 字符 LIKE 回退;retired 记忆不入结果),`SearchHit.kind` 补 `note`(类型里预留的 `'memory'` 终于落地);UI 搜索结果标签补「记忆」「笔记」。注意坑:notes 表无 content 列(正文只在 notes_fts),LIKE 回退只搜标题
+- **P1 Hermes 记忆 § 分段**:新 `capture-hermes/split.ts` 按行首 § 分段(单测覆盖);source 改内容寻址 `hermes:<rel>#<sha1前10>`——编辑→新行、重排→key 稳定、相同内容自然去重;导入后 tombstone legacy 整文件行与失效分段(文件是事实来源)。实库验证:旧 2 条巨型记忆 → 12 条分段(avg 209 字符 / max 757),legacy 清零,`memories_fts` 行数与活记忆严格一致
+- **P2 版本号**:`handleRpc` 加可选 serverInfo 参数(默认值单测无感),mcp-server 传 `app.getVersion()`——package.json 成为单一事实来源
+- **P2 headless**:`--scan` 用 `host.listChannels()` 过滤,只调用注册了 scanNow 的插件(capture-watcher 不再每次报 Unknown channel)
+- **快赢**:`get_context` 会话列表带 `#id`,尾部提示补 `memory_get_session({id})`——切 agent 调用流从「4+ 次带猜测」迈向「2 次确定性」的第一步
+
+**验证:** typecheck 零错 / vitest **48:48**(新增 search×6 + hermes-split×6)/ 构建 + `npm run import:scan` 真实数据冒烟(无 Unknown channel,分段导入正确)
+**坑:** FTS5 特殊命令 `INSERT INTO ft(ft, rowid, ...) VALUES('delete', ...)` 在普通 fts5 表的触发器里报 "SQL logic error"(node -e 最小复现坐实),触发器改用 `DELETE FROM memories_fts WHERE rowid=?` + `INSERT…SELECT…WHERE new.deleted=0`
+
+**计划书:** architecture.md §8 回填 M5/M5.2 + 新增 M6(MCP 工具矩阵 v2 全表 + 切 agent 调用流对照 + 交接简报 + 回流闭环 + 记忆治理)/ M7(sqlite-vec 本地语义检索 + 自动 DEVLOG + 托盘秒搜 + SQLCipher 可选)/ M8(打包 CI + demo + 发布渠道),全部详细条目。版本 0.2.1。
+**下一步:** 按 M6 开工,建议顺序:MCP 工具矩阵 v2 → `memory_log_progress` 回流闭环 → 交接简报 `memory_get_project_brief` → 记忆治理
+
+---
+
 ## 2026-08-30 · Hermes MCP 直连适配(连接向导第七家)
 
 - 定位:Hermes Agent CN Desktop 是 **NousResearch/hermes-agent** 的打包发行版(本机 config.yaml 出现 hermes auth/Nous Portal/tirith 等特征),MCP 配置根键为 `mcp_servers:`(snake_case),原生支持 Streamable HTTP `url:` 与 `protocol: stateless`、`trust: untrusted`,改后 `/reload-mcp` 热加载
