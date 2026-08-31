@@ -2,6 +2,7 @@ import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import type { MemoriesService } from '../core-schema'
 import type { RawMessage } from '../../shared/types'
 import { distill } from './distill'
+import { buildConflictPrompt, parseConflictResponse } from './conflicts'
 
 /** Memory CRUD for the UI, plus rule-based auto-distillation and LLM refinement. */
 const VALID_KINDS = new Set(['fact', 'preference', 'persona', 'decision'])
@@ -113,6 +114,43 @@ const plugin: MemorySQLPlugin = {
       if (produced > 0) {
         ctx.log.info(`distilled ${produced} candidate memories from ${sessionIds.length} sessions`)
         ctx.events.emit('sessions:changed')
+      }
+    })
+
+    // ---- LLM conflict detection: report-only, the user decides -----------
+    ctx.ipc.handle('detectConflicts', async () => {
+      let refine: { available(): boolean; refine(prompt: string): Promise<string> }
+      try {
+        refine = ctx.services.use('llm-refine')
+      } catch {
+        return { ok: false as const, conflicts: [], message: 'LLM 模块未加载' }
+      }
+      if (!refine.available()) {
+        return { ok: false as const, conflicts: [], message: 'LLM 未配置 — 冲突检测需要 LLM(设置页配置摘要引擎后可用)' }
+      }
+      const rows = ctx.db.sqlite
+        .prepare(
+          `SELECT id, kind, content FROM memories
+           WHERE deleted = 0 AND status IN ('active', 'candidate')
+           ORDER BY updated_at DESC LIMIT 60`
+        )
+        .all() as Array<{ id: number; kind: string; content: string }>
+      if (rows.length < 2) return { ok: true as const, conflicts: [], message: '记忆太少,无需检测' }
+      const text = await refine.refine(buildConflictPrompt(rows))
+      const validIds = new Set(rows.map((r) => r.id))
+      const pairs = parseConflictResponse(text, validIds)
+      const byId = new Map(rows.map((r) => [r.id, r]))
+      const conflicts = pairs.map((p) => ({
+        aId: p.aId,
+        bId: p.bId,
+        reason: p.reason,
+        aExcerpt: byId.get(p.aId)?.content ?? '',
+        bExcerpt: byId.get(p.bId)?.content ?? ''
+      }))
+      return {
+        ok: true as const,
+        conflicts,
+        message: conflicts.length > 0 ? `发现 ${conflicts.length} 组疑似矛盾记忆` : '未发现互相矛盾的记忆'
       }
     })
 

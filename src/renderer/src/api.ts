@@ -97,6 +97,39 @@ export const api = {
       inserted?: number
       message: string
     }>,
+  memoriesDetectConflicts: (): Promise<{
+    ok: boolean
+    message: string
+    conflicts: Array<{ aId: number; bId: number; reason: string; aExcerpt: string; bExcerpt: string }>
+  }> =>
+    window.memorysql.invoke('memory-core:detectConflicts') as Promise<{
+      ok: boolean
+      message: string
+      conflicts: Array<{ aId: number; bId: number; reason: string; aExcerpt: string; bExcerpt: string }>
+    }>,
+  semanticStatus: (): Promise<{
+    enabled: boolean
+    available: boolean
+    reason?: string
+    model?: string
+    dims?: number
+    rows?: number
+  }> =>
+    window.memorysql.invoke('semantic-search:status') as Promise<{
+      enabled: boolean
+      available: boolean
+      reason?: string
+      model?: string
+      dims?: number
+      rows?: number
+    }>,
+  semanticReindex: (): Promise<{ embedded: number; removed: number; rows: number; ok: boolean }> =>
+    window.memorysql.invoke('semantic-search:reindex') as Promise<{
+      embedded: number
+      removed: number
+      rows: number
+      ok: boolean
+    }>,
   // memory-dispatch
   dispatchGenerate: (): Promise<{ files: string[] }> =>
     window.memorysql.invoke('memory-dispatch:generate') as Promise<{ files: string[] }>,

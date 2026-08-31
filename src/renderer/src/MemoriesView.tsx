@@ -31,6 +31,10 @@ export default function MemoriesView() {
   const [msg, setMsg] = useState('')
   const [agentFilter, setAgentFilter] = useState<string>('all')
   const [refining, setRefining] = useState(false)
+  const [detecting, setDetecting] = useState(false)
+  const [conflicts, setConflicts] = useState<
+    Array<{ aId: number; bId: number; reason: string; aExcerpt: string; bExcerpt: string }>
+  >([])
 
   const load = useCallback(async (): Promise<void> => {
     setRows((await api.memories()) as unknown as MemoryRow[])
@@ -68,6 +72,19 @@ export default function MemoriesView() {
     }
   }, [agentFilter, load])
 
+  const detect = useCallback(async (): Promise<void> => {
+    setDetecting(true)
+    try {
+      const r = await api.memoriesDetectConflicts()
+      setConflicts(r.conflicts)
+      setMsg(r.message)
+    } catch (e) {
+      setMsg(`检测失败: ${String(e)}`)
+    } finally {
+      setDetecting(false)
+    }
+  }, [])
+
   return (
     <div className="memories-pane">
       <div className="pane-title">
@@ -89,6 +106,9 @@ export default function MemoriesView() {
         </button>
         <button className="btn btn-small" style={{ marginLeft: 6 }} disabled={refining} onClick={() => void refine()}>
           {refining ? '精炼中…' : 'LLM 精炼候选'}
+        </button>
+        <button className="btn btn-small" style={{ marginLeft: 6 }} disabled={detecting} onClick={() => void detect()}>
+          {detecting ? '检测中…' : '冲突检测'}
         </button>
         <button
           className="btn btn-small"
@@ -115,6 +135,35 @@ export default function MemoriesView() {
           </button>
         ))}
       </div>
+
+      {conflicts.length > 0 && (
+        <div className="mem-edit">
+          <div className="mem-edit-actions" style={{ justifyContent: 'space-between' }}>
+            <strong>疑似矛盾记忆({conflicts.length} 组)— 请人工裁决:停用旧版本或改写</strong>
+            <button className="btn btn-small" onClick={() => setConflicts([])}>
+              知道了
+            </button>
+          </div>
+          {conflicts.map((c) => (
+            <div key={`${c.aId}-${c.bId}`} className="mem-row">
+              <pre className="mem-content">
+                {`#${c.aId}: ${c.aExcerpt.slice(0, 160)}\n#${c.bId}: ${c.bExcerpt.slice(0, 160)}`}
+              </pre>
+              <div className="mem-meta">
+                <span className="mem-source">⚠ {c.reason}</span>
+                <span className="mem-actions">
+                  <button className="link danger" onClick={() => void api.memoriesSetStatus(c.bId, 'retired').then(load)}>
+                    停用 #{c.bId}
+                  </button>
+                  <button className="link danger" onClick={() => void api.memoriesSetStatus(c.aId, 'retired').then(load)}>
+                    停用 #{c.aId}
+                  </button>
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {draft && (
         <div className="mem-edit">

@@ -180,6 +180,15 @@ export default function SettingsView() {
         </section>
 
         <section>
+          <h3>语义检索(本地向量)</h3>
+          <p className="hint">
+            sqlite-vec + bge-small-zh 本地 embedding(全程离线):memory_search 字面未命中时按语义补足召回。
+            首次启用会下载 ~100MB 模型,缓存于数据目录 fastembed-cache;停用后纯关键词检索照常。
+          </p>
+          <SemanticSection onMsg={setMsg} />
+        </section>
+
+        <section>
           <h3>增量同步(通过同步文件夹)</h3>
           <p className="hint">
             选择 OneDrive / 坚果云等网盘同步的文件夹,多台机器各自指向同一文件夹即可双向合并(按自然键并集 + LWW;删除不传播,整库迁移用导出/导入备份)。
@@ -342,6 +351,74 @@ export default function SettingsView() {
         {msg && <div className="kb-msg">{msg}</div>}
       </div>
     </div>
+  )
+}
+
+function SemanticSection({ onMsg }: { onMsg: (s: string) => void }) {
+  const [status, setStatus] = useState<{
+    enabled: boolean
+    available: boolean
+    reason?: string
+    model?: string
+    dims?: number
+    rows?: number
+  } | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      setStatus(await api.semanticStatus())
+    } catch {
+      setStatus({ enabled: false, available: false, reason: '插件不可用' })
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  if (!status) return <p className="hint">加载中…</p>
+  return (
+    <>
+      <div className="field-row">
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={status.enabled}
+            onChange={(e) =>
+              void api
+                .hostPluginSetting('semantic-search', 'enabled', e.target.checked)
+                .then(() => onMsg(`语义检索已${e.target.checked ? '启用' : '停用'},重启应用生效`))
+                .catch((err) => onMsg(`操作失败: ${String(err)}`))
+            }
+          />
+          <span className="slider" />
+        </label>
+        <span className="mono-tag">
+          {!status.enabled
+            ? '已关闭(纯关键词检索)'
+            : status.available
+              ? `运行中 · ${status.model} · ${status.dims}维 · ${status.rows} 条已索引`
+              : `已启用但不可用: ${status.reason ?? '未知原因'}`}
+        </span>
+      </div>
+      {status.enabled && status.available && (
+        <button
+          className="btn btn-small"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true)
+            void api
+              .semanticReindex()
+              .then((r) => onMsg(`语义索引已重建:新增 ${r.embedded},移除 ${r.removed},共 ${r.rows} 条`))
+              .catch((err) => onMsg(`重建失败: ${String(err)}`))
+              .finally(() => setBusy(false))
+          }}
+        >
+          {busy ? '重建中…' : '重建语义索引'}
+        </button>
+      )}
+    </>
   )
 }
 
