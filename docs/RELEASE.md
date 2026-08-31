@@ -23,10 +23,13 @@
 
 ## winget 提交(首次发版后)
 
-- 仓库:[microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs),路径 `w/Logic647.MemorySQL/`
-- 用 [YamlCreate](https://github.com/microsoft/winget-pkgs/blob/master/Tools/YamlCreate.ps1) 生成三件套:
-  `Logic647.MemorySQL.yaml`(installer,x64 nsis,SHA256 取 `Get-FileHash`)+ `.locale.zh-CN.yaml` + `.installer.yaml`
-- 提 PR, winget-validation bot 会自动验包;安装器需要稳定的版本化 URL(GitHub Release 资产即满足)
+- ✅ **v0.4.0 已提交**:PR https://github.com/microsoft/winget-pkgs/pull/426778
+  (fork `Logic647/winget-pkgs` 分支 `winget-memorysql-0.4.0`,路径 `manifests/l/Logic647/MemorySQL/0.4.0/` 三件套,
+  通过 GitHub Contents API 上传——本机无法 clone 大仓库也能提交)
+- **后续版本更新流程**:同一分支模式,改 3 个 yaml 的版本号/URL/SHA256 后往同一 PR 追加,或按 winget-pkgs 惯例每个版本一个 PR
+- **bot 反馈迭代**:validation pipeline 结果直接评论在 PR 上;如报 manifest 错误,改 `/tmp/winget/*.yaml` 后用同样的 Contents API PUT 到分支即可
+- 本机直连 github.com:443 被墙时的完整提交路径见 DEVLOG 2026-08-31 条目(fork/branch/contents 全走 api.github.com)
+- manifest 内容模板见 git 历史(本文件不保留副本,以 PR 分支为准)
 
 ## scoop 提交(可选,更轻)
 
