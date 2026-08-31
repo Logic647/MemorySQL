@@ -240,7 +240,9 @@ export default function App() {
                   >
                     <div className="hit-head">
                       <AgentBadge type={h.agentType ?? '?'} />
-                      <span className="hit-kind">{h.kind === 'session' ? '会话' : '消息'}</span>
+                      <span className="hit-kind">
+                        {({ session: '会话', message: '消息', memory: '记忆', note: '笔记' } as const)[h.kind]}
+                      </span>
                       <span className="hit-title">{h.title ?? ''}</span>
                     </div>
                     <div className="hit-snippet">{h.snippet}</div>

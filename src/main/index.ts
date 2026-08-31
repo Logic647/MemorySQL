@@ -132,9 +132,14 @@ async function runHeadlessScan(): Promise<void> {
   const { host, db } = await bootstrap()
   const results: Record<string, unknown> = {}
   if (HEADLESS_SCAN) {
+    const channels = new Set(host.listChannels())
     for (const p of BUILTIN_PLUGINS.filter((x) => x.manifest.id.startsWith('capture-'))) {
+      const channel = `${p.manifest.id}:scanNow`
+      // not every capture-* plugin registers scanNow (e.g. capture-watcher) —
+      // skip rather than log a per-run Unknown channel error
+      if (!channels.has(channel)) continue
       try {
-        results[p.manifest.id] = await host.invoke(`${p.manifest.id}:scanNow`)
+        results[p.manifest.id] = await host.invoke(channel)
       } catch (err) {
         results[p.manifest.id] = { error: String(err) }
       }

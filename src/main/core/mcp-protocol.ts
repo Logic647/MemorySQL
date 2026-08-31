@@ -13,7 +13,12 @@ export interface McpToolLike {
 }
 
 export const MCP_PROTOCOL_VERSION = '2025-06-18'
-export const SERVER_INFO = { name: 'memorysql', version: '0.1.0' }
+/**
+ * Fallback identity for tests. Production (mcp-server plugin) injects the
+ * real app version from app.getVersion() so package.json stays the single
+ * source of truth — a hardcoded version here drifted from releases before.
+ */
+export const SERVER_INFO = { name: 'memorysql', version: '0.0.0' }
 
 export interface JsonRpcRequest {
   jsonrpc?: string
@@ -48,7 +53,8 @@ function textResult(text: string): unknown {
  */
 export async function handleRpc(
   req: JsonRpcRequest,
-  tools: McpToolLike[]
+  tools: McpToolLike[],
+  serverInfo: { name: string; version: string } = SERVER_INFO
 ): Promise<JsonRpcResponse | null> {
   const method = req.method ?? ''
   const isNotification = req.id === undefined || req.id === null
@@ -59,7 +65,7 @@ export async function handleRpc(
       return ok(req.id, {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: SERVER_INFO
+        serverInfo
       })
     case 'notifications/initialized':
       return null

@@ -60,7 +60,7 @@ export interface MessageRow {
 }
 
 export interface SearchHit {
-  kind: 'session' | 'message' | 'memory'
+  kind: 'session' | 'message' | 'memory' | 'note'
   id: number
   sessionId?: number
   agentType?: AgentType

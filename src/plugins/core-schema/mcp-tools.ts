@@ -21,6 +21,7 @@ interface ProjectRow {
   tech_stack: string | null
 }
 interface SessionRow {
+  id: number
   title: string | null
   summary: string | null
   started_at: number | null
@@ -90,14 +91,14 @@ export function createMcpTools(deps: {
     if (projectId === null) {
       return sqlite
         .prepare(
-          `SELECT title, summary, started_at FROM sessions
+          `SELECT id, title, summary, started_at FROM sessions
            WHERE deleted = 0 ORDER BY COALESCE(started_at, updated_at) DESC LIMIT ?`
         )
         .all(limit) as SessionRow[]
     }
     return sqlite
       .prepare(
-        `SELECT title, summary, started_at FROM sessions
+        `SELECT id, title, summary, started_at FROM sessions
          WHERE deleted = 0 AND project_id = ?
          ORDER BY COALESCE(started_at, updated_at) DESC LIMIT ?`
       )
@@ -134,14 +135,16 @@ export function createMcpTools(deps: {
       parts.push('- 最近会话:')
       sessions.forEach((s, i) => {
         const firstLine = s.summary ? clip(s.summary.split('\n')[0] ?? '', 120) : ''
-        parts.push(`  ${i + 1}. [${fmtDate(s.started_at)}] ${s.title ?? '(无标题)'}${firstLine ? ` — ${firstLine}` : ''}`)
+        parts.push(
+          `  ${i + 1}. #${s.id} [${fmtDate(s.started_at)}] ${s.title ?? '(无标题)'}${firstLine ? ` — ${firstLine}` : ''}`
+        )
       })
     } else {
       parts.push('- (该项目暂无会话记录)')
     }
 
     parts.push(
-      '\n> 需要更多历史用 memory_search({query});拿到新结论/偏好用 memory_write({kind, content}) 记录。'
+      '\n> 深读某条会话用 memory_get_session({id});需要更多历史用 memory_search({query});拿到新结论/偏好用 memory_write({kind, content}) 记录。'
     )
     return parts.join('\n')
   }

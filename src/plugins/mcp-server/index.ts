@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { app } from 'electron'
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import type { PluginContext } from '../../main/core/plugin-host'
 import { handleRpc, parseRpcMessage, type JsonRpcRequest } from '../../main/core/mcp-protocol'
@@ -85,7 +86,10 @@ function startServer(): void {
             )
             return
           }
-          const response = await handleRpc(msg as JsonRpcRequest, ctx.mcp.list())
+          const response = await handleRpc(msg as JsonRpcRequest, ctx.mcp.list(), {
+            name: 'memorysql',
+            version: app.getVersion()
+          })
           if (response === null) {
             res.writeHead(202).end()
             return

@@ -80,5 +80,29 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(content, tokenize='trigram');
 ALTER TABLE memories ADD COLUMN agent_type TEXT;
 CREATE INDEX idx_memories_agent ON memories(agent_type, kind, status);
 `
+  },
+  {
+    version: 3,
+    up: `
+-- v3: memories enter the FTS index. Triggers keep memories_fts in sync from
+-- every write path (ingest / memory-core / sync-folder / future plugins),
+-- so no call site has to remember to maintain the index by hand.
+CREATE VIRTUAL TABLE memories_fts USING fts5(content, tokenize='trigram');
+
+INSERT INTO memories_fts (rowid, content)
+  SELECT id, content FROM memories WHERE deleted = 0;
+
+CREATE TRIGGER memories_fts_ai AFTER INSERT ON memories BEGIN
+  INSERT INTO memories_fts (rowid, content) VALUES (new.id, new.content);
+END;
+CREATE TRIGGER memories_fts_au AFTER UPDATE OF content, deleted ON memories BEGIN
+  DELETE FROM memories_fts WHERE rowid = old.id;
+  INSERT INTO memories_fts (rowid, content)
+    SELECT new.id, new.content WHERE new.deleted = 0;
+END;
+CREATE TRIGGER memories_fts_ad AFTER DELETE ON memories BEGIN
+  DELETE FROM memories_fts WHERE rowid = old.id;
+END;
+`
   }
 ]

@@ -5,6 +5,7 @@ import type { CaptureStatus, RawMessage, RawSession } from '../../shared/types'
 import type { IngestService } from '../core-schema/ingest'
 import type { MemoriesService } from '../core-schema'
 import { openForeignDb } from '../../main/core/sqlite-ro'
+import { segmentSource, splitHermesMemoryFile } from './split'
 
 /**
  * Hermes Agent CN Desktop data layout (user-provided):
@@ -95,7 +96,11 @@ function findHermesDbs(profilesRoot: string): HermesSource[] {
   return sources
 }
 
-function importHermesMemories(profilesRoot: string, memories: MemoriesService): number {
+function importHermesMemories(
+  profilesRoot: string,
+  sqlite: import('better-sqlite3').Database,
+  memories: MemoriesService
+): number {
   let changed = 0
   const profileDirs: string[] = []
   const profilesDir = path.join(profilesRoot, 'profiles')
@@ -111,6 +116,12 @@ function importHermesMemories(profilesRoot: string, memories: MemoriesService): 
   }
   profileDirs.push(profilesRoot) // default profile home
 
+  const allHermesRows = () =>
+    sqlite
+      .prepare(`SELECT id, source FROM memories WHERE deleted = 0 AND source LIKE 'hermes:%'`)
+      .all() as Array<{ id: number; source: string }>
+  const tombstone = sqlite.prepare('UPDATE memories SET deleted = 1, updated_at = ? WHERE id = ?')
+
   for (const dir of profileDirs) {
     const memDir = path.join(dir, 'memories')
     const files: Array<{ file: string; kind: string }> = [
@@ -122,8 +133,24 @@ function importHermesMemories(profilesRoot: string, memories: MemoriesService): 
       const content = fs.readFileSync(file, 'utf-8').trim()
       if (!content) continue
       const rel = path.relative(profilesRoot, file).split(path.sep).join('/')
-      const res = memories.upsertMemory({ kind, content, source: `hermes:${rel}` })
-      if (res.changed) changed++
+      const legacySource = `hermes:${rel}`
+      const liveKeys = new Set<string>()
+      for (const seg of splitHermesMemoryFile(content)) {
+        const source = segmentSource(rel, seg)
+        liveKeys.add(source)
+        const res = memories.upsertMemory({ kind, content: seg, source })
+        if (res.changed) changed++
+      }
+      // the file is the source of truth: tombstone the legacy whole-file row
+      // (pre-§-split imports) and segments edited/removed out of the file
+      for (const row of allHermesRows()) {
+        const isLegacy = row.source === legacySource
+        const isStaleSegment = row.source.startsWith(`${legacySource}#`) && !liveKeys.has(row.source)
+        if (isLegacy || isStaleSegment) {
+          tombstone.run(Date.now(), row.id)
+          changed++
+        }
+      }
     }
   }
   return changed
@@ -167,7 +194,7 @@ const plugin: MemorySQLPlugin = {
             ctx.log.warn(`failed to read ${dbPath}:`, err)
           }
         }
-        const memChanged = importHermesMemories(profilesRoot, memories)
+        const memChanged = importHermesMemories(profilesRoot, ctx.db.sqlite, memories)
         const res = await ingest.ingestSessions(sessions)
         lastStatus = {
           ...lastStatus,
