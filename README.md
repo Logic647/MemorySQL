@@ -14,9 +14,10 @@
 - ✅ **项目文件监听**:只读导入项目内 AGENTS.md / CLAUDE.md / MEMORY.md 为记忆
 - ✅ **自动项目日志**:按项目在 `vault/devlog/` 生成开发日志(会话时间线 + 决策 + 待办),扫描/导入后自动更新,顶栏一键重新生成;写进 vault 即进入笔记检索
 - ✅ **托盘常驻 + 全局秒搜**:关闭主窗口即隐藏到托盘(MCP 服务端保持常驻),任意界面 `Alt+Shift+M` 唤起 Spotlight 式秒搜(会话/消息/记忆/笔记一起搜,Enter 直达)
-- ✅ **语义检索(可选,默认关闭)**:`memory_search` 支持本地语义召回(sqlite-vec + fastembed bge-small-zh,全程离线);在 `settings.json` 加 `"semantic-search:enabled": true` 并重启即启用——首次启用会下载 ~100MB 模型到本地缓存,也可用 `npx electron . --reindex` 手动重建索引
+- ✅ **语义检索(本地向量)**:`memory_search` 支持本地语义召回(sqlite-vec + fastembed bge-small-zh,全程离线);设置页可启停(`settings.json` 键 `"semantic-search:enabled": true` 等价)——首次启用会下载 ~100MB 模型到本地缓存,`npx electron . --reindex` 手动重建索引
+- ✅ **记忆治理**:LLM 冲突检测(配置摘要引擎后,记忆页一键找出互相矛盾的记忆并人工裁决停用)
 - ✅ **插件化架构**:核心功能即内置插件,统一生命周期与能力注册接口,API 文档见 docs/plugins.md
-- 🔲 后续:SQLCipher 静态加密、语义检索 UI 开关;M8 打包分发 —— 完整路线图见 [docs/architecture.md](docs/architecture.md) §8
+- 🔲 后续:**M8 = 打包分发(安装包 + 自动更新 + GitHub Actions CI)+ demo 与发布** —— 完整路线图见 [docs/architecture.md](docs/architecture.md) §8
 
 完整规划见 [AGENTS.md](AGENTS.md) 与 [docs/architecture.md](docs/architecture.md)。
 

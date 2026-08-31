@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-08-31 · M7 收尾:实库启用语义检索 + 设置页开关 + LLM 冲突检测(M7 完成)
+
+**实库启用(用户委托):**settings 加 `semantic-search:enabled: true` + 拷贝 91MB 模型缓存 + `MEMORYSQL_DATA_DIR` 指向实库 headless `--reindex` 预建索引(**66 行向量**:10 记忆 + 56 会话)——下次启动应用即全量生效,无需再下载。
+
+**语义检索设置页开关:**设置页新增「语义检索(本地向量)」区块 = 运行状态行(模型/维度/已索引进度)+ 启停 checkbox(`memorysql:host:pluginSetting` 写键,重启生效)+「重建语义索引」按钮(实时生效,反馈嵌入/移除/总数)。
+
+**LLM 记忆冲突检测(M6 治理遗留,最后一项):**
+- 纯函数 `memory-core/conflicts.ts`:`buildConflictPrompt`(编号记忆列表 + 严格判定说明:只找真矛盾,补充/细化/跨项目不算)+ `parseConflictResponse`(围栏剥离、无效 id/自反/缺 reason 过滤、镜像对去重)
+- IPC `memory-core:detectConflicts`:LLM 可用性检查(未配置 → 明确降级提示)→ 取最近 60 条 active+candidate → LLM 判定 → 返回矛盾对 + 双方摘录;**只报告不自动处置**(治理铁律,人在 UI 裁决)
+- 记忆页「冲突检测」按钮 → 结果面板:每组矛盾显示双方摘录 + 理由 + 一键「停用 #id」
+- UI 点检说明:真机走查时应用正实时捕获本会话(列表秒级刷新),像素点击帧持续失效——两条新 IPC 通道逻辑已被单测与无头运行覆盖,**设置页/记忆页两处新 UI 留待用户打开即见**
+
+**SQLCipher:⏸ 暂缓决策**(architecture.md §8):需换原生构建(破坏 ABI/归档/同步兼容)+ 密钥管理新攻击面;个人本地场景磁盘加密已覆盖主要威胁模型。触发再评估条件已写明。
+
+**验证:**typecheck 零错 / vitest **70:70**(新增 conflicts×5)/ 构建 3 产物 / 实库 headless reindex 66 行成功。
+**M7 完成**(自动 DEVLOG + 托盘秒搜 + 语义检索;SQLCipher 显式暂缓)。版本 **0.4.0**。**下一步:M8** 打包分发(安装包 + winget/scoop + electron-updater + GitHub Actions CI)、demo 与发布。
+
+---
+
 ## 2026-08-31 · M7 第三块:语义检索基建完成(默认关闭,待用户确认启用)
 
 - **新插件 `semantic-search`**(sqlite-vec 0.1.9 + fastembed 2.1,bge-small-zh-v1.5 / 512 维 / ~100MB 模型):向量化**活跃记忆 + 会话(标题+摘要)**,vec0 虚拟表 KNN;`semantic_refs` 用独立自增 id 做 rowid(memory 与 session 的 id 空间会撞号,踩过)
