@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import { createSemanticCore, type SemanticCore } from './core'
@@ -43,7 +44,15 @@ const plugin: MemorySQLPlugin = {
     try {
       // native deps are load-bearing only when enabled; any failure degrades
       const { getLoadablePath } = await import('sqlite-vec')
-      ctx.db.sqlite.loadExtension(getLoadablePath())
+      // SQLite opens the extension dll with its own C-level file IO, which
+      // does not go through Electron's asar fs shim — rewrite to the unpacked
+      // copy when running from an asar
+      let loadable = getLoadablePath()
+      if (loadable.includes('app.asar') && !loadable.includes('app.asar.unpacked')) {
+        const unpacked = loadable.replace('app.asar', 'app.asar.unpacked')
+        if (fs.existsSync(unpacked)) loadable = unpacked
+      }
+      ctx.db.sqlite.loadExtension(loadable)
       const { FlagEmbedding, EmbeddingModel } = await import('fastembed')
       const model = EmbeddingModel.BGESmallZH
       const dims = 512
