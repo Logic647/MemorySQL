@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-08-31 · M7 第二块:托盘常驻 + 全局热键秒搜(spotlight)
+
+「每日打开的理由」核心件:应用退到托盘,MCP 服务端真正常驻;任意界面 Alt+Shift+M 一键秒搜。
+
+- **主进程新 `spotlight.ts`**:托盘(build/icon.png,打包经 extraResources → resources/icon.png;菜单 = 打开主窗口/全局秒搜/退出,点击托盘=显示主窗口)+ 全局热键 Alt+Shift+M(`settings.json` 的 `spotlight:hotkey` 可改,注册失败降级为仅托盘菜单触发)+ 秒搜窗口(680×460 免框、置顶 screen-saver 级、skipTaskbar,出现在主窗口所在显示器上方,失焦自动隐藏)
+- **关闭即隐藏**:主窗口 X = 隐藏(进程/MCP/托盘保持),真退出走托盘菜单或 before-quit 标记——托盘常驻的关键语义
+- **秒搜渲染端复用主 bundle**:`?spotlight=1` 入口分支渲染 SpotlightView(避免 hooks 分支问题,main.tsx 分流);200ms 防抖实时搜四类资产(会话/消息/记忆/笔记),Enter/点击 → 新 host 通道 `memorysql:host:openSession` → 主窗口唤起 + `push:open-session` 推送打开对应会话详情;Esc/失焦隐藏
+- **UI 走查(实机)**:热键唤起 ✓(免框置顶、输入自动聚焦)→ 输入"触发器"实时出结果 ✓ → Enter 秒搜隐藏 + 主窗口打开会话 #61 详情 ✓;关闭→隐藏留待用户一键复验(走查中焦点被前台应用接管,未强抢)
+- 验证:typecheck 零错 / vitest 61:61(无新单测——窗口/热键属 Electron 集成面,纯逻辑无独立函数)/ 实机走查如上
+- **M7 剩余:**语义检索(sqlite-vec+fastembed 本机可达)、SQLCipher、M6 遗留 LLM 冲突检测;托盘可加开机自启(app.setLoginItemSettings)后续补
+
+---
+
 ## 2026-08-31 · M7 第一块:自动项目日志(project-devlog 插件)
 
 M7 四块(语义检索/自动 DEVLOG/托盘秒搜/SQLCipher)里纯本地、零依赖的一块先落地:
