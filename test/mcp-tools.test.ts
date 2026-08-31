@@ -51,94 +51,125 @@ beforeEach(() => {
   seedBase()
 })
 
-function tools() {
+function tools(semantic?: {
+  search: (q: string, limit?: number) => Promise<Array<{ kind: 'memory' | 'session'; refId: number; score: number }>>
+}) {
   return createMcpTools({
     sqlite: db,
     search: createSearchService(db),
-    memories: createIngestService({ sqlite: db, getSummarizer: () => null, onIngest: () => {} })
+    memories: createIngestService({ sqlite: db, getSummarizer: () => null, onIngest: () => {} }),
+    services: {
+      use: <T = unknown>(name: string) => {
+        if (name === 'semantic-search' && semantic) return semantic as T
+        throw new Error(`Service not provided: ${name}`)
+      }
+    }
   })
 }
-const call = (name: string, args: Record<string, unknown> = {}): string => {
+const call = async (name: string, args: Record<string, unknown> = {}): Promise<string> => {
   const tool = tools().find((t) => t.name === name)
   if (!tool) throw new Error(`missing tool ${name}`)
-  return String(tool.handler(args))
+  return String(await tool.handler(args))
 }
 
 describe('memory_list_sessions', () => {
-  it('lists sessions with ids and filters by agent', () => {
-    const all = call('memory_list_sessions', {})
+  it('lists sessions with ids and filters by agent', async () => {
+    const all = await call('memory_list_sessions', {})
     expect(all).toContain('#10')
     expect(all).toContain('#12')
-    const codexOnly = call('memory_list_sessions', { agent: 'codex' })
+    const codexOnly = await call('memory_list_sessions', { agent: 'codex' })
     expect(codexOnly).toContain('#10')
     expect(codexOnly).not.toContain('#12')
   })
 
-  it('filters by project keyword and since days', () => {
-    const scoped = call('memory_list_sessions', { project: 'MemorySQL' })
+  it('filters by project keyword and since days', async () => {
+    const scoped = await call('memory_list_sessions', { project: 'MemorySQL' })
     expect(scoped).toContain('#10')
     expect(scoped).not.toContain('#12')
-    const recent = call('memory_list_sessions', { since: 5 })
+    const recent = await call('memory_list_sessions', { since: 5 })
     expect(recent).toContain('#10')
     expect(recent).not.toContain('#11') // 10 days old
-    expect(call('memory_list_sessions', { project: '不存在' })).toContain('未找到')
+    expect(await call('memory_list_sessions', { project: '不存在' })).toContain('未找到')
   })
 })
 
 describe('memory_get_context', () => {
-  it('filters long-term memories by agent, keeping global ones', () => {
-    const forHermes = call('memory_get_context', { agent: 'hermes' })
+  it('filters long-term memories by agent, keeping global ones', async () => {
+    const forHermes = await call('memory_get_context', { agent: 'hermes' })
     expect(forHermes).toContain('全局记忆内容示例')
     expect(forHermes).not.toContain('Codex 专属偏好')
-    const forCodex = call('memory_get_context', { agent: 'codex' })
+    const forCodex = await call('memory_get_context', { agent: 'codex' })
     expect(forCodex).toContain('Codex 专属偏好')
     expect(forCodex).not.toContain('退休的旧决策')
   })
 
-  it('inlines the last session tail when requested', () => {
-    const plain = call('memory_get_context', { project: 'MemorySQL' })
+  it('inlines the last session tail when requested', async () => {
+    const plain = await call('memory_get_context', { project: 'MemorySQL' })
     expect(plain).not.toContain('上一棒交接摘要')
     expect(plain).toContain('#10')
-    const withTail = call('memory_get_context', { project: 'MemorySQL', include_last_session: true })
+    const withTail = await call('memory_get_context', { project: 'MemorySQL', include_last_session: true })
     expect(withTail).toContain('上一棒交接摘要')
     expect(withTail).toContain('memories_fts 触发器就位')
   })
 })
 
 describe('memory_get_session full mode', () => {
-  it('keeps long messages intact only in full mode', () => {
+  it('keeps long messages intact only in full mode', async () => {
     const long = '很长的工具输出'.repeat(500) // 3500 chars
     db.prepare('INSERT INTO session_messages (session_id, seq, role, content) VALUES (10, 2, ?, ?)').run('tool', long)
-    const def = call('memory_get_session', { id: 10 })
+    const def = await call('memory_get_session', { id: 10 })
     expect(def).toContain('[截断]')
-    const full = call('memory_get_session', { id: 10, full: true })
+    const full = await call('memory_get_session', { id: 10, full: true })
     expect(full).toContain(long)
   })
 })
 
 describe('memory_search filters', () => {
-  it('kind filter restricts the searched asset', () => {
-    const mems = call('memory_search', { query: '部署流程', kind: 'memory' })
+  it('kind filter restricts the searched asset', async () => {
+    const mems = await call('memory_search', { query: '部署流程', kind: 'memory' })
     expect(mems).toContain('[memory')
     expect(mems).not.toContain('[session')
-    const sessions = call('memory_search', { query: '触发器', kind: 'session' })
+    const sessions = await call('memory_search', { query: '触发器', kind: 'session' })
     expect(sessions).toContain('[session')
     expect(sessions).not.toContain('[memory')
   })
 
-  it('agent + project filters apply', () => {
-    const hermes = call('memory_search', { query: '无关会话', agent: 'hermes' })
+  it('agent + project filters apply', async () => {
+    const hermes = await call('memory_search', { query: '无关会话', agent: 'hermes' })
     expect(hermes).toContain('#12')
-    const codex = call('memory_search', { query: '无关会话', agent: 'codex' })
+    const codex = await call('memory_search', { query: '无关会话', agent: 'codex' })
     expect(codex).toBe('未找到与"无关会话"相关的记录。')
-    const inProject = call('memory_search', { query: '触发器', project: 'MemorySQL' })
+    const inProject = await call('memory_search', { query: '触发器', project: 'MemorySQL' })
     expect(inProject).toContain('会话#10')
+  })
+
+  it('backfills semantic-only hits when the plugin is available', async () => {
+    const semantic = {
+      search: async () => [{ kind: 'session' as const, refId: 10, score: 0.9 }]
+    }
+    const out = await callWith(semantic, 'memory_search', { query: '量子纠缠式重构方案xyz' })
+    expect(out).toContain('语义检索召回')
+    expect(out).toContain('·语义')
+    expect(out).toContain('#10')
+    // agent filter must apply to semantic hits too
+    const filtered = await callWith(semantic, 'memory_search', { query: '量子纠缠式重构方案xyz', agent: 'hermes' })
+    expect(filtered).not.toContain('·语义')
   })
 })
 
+async function callWith(
+  semantic: Parameters<typeof tools>[0],
+  name: string,
+  args: Record<string, unknown>
+): Promise<string> {
+  const tool = tools(semantic).find((t) => t.name === name)
+  if (!tool) throw new Error(`missing tool ${name}`)
+  return String(await tool.handler(args))
+}
+
 describe('memory_write attribution + dedup', () => {
-  it('persists agent/project/tags and rejects exact duplicates', () => {
-    const out = call('memory_write', {
+  it('persists agent/project/tags and rejects exact duplicates', async () => {
+    const out = await call('memory_write', {
       kind: 'preference',
       content: '偏好中文注释',
       agent: 'codex',
@@ -153,7 +184,7 @@ describe('memory_write attribution + dedup', () => {
     expect(row.project_id).toBe(1)
     expect(JSON.parse(row.tags ?? '[]')).toEqual(['风格', '注释'])
 
-    const dup = call('memory_write', { kind: 'fact', content: '偏好中文注释' })
+    const dup = await call('memory_write', { kind: 'fact', content: '偏好中文注释' })
     expect(dup).toContain('已存在相同内容的记忆')
     expect(
       (db.prepare(`SELECT COUNT(*) n FROM memories WHERE content = '偏好中文注释'`).get() as { n: number }).n
@@ -162,8 +193,8 @@ describe('memory_write attribution + dedup', () => {
 })
 
 describe('memory_log_progress + brief', () => {
-  it('writes a candidate progress memory linked to the project', () => {
-    const out = call('memory_log_progress', {
+  it('writes a candidate progress memory linked to the project', async () => {
+    const out = await call('memory_log_progress', {
       project: 'MemorySQL',
       done: '矩阵 v2 六工具落地',
       next: '下一步写交接简报测试',
@@ -179,9 +210,9 @@ describe('memory_log_progress + brief', () => {
     expect(row.agent_type).toBe('codex')
   })
 
-  it('brief assembles sessions, tail, memories and pending progress', () => {
-    call('memory_log_progress', { project: 'MemorySQL', done: '写了一半的功能' })
-    const brief = call('memory_get_project_brief', { project: 'MemorySQL' })
+  it('brief assembles sessions, tail, memories and pending progress', async () => {
+    await call('memory_log_progress', { project: 'MemorySQL', done: '写了一半的功能' })
+    const brief = await call('memory_get_project_brief', { project: 'MemorySQL' })
     expect(brief).toContain('# 项目交接简报: MemorySQL')
     expect(brief).toContain('最近会话')
     expect(brief).toContain('#10')

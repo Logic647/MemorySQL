@@ -25,6 +25,7 @@ import memoryCore from '../plugins/memory-core'
 import memoryDispatch from '../plugins/memory-dispatch'
 import syncFolder from '../plugins/sync-folder'
 import projectDevlog from '../plugins/project-devlog'
+import semanticSearch from '../plugins/semantic-search'
 import coreVault from '../plugins/core-vault'
 import captureWatcher from '../plugins/capture-watcher'
 import type { MemorySQLPlugin } from './core/plugin-host'
@@ -57,7 +58,8 @@ const BUILTIN_PLUGINS = [
   memoryCore,
   memoryDispatch,
   syncFolder,
-  projectDevlog
+  projectDevlog,
+  semanticSearch
 ]
 
 const HEADLESS_SCAN = process.argv.includes('--scan')

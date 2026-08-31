@@ -47,7 +47,8 @@ const plugin: MemorySQLPlugin = {
     const mcpTools = createMcpTools({
       sqlite: ctx.db.sqlite,
       search,
-      memories: ingest
+      memories: ingest,
+      services: ctx.services
     })
     for (const tool of mcpTools) {
       ctx.mcp.registerTool(tool)

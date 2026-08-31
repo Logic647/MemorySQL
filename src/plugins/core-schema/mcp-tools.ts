@@ -55,8 +55,9 @@ export function createMcpTools(deps: {
   sqlite: Database.Database
   search: SearchService
   memories: MemoriesService
+  services: { use<T = unknown>(name: string): T }
 }): McpToolDef[] {
-  const { sqlite, search, memories } = deps
+  const { sqlite, search, memories, services } = deps
 
   const getPersona = (): string[] =>
     (
@@ -406,7 +407,7 @@ export function createMcpTools(deps: {
     {
       name: 'memory_search',
       description:
-        '全文检索会话/消息/记忆/笔记(trigram,支持中文),可按 kind、agent、项目、时间范围收窄。列举会话(不按内容)用 memory_list_sessions。',
+        '全文检索会话/消息/记忆/笔记(trigram,支持中文),可按 kind、agent、项目、时间范围收窄;语义检索启用时,字面未命中的概念性查询会以「·语义」标注补足召回。列举会话(不按内容)用 memory_list_sessions。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -419,7 +420,7 @@ export function createMcpTools(deps: {
         },
         required: ['query']
       },
-      handler: (args) => {
+      handler: async (args) => {
         const q = String(args.query ?? '')
         const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100)
         const kind = typeof args.kind === 'string' ? args.kind : undefined
@@ -435,19 +436,63 @@ export function createMcpTools(deps: {
           projectId = p.id
         }
         const sinceDays = Number(args.since)
+        const sinceSec = sinceDays > 0 ? sinceCutoffSec(sinceDays) : undefined
         const hits = search.searchAll(q, limit, {
           kinds: kind ? [kind as SearchHit['kind']] : undefined,
           agent,
           projectId,
-          sinceSec: sinceDays > 0 ? sinceCutoffSec(sinceDays) : undefined
+          sinceSec
         })
-        if (hits.length === 0) return `未找到与"${q}"相关的记录。`
-        return hits
-          .map(
-            (h, i) =>
-              `${i + 1}. [${h.kind}${h.sessionId != null ? ` 会话#${h.sessionId}` : ''}/${h.agentType ?? '?'}] ${h.title ?? ''}\n   ${h.snippet.replace(/\n/g, ' ')}`
-          )
-          .join('\n')
+        const lines = hits.map(
+          (h, i) =>
+            `${i + 1}. [${h.kind}${h.sessionId != null ? ` 会话#${h.sessionId}` : ''}/${h.agentType ?? '?'}] ${h.title ?? ''}\n   ${h.snippet.replace(/\n/g, ' ')}`
+        )
+        // semantic backfill (semantic-search plugin; silently absent when disabled)
+        if (q.trim() && (!kind || kind === 'memory' || kind === 'session')) {
+          try {
+            const sem = services.use<{
+              search(query: string, limit?: number): Promise<Array<{ kind: 'memory' | 'session'; refId: number; score: number }>>
+            }>('semantic-search')
+            const semHits = await sem.search(q, limit)
+            const seen = new Set(hits.map((h) => `${h.kind}:${h.id}`))
+            const extra: string[] = []
+            for (const s of semHits) {
+              if (kind && s.kind !== kind) continue
+              const key = `${s.kind}:${s.refId}`
+              if (seen.has(key)) continue
+              seen.add(key)
+              if (s.kind === 'memory') {
+                const row = sqlite
+                  .prepare(`SELECT kind, content, agent_type, updated_at FROM memories WHERE id = ? AND deleted = 0 AND status != 'retired'`)
+                  .get(s.refId) as { kind: string; content: string; agent_type: string | null; updated_at: number } | undefined
+                if (!row) continue
+                if (agent && !(row.agent_type == null || row.agent_type === agent)) continue
+                if (sinceSec != null && row.updated_at < sinceSec * 1000) continue
+                extra.push(`[memory·语义/${row.agent_type ?? '全局'}] [${row.kind}]\n   ${clip(row.content, 160)}`)
+              } else {
+                const row = sqlite
+                  .prepare(`SELECT agent_type, title, summary, started_at, project_id FROM sessions WHERE id = ? AND deleted = 0`)
+                  .get(s.refId) as { agent_type: string; title: string | null; summary: string | null; started_at: number | null; project_id: number | null } | undefined
+                if (!row) continue
+                if (agent && row.agent_type !== agent) continue
+                if (projectId != null && row.project_id !== projectId) continue
+                if (sinceSec != null && (row.started_at ?? 0) < sinceSec) continue
+                const first = row.summary ? clip(row.summary.split('\n')[0] ?? '', 120) : ''
+                extra.push(
+                  `[session·语义/会话#${s.refId}/${row.agent_type}] ${row.title ?? '(无标题)'}${first ? ` — ${first}` : ''}`
+                )
+              }
+            }
+            if (extra.length > 0) {
+              if (lines.length === 0) lines.push(`(字面未命中,语义检索召回 ${extra.length} 条)`)
+              for (const l of extra) lines.push(`${lines.length + 1}. ${l}`)
+            }
+          } catch {
+            /* semantic search not available — pure FTS result stands */
+          }
+        }
+        if (lines.length === 0) return `未找到与"${q}"相关的记录。`
+        return lines.join('\n')
       }
     },
     {
