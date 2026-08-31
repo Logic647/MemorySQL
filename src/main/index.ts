@@ -419,6 +419,16 @@ app.whenReady().then(async () => {
     const spotlight = setupSpotlight({ win, settings: boot.settings })
     registerHostChannels(boot.host, boot.settings, boot.env, boot.db, spotlight)
     app.once('will-quit', () => spotlight.dispose())
+    if (app.isPackaged) {
+      // update feed = GitHub Releases latest.yml; silent offline failure is fine
+      try {
+        const { autoUpdater } = await import('electron-updater')
+        autoUpdater.autoDownload = true
+        void autoUpdater.checkForUpdatesAndNotify().catch(() => {})
+      } catch {
+        /* updater is optional */
+      }
+    }
   } catch (err) {
     console.error('Fatal bootstrap error:', err)
     app.exit(1)

@@ -18,6 +18,7 @@
     "adm-zip": "^0.6.0",
     "better-sqlite3": "^13.0.3",
     "chokidar": "^5.0.0",
+    "electron-updater": "^6.8.9",
     "fastembed": "^2.1.0",
     "sqlite-vec": "^0.1.9"
   },

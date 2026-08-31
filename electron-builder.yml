@@ -29,6 +29,11 @@ extraResources:
 # 关闭重复重建以避免构建期再下载工具链
 npmRebuild: false
 
+# 自动更新:electron-updater 读 GitHub Releases 的 latest.yml;
+# NSIS 差分更新靠 .exe.blockmap。发版流程见 docs/RELEASE.md
+publish:
+  provider: github
+
 win:
   icon: build/icon.ico
   target:

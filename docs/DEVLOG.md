@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-08-31 · M8 第一批:CI + 自动更新 + 发版清单(待推送发 Release)
+
+**GitHub Actions CI**(`.github/workflows/ci.yml`,windows-latest):
+- `ci` job:push/PR 必跑 `npm ci → typecheck → vitest → build`(测试跑 node-ABI better-sqlite3,在 electron-rebuild 之前)
+- `package` job:main 推送时 `electron-rebuild → dist → 上传产物`(exe + blockmap + latest.yml)——每个 main 提交都有可下载构建
+
+**自动更新接线:**
+- `npm i electron-updater`;electron-builder.yml 加 `publish: { provider: github }` → 打包产出 `resources/app-update.yml`(已验)与 `dist/latest.yml`(已验)
+- 主进程 packaged 态启动时 `checkForUpdatesAndNotify()`(autoDownload,离线静默失败;dev 模式不检查)
+- 0.4.0 安装包已含 updater;**首次真实拉取验收要等 v0.4.0 Release 发出后**(旧版无 updater,从 0.4.0 起的后续版本才能被更新到)
+
+**`docs/RELEASE.md` 发版清单:**标准流程(bump → 烟测 → tag → `gh release create` 三件套 exe/blockmap/latest.yml)+ winget 提交步骤(winget-pkgs PR,YamlCreate 三件套)+ scoop bucket manifest 模板 + MCP 目录/中文社区发布素材。
+
+**坑:**electron-builder 重打包时残留的 MemorySQL.exe 占用 `win-unpacked` → EBUSY,先杀进程再 dist。
+
+**待办(需用户确认):**push main(本地累计 M5.2→M8 共 16 个 commit)+ `gh release create v0.4.0` 三件套;之后验收自动更新、提交 winget/scoop。
+
+---
+
 ## 2026-08-31 · M7 收尾:实库启用语义检索 + 设置页开关 + LLM 冲突检测(M7 完成)
 
 **实库启用(用户委托):**settings 加 `semantic-search:enabled: true` + 拷贝 91MB 模型缓存 + `MEMORYSQL_DATA_DIR` 指向实库 headless `--reindex` 预建索引(**66 行向量**:10 记忆 + 56 会话)——下次启动应用即全量生效,无需再下载。

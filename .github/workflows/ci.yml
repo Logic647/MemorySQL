@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # typecheck + tests + renderer/main build. Tests run against the
+  # node-ABI better-sqlite3 that npm ci installs — before electron-rebuild.
+  ci:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  # package the installer on main pushes so every commit has a downloadable
+  # build; the real release flow is docs/RELEASE.md (tag + gh release).
+  package:
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # the packaged app runs under Electron's ABI, not node's
+      - run: npx electron-rebuild
+      - run: npm run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MemorySQL-${{ github.sha }}
+          path: |
+            dist/MemorySQL-Setup-*.exe
+            dist/MemorySQL-Setup-*.exe.blockmap
+            dist/latest.yml
+          if-no-files-found: error
