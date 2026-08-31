@@ -37,7 +37,15 @@ export interface IngestResult {
 export interface IngestService {
   ingestSessions(sessions: RawSession[]): Promise<IngestResult>
   upsertMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string }): { id: number; changed: boolean }
-  addMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string }): { id: number }
+  addMemory(input: {
+    kind: string
+    content: string
+    source: string
+    agentType?: string
+    status?: string
+    projectId?: number | null
+    tags?: string[]
+  }): { id: number }
 }
 
 export interface IngestDeps {
@@ -238,7 +246,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
   // deleted rows stay found: user deletion must not be resurrected by a re-import
   const memoryFind = sqlite.prepare('SELECT id, content, deleted FROM memories WHERE source = ?')
   const memoryIns = sqlite.prepare(
-    'INSERT INTO memories (kind, content, source, updated_at, device_id, agent_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO memories (kind, content, source, updated_at, device_id, agent_type, status, tags, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
   )
   const memoryUpdate = sqlite.prepare(
     'UPDATE memories SET kind = ?, content = ?, agent_type = ?, updated_at = ? WHERE id = ?'
@@ -290,9 +298,19 @@ export function createIngestService(deps: IngestDeps): IngestService {
           ? `${input.content.slice(0, MEMORY_CAP)}\n…[truncated]`
           : input.content
       const id = Number(
-        (memoryIns.run(input.kind, content, input.source, now(), 'local', input.agentType ?? null, input.status ?? 'active') as {
-          lastInsertRowid: number | bigint
-        }).lastInsertRowid
+        (
+          memoryIns.run(
+            input.kind,
+            content,
+            input.source,
+            now(),
+            'local',
+            input.agentType ?? null,
+            input.status ?? 'active',
+            input.tags && input.tags.length > 0 ? JSON.stringify(input.tags.slice(0, 10)) : null,
+            input.projectId ?? null
+          ) as { lastInsertRowid: number | bigint }
+        ).lastInsertRowid
       )
       return { id }
     }

@@ -7,7 +7,15 @@ import { createMcpTools } from './mcp-tools'
 
 export interface MemoriesService {
   upsertMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string }): { id: number; changed: boolean }
-  addMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string }): { id: number }
+  addMemory(input: {
+    kind: string
+    content: string
+    source: string
+    agentType?: string
+    status?: string
+    projectId?: number | null
+    tags?: string[]
+  }): { id: number }
 }
 
 const plugin: MemorySQLPlugin = {
@@ -97,7 +105,7 @@ const plugin: MemorySQLPlugin = {
     ctx.ipc.handle('memories:list', () => {
       return ctx.db.sqlite
         .prepare(
-          `SELECT id, kind, content, source, status, agent_type AS agentType, updated_at FROM memories
+          `SELECT id, kind, content, source, status, agent_type AS agentType, tags, project_id AS projectId, updated_at FROM memories
            WHERE deleted = 0 ORDER BY kind, updated_at DESC`
         )
         .all()

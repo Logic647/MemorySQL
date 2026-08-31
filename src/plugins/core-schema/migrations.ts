@@ -104,5 +104,15 @@ CREATE TRIGGER memories_fts_ad AFTER DELETE ON memories BEGIN
   DELETE FROM memories_fts WHERE rowid = old.id;
 END;
 `
+  },
+  {
+    version: 4,
+    up: `
+-- v4: MCP memory_write attribution (matrix v2) — agent-reported project
+-- linkage and free-form tags on memories
+ALTER TABLE memories ADD COLUMN tags TEXT;
+ALTER TABLE memories ADD COLUMN project_id INTEGER REFERENCES projects(id);
+CREATE INDEX idx_memories_project ON memories(project_id);
+`
   }
 ]
