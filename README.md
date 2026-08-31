@@ -7,13 +7,13 @@
 - ✅ **会话自动捕获**:Codex CLI / ZCode / Hermes Agent CN Desktop 三适配器,自动解析本地会话文件并入库(规则摘要 + 去重 + 增量监听)
 - ✅ **知识库浏览**:会话列表、消息时间线、按 agent 过滤、中文全文检索(SQLite FTS5 + trigram)
 - ✅ **记忆导入**:自动收录 Hermes `MEMORY.md` / `USER.md` 等记忆文件
-- ✅ **MCP server**:任意 agent 连接即续接 —— `memory_get_context`(画像+项目+近况一次拉齐,会话带 id 可直接深读)/ `memory_search`(全文检索会话、消息、**记忆与笔记**)/ `memory_write` / `memory_get_session`,仅监听 127.0.0.1,stdio agent 用 `scripts/mcp-bridge.mjs`
+- ✅ **MCP server**:任意 agent 连接即续接 —— 7 个工具:`memory_get_context`(续接包,agent 过滤+上一棒交接摘要)/ `memory_get_project_brief`(交接简报)/ `memory_list_sessions` / `memory_get_session` / `memory_search`(全文检索会话、消息、**记忆与笔记**,可按 agent/项目/时间过滤)/ `memory_write`(agent 归因+标签)/ `memory_log_progress`(收工汇报→候选记忆),仅监听 127.0.0.1,stdio agent 用 `scripts/mcp-bridge.mjs`
 - ✅ **出口脱敏**:导出会话 MD 时自动遮蔽密钥/口令/JWT 等(本地数据永远明文自可见)
 - ✅ **归档迁移**:`.msqlv` 一键导出/导入(VACUUM INTO 一致性快照 + 启动期原子换库)
 - ✅ **笔记与图谱**:vault/ 内 Markdown 笔记(CodeMirror 6 编辑、Ctrl+S 保存)、[[双向链接]] + 反向链接、标签、知识图谱;Obsidian 兼容(直接用 Obsidian 打开 vault/)
 - ✅ **项目文件监听**:只读导入项目内 AGENTS.md / CLAUDE.md / MEMORY.md 为记忆
 - ✅ **插件化架构**:核心功能即内置插件,统一生命周期与能力注册接口,API 文档见 docs/plugins.md
-- 🔲 后续:**M6 = MCP 工具矩阵 v2(记忆/会话过滤、memory_list_sessions、memory_log_progress 回流)+ 交接简报 + 记忆治理**;随后 M7 本地语义检索、M8 打包分发 —— 完整路线图见 [docs/architecture.md](docs/architecture.md) §8
+- 🔲 后续:**M7 = 本地语义检索(sqlite-vec)+ 自动 DEVLOG + 托盘秒搜**;M8 打包分发 —— 完整路线图见 [docs/architecture.md](docs/architecture.md) §8
 
 完整规划见 [AGENTS.md](AGENTS.md) 与 [docs/architecture.md](docs/architecture.md)。
 

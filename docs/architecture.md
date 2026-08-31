@@ -115,7 +115,7 @@ FTS: sessions_fts(title, summary) · messages_fts(content)  — contentless + �
 - **M5** 全量增强(已完成,2026-08-30):审计修复(P0×1/P1×5/P2×8)、会话 id、七 agent 连接向导、记忆 agent 维度、LLM 模型列表、外部插件加载、液态玻璃 UI、M5.1 Cursor 校准 + Hermes MCP 直连。细节见 DEVLOG
 - **M5.2** 外部测试修复(已完成,2026-08-31):memories/notes 进 FTS(v3 迁移 + 触发器自动同步)、Hermes 记忆 § 分段导入(内容寻址 key + legacy 清理)、MCP serverInfo 版本号接 app.getVersion()、headless scanNow 通道过滤、get_context 会话列表带 id。细节见 DEVLOG
 
-### M6 记忆质量与 MCP 工具矩阵 v2(下一步,2–4 周)
+### M6 记忆质量与 MCP 工具矩阵 v2(已完成 2026-08-31;LLM 冲突检测顺延 M7)
 
 目标:把「连接即续接」从单向拉取升级为闭环回流;切 agent 从 4+ 次带猜测的调用降到 **2 次确定性调用**。
 

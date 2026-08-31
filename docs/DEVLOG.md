@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-08-31 · M6 MCP 工具矩阵 v2 + 交接简报(回流闭环打通)
+
+**矩阵 v2 全部落地(MCP 工具 4 → 7):**
+- `memory_get_context` 增强:`agent?` 过滤(全局 NULL 记忆始终包含)+ `include_last_session=true` 内联最近会话 tail 作「上一棒交接摘要」;会话带 id(M5.2)
+- `memory_list_sessions` 新增:project/agent/since(天数)/limit/offset,系统性枚举入口;项目关键词不匹配时明确报错
+- `memory_get_session` 增强:`full=true` 单条 20000 字符(默认 2000),总量 120k 上限防失控
+- `memory_search` 增强:`kind/agent/project/since` 过滤;search.ts 重写为**动态 SQL 单路径**(四源同构片段,SearchFilters 接口),渲染端零改动
+- `memory_write` 增强:agent 归因 + project 关联 + tags(v4 迁移:memories 加 `tags`/`project_id` 两列)+ **完全重复内容拒写**(治理 MVP)
+- `memory_log_progress` 新增:结构化收工汇报(完成/下一步/问题)→ candidate 进度条并关联项目——distill 自动候选(ingest 后触发,已有)+ UI confirmAll 确认流不变,agent 主动汇报接进同一条候选流
+
+**交接简报 `memory_get_project_brief`(规则版,铁律 3 本地优先):**最近会话(带 id)+ 上一棒 tail + 活跃记忆 + 待确认进度 四段汇编;LLM 精炼版留待后续。
+**治理 MVP:**exact-duplicate 拒写;agent_type 生效(get_context/search 过滤,Codex 的偏好可不再喂给 Hermes);新旧记忆冲突检测需 LLM,顺延 M7。
+
+**验证:**typecheck 零错 / vitest **58:58**(新增 mcp-tools 工具级测试×10:过滤/归因/去重/full 模式/简报汇编)/ `import:scan` 真实数据 / 启动实例实调:tools/list 7 工具、brief 真实数据汇编正确、log_progress #26 → search(kind=memory)**即时可见**(FTS 触发器写入即索引)、双实例端口避让 8642/8643。
+**版本 0.3.0。**
+**下一步:M7** = 本地语义检索(sqlite-vec + 本地 embedding)/ 自动 DEVLOG / 托盘常驻 + 全局热键秒搜;或先做 M8 前置的打包 + CI。M6 遗留:LLM 冲突检测。
+
+---
+
 ## 2026-08-31 · M5.2 外部测试修复 + 计划书细化到 M8
 
 **背景:** Hermes agent 对 v0.2.0 做了全量功能测试(会话 #59):环境链路全绿(typecheck / vitest 36 / 构建 / 无头扫描 56 会话 / 归档 / sync / dispatch / stdio 桥 / 端口避让),但抓出 4 个 bug + 一批 MCP 调用断点。本轮全部修复,并按测试报告的后续开发建议把路线图细化到 M8。
