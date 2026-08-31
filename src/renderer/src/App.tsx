@@ -40,6 +40,8 @@ export default function App() {
   const [overview, setOverview] = useState<Overview | null>(null)
   const [statuses, setStatuses] = useState<Record<string, string>>({})
   const [scanning, setScanning] = useState(false)
+  const [devlogBusy, setDevlogBusy] = useState(false)
+  const [devlogNote, setDevlogNote] = useState<string | null>(null)
   const [mcp, setMcp] = useState<{ port: number; running: boolean; toolCount: number } | null>(null)
   const [kbMsg, setKbMsg] = useState('')
   const [view, setView] = useState<View>('sessions')
@@ -95,6 +97,24 @@ export default function App() {
     }
   }, [refresh])
 
+  const devlog = useCallback(async () => {
+    setDevlogBusy(true)
+    try {
+      const res = await api.generateDevlog()
+      setDevlogNote(
+        res.files.length > 0
+          ? `已生成 ${res.files.length} 个项目日志 → vault/devlog/`
+          : (res.message ?? '没有可生成的项目')
+      )
+      await refresh()
+    } catch {
+      setDevlogNote('生成失败')
+    } finally {
+      setDevlogBusy(false)
+      setTimeout(() => setDevlogNote(null), 4000)
+    }
+  }, [refresh])
+
   return (
     <div className="app">
       <header className="topbar">
@@ -131,6 +151,10 @@ export default function App() {
         <button className="btn btn-accent" disabled={scanning} onClick={() => void scanAll()}>
           {scanning ? '扫描中…' : '立即扫描'}
         </button>
+        <button className="btn" disabled={devlogBusy} onClick={() => void devlog()}>
+          {devlogBusy ? '生成中…' : '生成项目日志'}
+        </button>
+        {devlogNote && <span className="devlog-note">{devlogNote}</span>}
       </header>
 
       <div className="body">

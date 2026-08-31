@@ -52,6 +52,11 @@ export const api = {
     window.memorysql.invoke(`${pluginId}:status`) as Promise<CaptureStatus>,
   scanNow: (pluginId: string): Promise<CaptureStatus> =>
     window.memorysql.invoke(`${pluginId}:scanNow`) as Promise<CaptureStatus>,
+  generateDevlog: (project?: string): Promise<{ files: string[]; message?: string }> =>
+    window.memorysql.invoke('project-devlog:generate', { project }) as Promise<{
+      files: string[]
+      message?: string
+    }>,
   onSessionsChanged: (cb: () => void): (() => void) => window.memorysql.on('push:sessions:changed', cb),
   // privacy-export
   exportSession: (sessionId: number): Promise<{ saved: boolean; filePath?: string; redactions?: number }> =>

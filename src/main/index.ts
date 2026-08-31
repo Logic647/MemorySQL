@@ -24,6 +24,7 @@ import syncArchive from '../plugins/sync-archive'
 import memoryCore from '../plugins/memory-core'
 import memoryDispatch from '../plugins/memory-dispatch'
 import syncFolder from '../plugins/sync-folder'
+import projectDevlog from '../plugins/project-devlog'
 import coreVault from '../plugins/core-vault'
 import captureWatcher from '../plugins/capture-watcher'
 import type { MemorySQLPlugin } from './core/plugin-host'
@@ -54,7 +55,8 @@ const BUILTIN_PLUGINS = [
   syncArchive,
   memoryCore,
   memoryDispatch,
-  syncFolder
+  syncFolder,
+  projectDevlog
 ]
 
 const HEADLESS_SCAN = process.argv.includes('--scan')
@@ -63,6 +65,7 @@ const SYNC_FOLDER = (() => {
   return i >= 0 ? (process.argv[i + 1] ?? '') : null
 })()
 const DISPATCH = process.argv.includes('--dispatch')
+const GENERATE_DEVLOG = process.argv.includes('--devlog')
 const EXPORT_ARCHIVE_DEST = (() => {
   const i = process.argv.indexOf('--export-archive')
   return i >= 0 ? (process.argv[i + 1] ?? '') : null
@@ -165,6 +168,13 @@ async function runHeadlessScan(): Promise<void> {
       results['dispatch'] = await host.invoke('memory-dispatch:generate')
     } catch (err) {
       results['dispatch'] = { error: String(err) }
+    }
+  }
+  if (GENERATE_DEVLOG) {
+    try {
+      results['devlog'] = await host.invoke('project-devlog:generate')
+    } catch (err) {
+      results['devlog'] = { error: String(err) }
     }
   }
   try {

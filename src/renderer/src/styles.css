@@ -691,3 +691,6 @@ body::before {
 /* ---------- graph view ---------- */
 .graph-view { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .graph-container { flex: 1; min-height: 0; }
+
+/* ---------- devlog generate note ---------- */
+.devlog-note { font-size: 12px; opacity: 0.75; white-space: nowrap; }
