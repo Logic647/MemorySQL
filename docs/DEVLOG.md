@@ -8,7 +8,7 @@
 
 - **CI 首跑双绿**(4m47s/4m53s):ci + package 两 job 全过,GitHub 端每次 main 推送产出 167MB 免安装包 artifact
 - **scoop bucket 上线**:https://github.com/Logic647/scoop-bucket(memorysql.json 带 SHA256 与 blockmap 自动哈希;README 使用说明)——`scoop bucket add logic647 https://github.com/Logic647/scoop-bucket && scoop install memorysql`。仓库创建与文件直传全走 Contents API(绕开本机 git 网络限制)
-- **winget PR 已提**:microsoft/winget-pkgs#426778(`Logic647.MemorySQL` 0.4.0,NSIS x64,SHA256 与 Release 资产一致)。路径:fork → api 建分支 → Contents API 传三件 yaml → gh pr create。**坑:**gh pr body 里反引号会被 shell 命令替换执行(把 winget 帮助文本打进 body)——body 一律用 `--body-file`;validation pipeline 排队中,bot 反馈评论后按需改分支
+- **winget PR 已提**:microsoft/winget-pkgs#426778(`Logic647.MemorySQL` 0.4.0,NSIS x64,SHA256 与 Release 资产一致)。路径:fork → api 建分支 → Contents API 传三件 yaml → gh pr create。**坑:**gh pr body 里反引号会被 shell 命令替换执行(把 winget 帮助文本打进 body)——body 一律用 `--body-file`;validation pipeline 排队中,bot 反馈评论后按需改分支。**首轮验证失败已迭代:**三件 manifest 各缺 `# yaml-language-server: $schema=...` 头注释 → SchemaHeaderNotFound ×3;补上对应 version/installer/defaultLocale schema 头重传(PR 更新自动触发重跑)。**坑:**Contents API 更新已有文件必须带当前 blob 的 `sha`(GET 获取);管线已推进到 URL Domain/Installers Scan/Installation Validation 阶段
 - **发布素材**:docs/DEMO.md(60 秒分镜脚本)+ docs/MCP_LISTING.md(目录登记全套),已推送
 - 推送通道:github.com:443 直连仍被墙,继续走服务器 bundle 中转(其间服务器连接也抖动,scp/ssh 带 ConnectionAttempts=5 重试)
 
