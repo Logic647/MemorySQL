@@ -12,8 +12,9 @@
 - ✅ **归档迁移**:`.msqlv` 一键导出/导入(VACUUM INTO 一致性快照 + 启动期原子换库)
 - ✅ **笔记与图谱**:vault/ 内 Markdown 笔记(CodeMirror 6 编辑、Ctrl+S 保存)、[[双向链接]] + 反向链接、标签、知识图谱;Obsidian 兼容(直接用 Obsidian 打开 vault/)
 - ✅ **项目文件监听**:只读导入项目内 AGENTS.md / CLAUDE.md / MEMORY.md 为记忆
+- ✅ **自动项目日志**:按项目在 `vault/devlog/` 生成开发日志(会话时间线 + 决策 + 待办),扫描/导入后自动更新,顶栏一键重新生成;写进 vault 即进入笔记检索
 - ✅ **插件化架构**:核心功能即内置插件,统一生命周期与能力注册接口,API 文档见 docs/plugins.md
-- 🔲 后续:**M7 = 本地语义检索(sqlite-vec)+ 自动 DEVLOG + 托盘秒搜**;M8 打包分发 —— 完整路线图见 [docs/architecture.md](docs/architecture.md) §8
+- 🔲 后续:**M7 剩余 = 本地语义检索(sqlite-vec)+ 托盘全局热键秒搜**;M8 打包分发 —— 完整路线图见 [docs/architecture.md](docs/architecture.md) §8
 
 完整规划见 [AGENTS.md](AGENTS.md) 与 [docs/architecture.md](docs/architecture.md)。
 

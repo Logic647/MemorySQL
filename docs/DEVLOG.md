@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-08-31 · M7 第一块:自动项目日志(project-devlog 插件)
+
+M7 四块(语义检索/自动 DEVLOG/托盘秒搜/SQLCipher)里纯本地、零依赖的一块先落地:
+
+- **新插件 `project-devlog`**:每个有会话的项目在 `vault/devlog/<项目名>.md` 生成开发日志,四段 = 概览(会话数/agent 分布/时间跨度/技术栈/路径)+ 时间线(**按日分组,日倒序、日内正序**,每条带 #id 与消息数)+ 决策与结论(活跃记忆)+ 未竟与待办(log_progress 候选);文件头 `memorysql:auto-devlog` 标记声明"重新生成整文件覆盖,手写内容请另建文件"
+- **触发三路**:顶栏「生成项目日志」按钮(UI,带 4s 结果提示)+ headless `--devlog`(可与 --scan 组合)+ ingest 后 **20s 防抖自动更新**(仅 UI 常驻实例;headless 因立即退出不触发防抖,显式用 --devlog)
+- **活同步第一环**:写进 vault/ 即被 core-vault watcher 索引 → 笔记检索与 MCP `memory_search`(kind=note)立即可查
+- 验证:typecheck 零错 / vitest **61:61**(新增 generate×3)/ 真实数据生成 **7 个项目日志**(MemorySQL.md:5 会话 zcode、时间线分组正确、决策段含活跃记忆)
+- 顺带 spike:`sqlite-vec@0.1.9` 与 `fastembed@2.1.0` 本机 npm 均可达 → M7-1 语义检索可行(实际装包 + 模型下载留下一轮)
+- **M7 剩余:**语义检索、托盘常驻 + 全局热键秒搜、SQLCipher、M6 遗留的 LLM 冲突检测
+
+---
+
 ## 2026-08-31 · M6 MCP 工具矩阵 v2 + 交接简报(回流闭环打通)
 
 **矩阵 v2 全部落地(MCP 工具 4 → 7):**
