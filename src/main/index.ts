@@ -28,6 +28,7 @@ import projectDevlog from '../plugins/project-devlog'
 import coreVault from '../plugins/core-vault'
 import captureWatcher from '../plugins/capture-watcher'
 import type { MemorySQLPlugin } from './core/plugin-host'
+import { setupSpotlight, type SpotlightController } from './spotlight'
 
 type PluginLike = {
   manifest?: { id?: string; name?: string; version?: string }
@@ -246,7 +247,13 @@ async function loadExternalPlugins(dataDir: string, host: PluginHost): Promise<v
 
 const hostChannels = new Map<string, (payload: Record<string, unknown>) => unknown>()
 
-function registerHostChannels(host: PluginHost, settings: SettingsStore, env: ReturnType<typeof resolveAppEnv>, db: Db): void {
+function registerHostChannels(
+  host: PluginHost,
+  settings: SettingsStore,
+  env: ReturnType<typeof resolveAppEnv>,
+  db: Db,
+  spotlight: SpotlightController
+): void {
   hostChannels.set('memorysql:host:plugins', () => ({
     plugins: [
       ...BUILTIN_PLUGINS.map((p) => ({
@@ -297,6 +304,16 @@ function registerHostChannels(host: PluginHost, settings: SettingsStore, env: Re
   })
   hostChannels.set('memorysql:host:openPluginsDir', () => {
     void shell.openPath(path.join(env.dataDir, 'plugins'))
+    return { ok: true }
+  })
+  // spotlight (tray + global hotkey) helpers, used by the ?spotlight=1 window
+  hostChannels.set('memorysql:host:openSession', (payload) => {
+    const { id } = (payload ?? {}) as { id?: number }
+    spotlight.openSessionInMain(Number(id))
+    return { ok: true }
+  })
+  hostChannels.set('memorysql:host:hideSpotlight', () => {
+    spotlight.hide()
     return { ok: true }
   })
   // storage relocation: snapshot db into the target, copy vault+settings,
@@ -381,8 +398,10 @@ app.whenReady().then(async () => {
     }
     const boot = await bootstrap()
     running = { host: boot.host, db: boot.db }
-    registerHostChannels(boot.host, boot.settings, boot.env, boot.db)
-    createWindow(boot.host, boot.events)
+    const win = createWindow(boot.host, boot.events)
+    const spotlight = setupSpotlight({ win, settings: boot.settings })
+    registerHostChannels(boot.host, boot.settings, boot.env, boot.db, spotlight)
+    app.once('will-quit', () => spotlight.dispose())
   } catch (err) {
     console.error('Fatal bootstrap error:', err)
     app.exit(1)

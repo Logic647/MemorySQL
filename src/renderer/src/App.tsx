@@ -77,6 +77,17 @@ export default function App() {
     setSelected(await api.getSession(id))
   }, [])
 
+  // spotlight result → open the session in the main window
+  useEffect(() => {
+    const off = window.memorysql.on('push:open-session', (...args: unknown[]) => {
+      const id = Number(args[0])
+      if (!id) return
+      setView('sessions')
+      void openSession(id)
+    })
+    return off
+  }, [openSession])
+
   const runSearch = useCallback(async () => {
     if (!query.trim()) {
       setHits(null)
