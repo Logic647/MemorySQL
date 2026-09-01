@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Brain, Diamond, FileText, Settings2, Share2, History } from 'lucide-react'
 import type { SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
@@ -60,32 +60,7 @@ export default function App() {
   const [expandedChains, setExpandedChains] = useState<Set<number>>(new Set())
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [dropLine, setDropLine] = useState<{ afterId: number; below: boolean } | null>(null)
-  const listRef = useRef<HTMLDivElement | null>(null)
-  const prevRects = useRef<Map<number, number>>(new Map())
 
-  // FLIP: rows glide to their new slots while dragging
-  useLayoutEffect(() => {
-    const el = listRef.current
-    if (!el) return
-    const nodes = Array.from(el.querySelectorAll<HTMLElement>('.session'))
-    const next = new Map<number, number>()
-    for (const n of nodes) next.set(Number(n.dataset.id), n.getBoundingClientRect().top)
-    for (const [id, prevTop] of prevRects.current) {
-      const nowTop = next.get(id)
-      if (nowTop == null) continue
-      const dy = prevTop - nowTop
-      if (Math.abs(dy) < 2) continue
-      const node = nodes.find((n) => Number(n.dataset.id) === id)
-      if (!node || node.dataset.dragging === '1') continue
-      node.style.transition = 'none'
-      node.style.transform = `translateY(${dy}px)`
-      requestAnimationFrame(() => {
-        node.style.transition = 'transform 200ms cubic-bezier(0.25, 0.6, 0.3, 1)'
-        node.style.transform = ''
-      })
-    }
-    prevRects.current = next
-  }, [dropLine, draggingId, sessions])
   const [relayPick, setRelayPick] = useState<{ id: number; project: string } | null>(null)
 
   const refresh = useCallback(async () => {
@@ -478,7 +453,7 @@ export default function App() {
           {hits ? (
             <div className="list-pane">
               <div className="pane-title">搜索结果 ({hits.length})</div>
-              <div className="session-list" ref={listRef}>
+              <div className="session-list">
                 {hits.map((h) => (
                   <button
                     key={`${h.kind}-${h.id}`}
@@ -578,16 +553,6 @@ export default function App() {
                     rows.forEach((r) => {
                       if (!seen.has(r.id)) pushChain(r, 0)
                     })
-                    // live preview while dragging: rows yield to the insertion line
-                    if (draggingId != null && dropLine) {
-                      const di = entries.findIndex((e) => e.kind === 'row' && e.r.id === draggingId)
-                      const ti = entries.findIndex((e) => e.kind === 'row' && e.r.id === dropLine.afterId)
-                      if (di >= 0 && ti >= 0) {
-                        const drag = entries.splice(di, 1)[0]
-                        const ti2 = entries.findIndex((e) => e.kind === 'row' && e.r.id === dropLine.afterId)
-                        entries.splice(dropLine.below ? ti2 + 1 : ti2, 0, drag)
-                      }
-                    }
                     const body: ReactNode[] = []
                     for (const e of entries) {
                       if (e.kind === 'toggle') {
