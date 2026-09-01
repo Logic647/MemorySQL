@@ -190,9 +190,20 @@ const plugin: MemorySQLPlugin = {
           .run(name, Date.now()) as { lastInsertRowid: number | bigint }
         project = { id: Number(ins.lastInsertRowid) }
       }
+      // moving a session carries its whole relay subtree (folded continuations
+      // must follow their origin, or the chain splits across projects)
       ctx.db.sqlite
-        .prepare(`UPDATE sessions SET project_id = ?, updated_at = ? WHERE id = ? AND deleted = 0`)
-        .run(project.id, Date.now(), id)
+        .prepare(
+          `WITH RECURSIVE tree(id) AS (
+             SELECT ?
+             UNION ALL
+             SELECT s.id FROM sessions s JOIN tree t ON s.similar_to = t.id
+             WHERE s.deleted = 0
+           )
+           UPDATE sessions SET project_id = ?, updated_at = ?
+           WHERE id IN (SELECT id FROM tree) AND deleted = 0`
+        )
+        .run(id, project.id, Date.now())
       ctx.events.emit('sessions:changed')
       return { ok: true, projectId: project.id, project: name }
     })

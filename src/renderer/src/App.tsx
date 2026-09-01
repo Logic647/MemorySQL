@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Brain, Diamond, FileText, Settings2, Share2, History } from 'lucide-react'
 import type { SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
@@ -57,34 +57,6 @@ export default function App() {
   const [showArchived, setShowArchived] = useState(false)
   const [rename, setRename] = useState<{ id: number; value: string } | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
-  const [dropLine, setDropLine] = useState<{ afterId: number; below: boolean } | null>(null)
-  const [draggingId, setDraggingId] = useState<number | null>(null)
-  const listRef = useRef<HTMLDivElement | null>(null)
-  const prevRects = useRef<Map<number, number>>(new Map())
-
-  // FLIP: rows glide to their new slots while dragging
-  useLayoutEffect(() => {
-    const el = listRef.current
-    if (!el) return
-    const nodes = Array.from(el.querySelectorAll<HTMLElement>('.session'))
-    const next = new Map<number, number>()
-    for (const n of nodes) next.set(Number(n.dataset.id), n.getBoundingClientRect().top)
-    for (const [id, prevTop] of prevRects.current) {
-      const nowTop = next.get(id)
-      if (nowTop == null) continue
-      const dy = prevTop - nowTop
-      if (Math.abs(dy) < 2) continue
-      const node = nodes.find((n) => Number(n.dataset.id) === id)
-      if (!node || node.dataset.dragging === '1') continue
-      node.style.transition = 'none'
-      node.style.transform = `translateY(${dy}px)`
-      requestAnimationFrame(() => {
-        node.style.transition = 'transform 200ms cubic-bezier(0.25, 0.6, 0.3, 1)'
-        node.style.transform = ''
-      })
-    }
-    prevRects.current = next
-  }, [dropLine, draggingId, sessions])
   const [expandedChains, setExpandedChains] = useState<Set<number>>(new Set())
   const [relayPick, setRelayPick] = useState<{ id: number; project: string } | null>(null)
 
@@ -195,60 +167,18 @@ export default function App() {
     }
   }, [rename, refresh, selected])
 
-  const sessionRow = (
-    s: SessionSummaryRow,
-    depth = 0,
-    listCtx?: { ordered: SessionSummaryRow[]; projectId: number | null }
-  ): ReactNode => {
+  const sessionRow = (s: SessionSummaryRow, depth = 0): ReactNode => {
     const selectedRow = selected?.session.id === s.id
-    const dropHere = dropLine?.afterId === s.id
-    const isDragging = draggingId === s.id
     return (
       <div
         key={s.id}
-        className={`session ${selectedRow ? 'selected' : ''} ${
-          dropHere ? (dropLine?.below ? 'drop-below' : 'drop-above') : ''
-        } ${isDragging ? 'dragging' : ''}`}
-        data-agent={s.agentType}
-        data-id={s.id}
-        data-dragging={isDragging ? '1' : '0'}
-        draggable
-        onDragEnd={() => {
-          setDraggingId(null)
-          setDropLine(null)
-        }}
+        className={`session ${selectedRow ? 'selected' : ''}`}
         style={depth > 0 ? { marginLeft: depth * 16 } : undefined}
+        data-agent={s.agentType}
+        draggable
         onDragStart={(e) => {
-          setDraggingId(s.id)
           e.dataTransfer.setData('text/session-id', String(s.id))
           e.dataTransfer.effectAllowed = 'move'
-        }}
-        onDragOver={(e) => {
-          if (!listCtx) return
-          e.preventDefault()
-          e.stopPropagation()
-          const rect = e.currentTarget.getBoundingClientRect()
-          const below = e.clientY - rect.top > rect.height / 2
-          if (dropLine?.afterId !== s.id || dropLine?.below !== below) {
-            setDropLine({ afterId: s.id, below })
-          }
-        }}
-        onDragLeave={() => setDropLine(null)}
-        onDrop={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          const below = dropLine?.below ?? false
-          setDropLine(null)
-          if (!listCtx) return
-          const sid = Number(e.dataTransfer.getData('text/session-id'))
-          if (!sid || sid === s.id) return
-          const i = listCtx.ordered.findIndex((x) => x.id === s.id)
-          const prevId = below ? s.id : i > 0 ? listCtx.ordered[i - 1].id : null
-          const nextId = below ? listCtx.ordered[i + 1]?.id ?? null : s.id
-          void api
-            .moveSession(sid, { projectId: listCtx.projectId, prevId, nextId })
-            .then(refresh)
-            .catch((err) => setKbMsg(`移动失败: ${String(err)}`))
         }}
         onClick={() => void openSession(s.id)}
       >
@@ -475,7 +405,7 @@ export default function App() {
           {hits ? (
             <div className="list-pane">
               <div className="pane-title">搜索结果 ({hits.length})</div>
-              <div className="session-list" ref={listRef}>
+              <div className="session-list">
                 {hits.map((h) => (
                   <button
                     key={`${h.kind}-${h.id}`}
@@ -544,23 +474,28 @@ export default function App() {
                       effKey(y) - effKey(x)
                     origins.sort(byTime)
                     for (const arr of children.values()) arr.sort(byTime)
-                    const entries: Array<{ r: SessionSummaryRow; depth: number; fold: boolean }> = []
+                    const body: ReactNode[] = []
                     const seen = new Set<number>()
                     const pushChain = (r: SessionSummaryRow, depth: number): void => {
                       if (seen.has(r.id)) return
                       seen.add(r.id)
-                      entries.push({ r, depth, fold: false })
+                      body.push(sessionRow(r, depth))
                       const kids = children.get(r.id) ?? []
                       const open = expandedChains.has(r.id)
                       if (kids.length > 0 && !open) {
-                        entries.push({ r, depth, fold: true })
-                        for (const c of kids) seen.add(c.id)
-                        const stack = [...kids]
-                        while (stack.length) {
-                          const c = stack.shift()!
-                          seen.add(c.id)
-                          for (const g of children.get(c.id) ?? []) stack.push(g)
-                        }
+                        body.push(
+                          <button
+                            key={`${r.id}-fold`}
+                            className="relay-fold chain"
+                            style={{ marginLeft: 14 + depth * 16 }}
+                            onClick={() =>
+                              setExpandedChains((prev) => new Set(prev).add(r.id))
+                            }
+                          >
+                            ↩ {kids.length} 条续接会话 — 展开
+                          </button>
+                        )
+                        seen.add(-r.id) // marker: subtree folded
                         return
                       }
                       for (const c of kids) pushChain(c, depth + 1)
@@ -569,38 +504,6 @@ export default function App() {
                     rows.forEach((r) => {
                       if (!seen.has(r.id)) pushChain(r, 0)
                     })
-                    // live preview: while dragging, rows yield to the insertion point
-                    let renderList = entries
-                    if (draggingId != null && dropLine) {
-                      const di = entries.findIndex((e) => e.r.id === draggingId)
-                      const ti = entries.findIndex((e) => e.r.id === dropLine.afterId && !e.fold)
-                      if (di >= 0 && ti >= 0) {
-                        const drag = entries.splice(di, 1)[0]
-                        let ti2 = entries.findIndex((e) => e.r.id === dropLine.afterId && !e.fold)
-                        entries.splice(dropLine.below ? ti2 + 1 : ti2, 0, drag)
-                      }
-                      renderList = entries
-                    }
-                    const body: ReactNode[] = []
-                    for (const { r, depth, fold } of renderList) {
-                      if (fold) continue
-                      body.push(sessionRow(r, depth, { ordered: renderList.map((e) => e.r), projectId: rows[0]?.projectId ?? -1 }))
-                      // folded chains render their toggle right under the origin
-                      const kidsExist = children.get(r.id)
-                      if (kidsExist && kidsExist.length > 0 && !expandedChains.has(r.id) && draggingId == null) {
-                        const total = kidsExist.length
-                        body.push(
-                          <button
-                            key={`${r.id}-fold`}
-                            className="relay-fold chain"
-                            style={{ marginLeft: 14 + depth * 16 }}
-                            onClick={() => setExpandedChains((prev) => new Set(prev).add(r.id))}
-                          >
-                            ↩ {total} 条续接会话 — 展开
-                          </button>
-                        )
-                      }
-                    }
                     return [
                       <div
                         key={`${project}-head`}
@@ -613,7 +516,6 @@ export default function App() {
                         onDrop={(e) => {
                           e.preventDefault()
                           setDropTarget(null)
-                          setDropLine(null)
                           const sid = Number(e.dataTransfer.getData('text/session-id'))
                           if (!sid) return
                           const clear = project === '(未分配项目)'
