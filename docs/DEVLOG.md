@@ -3,6 +3,34 @@
 > 规则:每完成一个里程碑/重要变更,在文件**顶部**新增一条(新在上);不删改历史条目。接手 agent:读最新一条即知当前进度与下一步。
 
 ---
+> 规则:每完成一个里程碑/重要变更,在文件**顶部**新增一条(新在上);不删改历史条目。接手 agent:读最新一条即知当前进度与下一步。
+
+---
+
+## 2026-08-31 · 全局代码审查:P0×2/P1×5 修复 + P2 清扫 + UI 走查三轮落地
+
+**审查方法:**审查子代理全量过 src/plugins(44 文件)并交叉核对 main/core 调用链;主进程与渲染层由主 agent 结合当日全部 diff 自审;发现逐条在代码中验证后采信。
+
+**P0×2(已修复):**
+- **upsertMemory 绑定参数回归(本日引入):**v4 加 tags/project_id 时只改了 addMemory,upsertMemory 仍绑 7 参数(占位符 9)→ **Hermes 记忆导入/自定义 agent 导入/distill 提炼三条链路全灭**,且提炼失败中断事件链导致扫描重复报错。已补参数+接口同步+复现验证。**实库影响:**当日实库漏掉的记忆在重启+重扫后自动补回
+- **归档导出泄漏 API Key(铁律 2):**.msqlv 原样打包 settings.json(含 LLM key)。导出时递归剔除 *Key 字段(导入端已容忍掩码值)
+
+**P1×5(4 修复 + 1 需决策):**
+- reindex 不再清空 similar_to(保护用户手工续接;自动标记只回填 NULL 位)
+- Cursor 会话 startedAt 用 endedAt 兜底(修复 COALESCE 秒/毫秒混用导致的置顶与过滤失效)
+- sync 合并尊重 title_locked(多机同步不再打回手动改名)
+- 云同步脱敏 = **确认项方案(用户定)**:syncNow 被 `sync-folder:plaintextAck` 门控,设置页同步区块加确认 checkbox,「立即同步」未确认时禁用
+- ~~sync-folder 云同步明文~~(即上条,方案落地)
+
+**P2 清扫(已修 8 项):**capture-watcher remove 解绑 watcher(per-entry unwatch);MCP Host 精确匹配(127.0.0.1/localhost/[::1]:port 集合);sessions:get 滤 tombstone;summarizer-llm 与 memory-core refine/conflicts 发送前过 redactWithCount(铁律 2);sync 台账滚动 2000;zcode 去重键加行序(同文本新轮不再误伤);opencode legacy externalId(当前代码已不存在,不适用);阈值注释漂移(已随 P1-3 修正)
+
+**UI 走查三轮(同日)落地:**①Agent 过滤去徽章留纯文字、白标题栏移除(titleBarStyle hidden + 深色 titleBarOverlay,顶栏可拖动);②精准拖入任意两会话之间(v6 sort_key 中点键,sessions:move IPC)+链式折叠双按钮(展开/收起)+选中特效强化+relay 整链移动(递归 CTE);③全部开关乐观更新(受控组件被 sessions:changed 重渲染拉回的通病,根因经渲染进程探针实证)+设置分类侧栏独列+字号间距+1+应用内品牌图标换用用户设计的 M+MCP 使用指引+MCP Host 精确匹配
+
+**验证:**typecheck 零错 / vitest 71:71 / 构建三产物 / 真机走查(图标、拖拽、开关、设置布局)
+**下一步:**发 v0.4.1(首个可验收自动更新的版本,含 P0 修复)→ winget bot 跟进 → demo 实拍(暂缓)
+
+---
+
 
 ## 2026-08-31 · 用户需求批量落地:功能改进 + 重复会话治理 + UI 重构(Obsidian Glass Console)
 
