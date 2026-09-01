@@ -95,24 +95,40 @@ const plugin: MemorySQLPlugin = {
 
     ctx.services.provide<SemanticCore>('semantic-search', core)
 
-    // handoff-dedup: a newly indexed session very similar to an earlier one is
-    // a "relay" continuation — mark similar_to (report-only, UI folds it)
+    // handoff-dedup: a session very similar to an earlier one is a "relay"
+    // continuation — mark similar_to (report-only, UI folds it). Two signals:
+    // identical normalized titles (cheap, precise) or cosine >= 0.72.
     const markSimilarity = async (sessionIds: number[]): Promise<void> => {
       for (const sid of sessionIds) {
         try {
           const self = ctx.db.sqlite
-            .prepare(`SELECT similar_to, project_id FROM sessions WHERE id = ?`)
-            .get(sid) as { similar_to: number | null; project_id: number | null } | undefined
-          if (!self || self.similar_to != null) continue
+            .prepare(`SELECT title, similar_to, project_id FROM sessions WHERE id = ?`)
+            .get(sid) as { title: string | null; similar_to: number | null; project_id: number | null } | undefined
+          if (!self || self.similar_to != null || !self.title) continue
+
+          const sameTitle = ctx.db.sqlite
+            .prepare(
+              `SELECT id FROM sessions
+               WHERE title = ? AND id != ? AND deleted = 0 AND started_at < (SELECT started_at FROM sessions WHERE id = ?)
+               ORDER BY started_at DESC LIMIT 1`
+            )
+            .get(self.title, sid, sid) as { id: number } | undefined
+          if (sameTitle) {
+            ctx.db.sqlite.prepare(`UPDATE sessions SET similar_to = ? WHERE id = ?`).run(sameTitle.id, sid)
+            continue
+          }
+
           const sims = await core.similarSessions(sid, 4)
           for (const s of sims) {
             // normalized embeddings: L2 d ∈ [0,2] → cosine = 1 - d²/2
             const cosine = 1 - (s.distance * s.distance) / 2
             if (cosine < 0.85) break
             const cand = ctx.db.sqlite
-              .prepare(`SELECT project_id FROM sessions WHERE id = ? AND deleted = 0`)
-              .get(s.refId) as { project_id: number | null } | undefined
-            if (!cand) continue
+              .prepare(
+                `SELECT project_id, started_at FROM sessions WHERE id = ? AND deleted = 0 AND started_at < (SELECT started_at FROM sessions WHERE id = ?)`
+              )
+              .get(s.refId, sid) as { project_id: number | null; started_at: number | null } | undefined
+            if (!cand) continue // a relay always starts AFTER its origin
             if (self.project_id != null && cand.project_id != null && self.project_id !== cand.project_id) continue
             ctx.db.sqlite.prepare(`UPDATE sessions SET similar_to = ? WHERE id = ?`).run(s.refId, sid)
             break
@@ -122,6 +138,13 @@ const plugin: MemorySQLPlugin = {
         }
       }
     }
+
+    const allSessionIds = (): number[] =>
+      (
+        ctx.db.sqlite
+          .prepare(`SELECT id FROM sessions WHERE deleted = 0 AND (title != '' OR summary != '')`)
+          .all() as Array<{ id: number }>
+      ).map((r) => r.id)
 
     const refresh = async (): Promise<void> => {
       try {
@@ -151,6 +174,10 @@ const plugin: MemorySQLPlugin = {
     })
     ctx.ipc.handle('reindex', async () => {
       const res = await core.sync()
+      // a manual reindex backfills relay marks across ALL sessions — reset
+      // first so over-eager marks from previous thresholds get recomputed
+      ctx.db.sqlite.prepare(`UPDATE sessions SET similar_to = NULL`).run()
+      await markSimilarity(allSessionIds())
       return { ...res, ok: true }
     })
 
