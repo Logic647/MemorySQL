@@ -170,6 +170,13 @@ export default function App() {
     }
   }, [rename, refresh, selected])
 
+  // stable per-project hue so adjacent projects are visually distinct
+  const projectHue = (name: string): number => {
+    let h = 0
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360
+    return h
+  }
+
   const sessionRow = (
     s: SessionSummaryRow,
     depth = 0,
@@ -601,6 +608,12 @@ export default function App() {
                       <div
                         key={`${project}-head`}
                         className={`group-head ${dropTarget === project ? 'drop-target' : ''}`}
+                        style={
+                          {
+                            '--ph': String(projectHue(project)),
+                            '--ps': project === '(未分配项目)' ? '14%' : '55%'
+                          } as CSSProperties
+                        }
                         onDragOver={(e) => {
                           e.preventDefault()
                           setDropTarget(project)
