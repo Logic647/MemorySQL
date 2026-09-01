@@ -27,6 +27,8 @@ jobs:
   # GitHub Release with exe/blockmap/latest.yml via electron-builder publish)
   package:
     needs: ci
+    permissions:
+      contents: write
     if: >-
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))

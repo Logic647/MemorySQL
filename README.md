@@ -1,72 +1,149 @@
+<div align="center">
+
+<img src="build/icon.png" width="96" alt="MemorySQL">
+
 # MemorySQL
 
-面向个人开发者的"可延续开发"知识库。本地优先的桌面应用:存储**个人记忆(人物画像)、AI agent 会话记录、开发过程**,agent 通过 MCP"连接即续接"——切换 agent / 项目 / 会话不再丢失上下文。
+**面向个人开发者的本地优先知识库 —— agent 通过 MCP「连接即续接」**
 
-## 核心特性(当前进度)
+[![CI](https://github.com/Logic647/MemorySQL/actions/workflows/ci.yml/badge.svg)](https://github.com/Logic647/MemorySQL/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Logic647/MemorySQL)](https://github.com/Logic647/MemorySQL/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows-0078d4)
 
-- ✅ **会话自动捕获**:Codex CLI / ZCode / Hermes Agent CN Desktop 三适配器,自动解析本地会话文件并入库(规则摘要 + 去重 + 增量监听)
-- ✅ **知识库浏览**:会话列表、消息时间线、按 agent 过滤、中文全文检索(SQLite FTS5 + trigram)
-- ✅ **记忆导入**:自动收录 Hermes `MEMORY.md` / `USER.md` 等记忆文件
-- ✅ **MCP server**:任意 agent 连接即续接 —— 7 个工具:`memory_get_context`(续接包,agent 过滤+上一棒交接摘要)/ `memory_get_project_brief`(交接简报)/ `memory_list_sessions` / `memory_get_session` / `memory_search`(全文检索会话、消息、**记忆与笔记**,可按 agent/项目/时间过滤)/ `memory_write`(agent 归因+标签)/ `memory_log_progress`(收工汇报→候选记忆),仅监听 127.0.0.1,stdio agent 用 `scripts/mcp-bridge.mjs`
-- ✅ **出口脱敏**:导出会话 MD 时自动遮蔽密钥/口令/JWT 等(本地数据永远明文自可见)
-- ✅ **归档迁移**:`.msqlv` 一键导出/导入(VACUUM INTO 一致性快照 + 启动期原子换库)
-- ✅ **笔记与图谱**:vault/ 内 Markdown 笔记(CodeMirror 6 编辑、Ctrl+S 保存)、[[双向链接]] + 反向链接、标签、知识图谱;Obsidian 兼容(直接用 Obsidian 打开 vault/)
-- ✅ **项目文件监听**:只读导入项目内 AGENTS.md / CLAUDE.md / MEMORY.md 为记忆
-- ✅ **自动项目日志**:按项目在 `vault/devlog/` 生成开发日志(会话时间线 + 决策 + 待办),扫描/导入后自动更新,顶栏一键重新生成;写进 vault 即进入笔记检索
-- ✅ **托盘常驻 + 全局秒搜**:关闭主窗口即隐藏到托盘(MCP 服务端保持常驻),任意界面 `Alt+Shift+M` 唤起 Spotlight 式秒搜(会话/消息/记忆/笔记一起搜,Enter 直达)
-- ✅ **语义检索(本地向量)**:`memory_search` 支持本地语义召回(sqlite-vec + fastembed bge-small-zh,全程离线);设置页可启停(`settings.json` 键 `"semantic-search:enabled": true` 等价)——首次启用会下载 ~100MB 模型到本地缓存,`npx electron . --reindex` 手动重建索引
-- ✅ **记忆治理**:LLM 冲突检测(配置摘要引擎后,记忆页一键找出互相矛盾的记忆并人工裁决停用)
-- ✅ **插件化架构**:核心功能即内置插件,统一生命周期与能力注册接口,API 文档见 docs/plugins.md
-- 🔲 后续:**M8 = 打包分发(安装包 + 自动更新 + GitHub Actions CI)+ demo 与发布** —— 完整路线图见 [docs/architecture.md](docs/architecture.md) §8
+[下载安装包](https://github.com/Logic647/MemorySQL/releases/latest) · [快速开始](#-快速开始) · [插件开发](#-插件开发规范) · [文档](#-文档)
 
-完整规划见 [AGENTS.md](AGENTS.md) 与 [docs/architecture.md](docs/architecture.md)。
+</div>
 
-## 隐私模型
+---
 
-**数据 100% 本地**(`data/` 目录已被 gitignore,永不入库):会话原文、记忆、笔记全部明文存本机,自己可见;任何"导出/分享"路径统一经过脱敏模块后才对外。
+你同时用三四个 AI agent(Codex / ZCode / Claude Code / Hermes …),换一个就得重新铺垫背景:项目讲到哪、你有什么偏好、踩过什么坑——全部重来。
 
-## 快速连接 Agent
+**MemorySQL 解决这件事**:自动捕获所有 agent 的会话、维护你的记忆画像与项目状态,并在本机起一个 MCP 服务端。任何 agent 连上后一次 `memory_get_context` 调用,即可拿到完整上下文继续干活——连上一个 agent 干到哪、下一步是什么,都内联在返回里。
 
-前提:**MemorySQL 应用处于运行状态**(它就是 MCP 服务端)。
+> **数据 100% 存本机**(SQLite + Markdown,除 LLM API 外零服务器依赖);任何导出/分享路径强制过脱敏模块;语义检索用本地 ONNX 模型,全程离线。
 
-1. 打开应用 → 设置 → **连接 Agent 向导**
-2. 对你已安装的 agent 点「一键连接」——应用会自动把 MCP 配置写入该 agent 的配置文件(写入前自动备份为 `*.bak-memorysql`),状态列会显示"已检测到 / 未检测到"
-3. 重启该 agent,即可使用 `memory_get_context`(续接包)、`memory_search`、`memory_write`、`memory_get_session` 四个工具
+## ✨ 特性
 
-已支持自动写入:Codex CLI(`config.toml`)、ZCode(`config.json`,http 直连)、Claude Code(`~/.claude.json`)、Gemini CLI(`settings.json`)、Cursor(`mcp.json`)、OpenCode(`opencode.json`)、**Hermes Agent**(`config.yaml` 的 `mcp_servers:`,streamable http + stateless,写入后 `/reload-mcp` 或重启生效)。
-想手工配置:每行有「复制配置」按钮给出精确片段。Hermes 等无 MCP 能力的 agent 走记忆文件桥:其记忆文件会被自动导入,`vault/dispatch/` 下的分发文件可反向喂给 agent。
+- **会话自动捕获** —— 7 家 agent 开箱支持(Codex / ZCode / Hermes / Claude Code / Gemini / Cursor / OpenCode),增量监听零手动操作
+- **MCP 续接包** —— 画像 + 长期记忆 + 项目状态 + 最近会话 + **上一棒交接摘要**,一次调用恢复全部上下文
+- **交接简报** —— `memory_get_project_brief` 自动汇编项目当前进展/决策/待办,换 agent 接手零成本
+- **语义检索** —— sqlite-vec + 本地 embedding(bge-small-zh),字面搜不到的概念性提问也能召回
+- **收工汇报闭环** —— `memory_log_progress` 结构化记录做了什么/下一步/卡在哪,人工确认后进正式记忆
+- **自动项目日志** —— `vault/devlog/` 按项目生成开发日志(时间线 + 决策 + 待办)
+- **笔记 + 图谱** —— Markdown 笔记、[[双向链接]]、知识图谱,Obsidian 兼容
+- **托盘常驻 + 全局秒搜** —— 关窗即驻留(MCP 保持在线),任意界面 `Alt+Shift+M` 唤起秒搜
+- **记忆治理** —— 收工汇报候选确认、LLM 冲突检测、手动改名/归档/续接链管理
 
-## 插件技术规范(社区插件)
+## 📦 安装
 
-MemorySQL 一切功能皆插件,并支持**外部插件**。把插件放进 `<数据目录>/plugins/<id>/`(设置 → 插件管理 → 打开插件目录),重启即加载:
+| 方式 | 命令 / 链接 |
+|---|---|
+| **winget**(审核中) | `winget install Logic647.MemorySQL` |
+| **scoop** | `scoop bucket add logic647 https://github.com/Logic647/scoop-bucket && scoop install memorysql` |
+| **安装包** | [Releases 最新版](https://github.com/Logic647/MemorySQL/releases/latest) 下载 `MemorySQL-Setup-*.exe` |
+| **免安装** | Release 附件或 CI Artifacts 中的便携版 |
+
+安装后应用自动驻留托盘;关闭窗口 = 最小化到托盘,MCP 服务保持在线。
+
+## 🚀 快速开始
+
+1. **启动 MemorySQL**(它就是 MCP 服务端,默认 `http://127.0.0.1:8642/mcp`)
+2. **连接你的 agent**:设置 → 连接 Agent 向导 → 一键写入配置(自动备份原配置);或手工填端点
+3. **重启 agent,新会话说一句「续接 <项目名>」** —— 上下文就回来了
+
+验证连通:`curl http://127.0.0.1:8642/health`
+
+## 🧩 MCP 工具(7 个)
+
+| 工具 | 用途 |
+|---|---|
+| `memory_get_context` | 续接包:画像 + 记忆(agent 过滤)+ 项目 + 最近会话 + 上一棒摘要 |
+| `memory_get_project_brief` | 项目交接简报 |
+| `memory_list_sessions` | 会话枚举(项目/agent/时间过滤,带 id) |
+| `memory_get_session` | 完整消息时间线回读(full 模式去截断) |
+| `memory_search` | 全文检索会话/消息/记忆/笔记 + 本地语义补足 |
+| `memory_write` | 写入长期记忆(agent 归因 / 标签 / 去重) |
+| `memory_log_progress` | 收工汇报 → 候选记忆 → 交接简报可见 |
+
+## 🔌 插件开发规范
+
+一切功能皆插件:核心能力与会话捕获、语义检索一样,都是跑在同一套协议上的插件。外部插件与内置插件**走完全相同的加载协议**。
+
+**目录结构** —— 把插件放进 `<数据目录>/plugins/<id>/`(设置 → 打开插件目录),重启即加载:
 
 ```
 plugins/my-plugin/
-├── manifest.json   # {"id":"my-plugin","name":"My Plugin","version":"0.1.0","main":"main.js"}
-└── main.js         # CommonJS 单文件,export default {manifest, init(ctx), start?, stop?}
+├── manifest.json        # { "id": "my-plugin", "name": "...", "version": "0.1.0" }
+└── main.js              # 单文件 CommonJS,默认导出插件对象
 ```
 
-约定与技术约束:
+**代码规范** —— `main.js` 必须是**单文件 CommonJS**,默认导出实现以下接口的对象:
 
-- `main.js` 必须是 **CommonJS 单文件 bundle**,入口 `module.exports.default = {manifest:{id,name,version}, init(ctx){…}}`;id 与 manifest.json 一致,只含 `[a-z0-9_-]`
-- **不得携带 npm 依赖与原生模块**——文件监听用 `ctx.watcher`,SQLite 用 `ctx.db.sqlite`,HTTP 用 Node 全局 fetch
-- `ctx` 提供:db(迁移/句柄)、settings(命名空间键值)、ipc(注册渲染通道)、mcp(注册 MCP 工具)、watcher、events、services(插件间服务)、env(数据目录路径)——完整 API 见 [docs/plugins.md](docs/plugins.md)
-- 单个插件加载失败只禁用自身并在设置页展示原因,不影响应用与其它插件;每个插件可在设置中启停(重启生效)
-- API 版本随 manifest `version` 演进;破坏性变更会在 DEVLOG 标注
+```js
+module.exports = {
+  manifest: {
+    id: 'my-plugin',           // 全局唯一 [a-z0-9_-],同时是 IPC 通道前缀
+    name: 'My Plugin',
+    version: '1.0.0',
+    requires: ['core-schema']  // 依赖的插件,宿主按此拓扑排序
+  },
+  init(ctx) {
+    // 注册能力;此时依赖插件已 init
+    ctx.ipc.handle('hello', () => 'world')              // 渲染进程可调 my-plugin:hello
+    ctx.mcp.registerTool({                               // 注册 MCP 工具(name 仅 [a-zA-Z0-9_-])
+      name: 'my_tool', description: '...', inputSchema: { type: 'object' },
+      handler: (args) => 'result'
+    })
+    ctx.db.migrate([{ version: 1, up: 'CREATE TABLE ...' }])  // 插件命名空间的 schema 迁移
+    const unwatch = ctx.watcher.watch(['D:/proj'], onChange, { match: /\.md$/ })  // 文件监听
+  },
+  start() { /* 可选:启动期(服务器/watcher) */ },
+  stop() { /* 可选:逆序清理 */ }
+}
+```
 
-## 开发
+**能力一览**(`init(ctx)` 提供,插件不得绕过它触碰宿主):
+
+| 能力 | 说明 |
+|---|---|
+| `ctx.db.migrate / ctx.db.sqlite` | 命名空间迁移 + better-sqlite3 句柄 |
+| `ctx.settings.get/set` | 持久化键值(键自动加 `<id>:` 前缀) |
+| `ctx.ipc.handle / call` | 注册渲染端通道 / 调用其它插件 |
+| `ctx.mcp.registerTool / list` | 注册 / 列出 MCP 工具 |
+| `ctx.watcher.watch` | chokidar 封装,返回反注册函数 |
+| `ctx.services.provide / use` | 插件间服务定位(靠 `requires` 保证顺序) |
+| `ctx.events.on / emit` | 事件总线(`sessions:changed` 等内置事件) |
+| `ctx.log / ctx.env` | 带前缀日志 / 数据目录布局 |
+
+**生命周期**:`load → init(依赖序) → start → stop(逆序) → unload`。单个插件 init/start 异常被宿主隔离,不影响其它插件。
+
+完整 API 见 [docs/plugins.md](docs/plugins.md)。
+
+## 🛠 开发
 
 ```bash
-npm install        # 安装依赖(Electron 下载慢时: ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/)
-npm run dev        # 开发模式
-npm run build      # 构建
-npm test           # 单元测试
-npm run typecheck  # 类型检查
-npm run import:scan # 无头扫描导入本机 agent 会话(验收)
+npm install          # Node 24+
+npm run dev          # 开发模式(热重载)
+npm test             # vitest 单元测试
+npm run typecheck    # tsc --noEmit
+npm run dist         # 打包 Windows 安装包 + 免安装目录
+npm run import:scan  # 无头扫描导入本机 agent 会话(验收用)
 ```
 
-技术栈:Electron + TypeScript + React + better-sqlite3(FTS5)+ electron-vite。
+技术栈:Electron + TypeScript(strict) + React + better-sqlite3(FTS5) + sqlite-vec + CodeMirror 6。
 
-## License
+## 📁 文档
 
-MIT
+| 文档 | 内容 |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | 架构、数据模型、全部决策记录 |
+| [docs/plugins.md](docs/plugins.md) | 插件 API 完整参考 |
+| [docs/DEVLOG.md](docs/DEVLOG.md) | 开发日志(追加式) |
+| [docs/RELEASE.md](docs/RELEASE.md) | 发版流程 |
+| [docs/MCP_LISTING.md](docs/MCP_LISTING.md) | MCP 目录登记素材 |
+| [AGENTS.md](AGENTS.md) | agent 接手开发的入口 |
+
+## 📄 License
+
+[MIT](LICENSE)
