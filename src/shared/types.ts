@@ -48,6 +48,9 @@ export interface SessionSummaryRow {
   endedAt: number | null
   messageCount: number
   toolCallCount: number
+  titleLocked?: number
+  archived?: number
+  similarTo?: number | null
 }
 
 export interface MessageRow {

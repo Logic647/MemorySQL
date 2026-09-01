@@ -79,7 +79,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
     'INSERT INTO projects (path, name, updated_at, device_id) VALUES (?, ?, ?, ?)'
   )
   const stmtSessionFind = sqlite.prepare(
-    'SELECT id, content_hash FROM sessions WHERE agent_type = ? AND external_id = ?'
+    'SELECT id, content_hash, title_locked, title FROM sessions WHERE agent_type = ? AND external_id = ?'
   )
   const stmtSessionIns = sqlite.prepare(`
     INSERT INTO sessions (agent_type, external_id, project_id, cwd, started_at, ended_at,
@@ -145,9 +145,12 @@ export function createIngestService(deps: IngestDeps): IngestService {
   ): { outcome: 'imported' | 'updated' | 'skipped'; id?: number } => {
     const contentHash = hashSession(s)
     const existing = stmtSessionFind.get(s.agentType, s.externalId) as
-      | { id: number; content_hash: string }
+      | { id: number; content_hash: string; title_locked: number; title: string | null }
       | undefined
     if (existing && existing.content_hash === contentHash) return { outcome: 'skipped' }
+
+    // a user-renamed title survives re-ingest (auto summaries never clobber it)
+    if (existing?.title_locked && existing.title) summary.title = existing.title
 
     const projectId = ensureProject(s.cwd)
     const { title, summary: summaryText } = summary

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { SearchHit, SessionSummaryRow } from '../../shared/types'
+import type { AgentType, SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
 import MemoriesView from './MemoriesView'
 import SettingsView from './SettingsView'
@@ -45,11 +45,13 @@ export default function App() {
   const [mcp, setMcp] = useState<{ port: number; running: boolean; toolCount: number } | null>(null)
   const [kbMsg, setKbMsg] = useState('')
   const [view, setView] = useState<View>('sessions')
+  const [showArchived, setShowArchived] = useState(false)
+  const [rename, setRename] = useState<{ id: number; value: string } | null>(null)
 
   const refresh = useCallback(async () => {
-    setSessions(await api.listSessions(filter))
+    setSessions(await api.listSessions(filter, { archived: showArchived }))
     setOverview(await api.overview())
-  }, [filter])
+  }, [filter, showArchived])
 
   useEffect(() => {
     void refresh()
@@ -125,6 +127,66 @@ export default function App() {
       setTimeout(() => setDevlogNote(null), 4000)
     }
   }, [refresh])
+
+  const commitRename = useCallback(async () => {
+    if (!rename) return
+    try {
+      await api.renameSession(rename.id, rename.value)
+      setRename(null)
+      await refresh()
+      if (selected?.session.id === rename.id) setSelected(await api.getSession(rename.id))
+    } catch (e) {
+      setKbMsg(`重命名失败: ${String(e)}`)
+    }
+  }, [rename, refresh, selected])
+
+  const sessionRow = (s: SessionSummaryRow) => (
+    <div key={s.id} className="session" data-agent={s.agentType} onClick={() => void openSession(s.id)}>
+      <div className="session-head">
+        <AgentBadge type={s.agentType} />
+        {rename?.id === s.id ? (
+          <span className="session-title" onClick={(e) => e.stopPropagation()}>
+            <input
+              autoFocus
+              value={rename.value}
+              onChange={(e) => setRename({ id: s.id, value: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void commitRename()
+                if (e.key === 'Escape') setRename(null)
+              }}
+            />
+            <button className="btn btn-small" onClick={(e) => { e.stopPropagation(); void commitRename() }}>
+              保存
+            </button>
+            <button className="btn btn-small" onClick={(e) => { e.stopPropagation(); setRename(null) }}>
+              取消
+            </button>
+          </span>
+        ) : (
+          <span className="session-title">
+            {s.title ?? s.externalId}
+            {s.titleLocked ? ' 🖊' : ''}
+          </span>
+        )}
+        <span className="sess-id">#{s.id}</span>
+        <span className="session-time">{fmtTime(s.startedAt)}</span>
+      </div>
+      {s.summary && <div className="session-summary">{s.summary.split('\n')[0]}</div>}
+      <div className="session-meta">
+        {s.project && <span>{s.project}</span>}
+        <span>{s.messageCount} msg</span>
+        <span>{s.toolCallCount} tool</span>
+        <span className="mem-actions" onClick={(e) => e.stopPropagation()}>
+          <button className="link" onClick={() => setRename({ id: s.id, value: s.title ?? '' })}>
+            重命名
+          </button>
+          <button className="link" onClick={() => void api.archiveSession(s.id, s.archived !== 1).then(refresh)}>
+            {s.archived === 1 ? '取消归档' : '归档'}
+          </button>
+        </span>
+      </div>
+    </div>
+  )
 
   return (
     <div className="app">
@@ -288,29 +350,55 @@ export default function App() {
             </div>
           ) : (
             <div className="list-pane">
-              <div className="pane-title">会话 ({sessions.length})</div>
+              <div className="pane-title">
+                会话 ({sessions.length})
+                <label className="hint" style={{ marginLeft: 10, display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={showArchived}
+                    onChange={(e) => setShowArchived(e.target.checked)}
+                  />
+                  显示已归档
+                </label>
+              </div>
               <div className="session-list">
-                {sessions.map((s) => (
-                  <button
-                    key={s.id}
-                    className="session"
-                    data-agent={s.agentType}
-                    onClick={() => void openSession(s.id)}
-                  >
-                    <div className="session-head">
-                      <AgentBadge type={s.agentType} />
-                      <span className="session-title">{s.title ?? s.externalId}</span>
-                      <span className="sess-id">#{s.id}</span>
-                      <span className="session-time">{fmtTime(s.startedAt)}</span>
-                    </div>
-                    {s.summary && <div className="session-summary">{s.summary.split('\n')[0]}</div>}
-                    <div className="session-meta">
-                      {s.project && <span>{s.project}</span>}
-                      <span>{s.messageCount} msg</span>
-                      <span>{s.toolCallCount} tool</span>
-                    </div>
-                  </button>
-                ))}
+                {(() => {
+                  // group: all→project (multi-agent projects get agent sub-heads);
+                  // agent filter→project. Sessions without a project land in (未分配).
+                  const groups = new Map<string, SessionSummaryRow[]>()
+                  for (const s of sessions) {
+                    const key = s.project ?? '(未分配项目)'
+                    const bucket = groups.get(key)
+                    if (bucket) bucket.push(s)
+                    else groups.set(key, [s])
+                  }
+                  const keys = [...groups.keys()].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+                  return keys.flatMap((project) => {
+                    const rows = groups.get(project)!
+                    const agents = [...new Set(rows.map((r) => r.agentType))]
+                    const body: React.ReactNode[] = []
+                    if (filter === 'all' && agents.length > 1) {
+                      for (const a of agents.sort()) {
+                        body.push(
+                          <div key={`${project}-${a}-head`} className="group-subhead">
+                            <AgentBadge type={a as AgentType} />
+                            <span>{a}</span>
+                          </div>
+                        )
+                        for (const s of rows.filter((r) => r.agentType === a)) body.push(sessionRow(s))
+                      }
+                    } else {
+                      for (const s of rows) body.push(sessionRow(s))
+                    }
+                    return [
+                      <div key={`${project}-head`} className="group-head">
+                        {project}
+                        <span className="group-count">{rows.length}</span>
+                      </div>,
+                      ...body
+                    ]
+                  })
+                })()}
                 {sessions.length === 0 && (
                   <div className="empty">暂无会话 — 点击右上角「立即扫描」导入 agent 会话</div>
                 )}

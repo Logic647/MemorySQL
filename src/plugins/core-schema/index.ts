@@ -57,21 +57,24 @@ const plugin: MemorySQLPlugin = {
 
     // ----- renderer-facing IPC -------------------------------------------
     ctx.ipc.handle('sessions:list', (payload) => {
-      const { agentType, limit = 100, offset = 0 } = (payload ?? {}) as {
+      const { agentType, limit = 100, offset = 0, archived = false } = (payload ?? {}) as {
         agentType?: string
         limit?: number
         offset?: number
+        archived?: boolean
       }
       const where = agentType && agentType !== 'all' ? 'AND agent_type = ?' : ''
+      const archivedWhere = archived ? 'AND s.archived = 1' : 'AND s.archived = 0'
       const params: unknown[] = agentType && agentType !== 'all' ? [agentType] : []
       const rows = ctx.db.sqlite
         .prepare(
           `SELECT s.id, s.agent_type AS agentType, s.external_id AS externalId,
                   s.title, s.summary, p.name AS project,
                   s.started_at AS startedAt, s.ended_at AS endedAt,
-                  s.message_count AS messageCount, s.tool_call_count AS toolCallCount
+                  s.message_count AS messageCount, s.tool_call_count AS toolCallCount,
+                  s.title_locked AS titleLocked, s.archived AS archived, s.similar_to AS similarTo
            FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
-           WHERE s.deleted = 0 ${where}
+           WHERE s.deleted = 0 ${archivedWhere} ${where}
            ORDER BY COALESCE(s.started_at, s.updated_at) DESC
            LIMIT ? OFFSET ?`
         )
@@ -96,6 +99,40 @@ const plugin: MemorySQLPlugin = {
         )
         .all(id)
       return { session, messages: messages as MessageRow[] }
+    })
+
+    ctx.ipc.handle('sessions:rename', (payload) => {
+      const { id, title } = (payload ?? {}) as { id?: number; title?: string }
+      if (!id) throw new Error('sessions:rename requires id')
+      const t = String(title ?? '').trim()
+      if (!t) throw new Error('标题不能为空')
+      const row = ctx.db.sqlite
+        .prepare(`SELECT summary FROM sessions WHERE id = ? AND deleted = 0`)
+        .get(id) as { summary: string | null } | undefined
+      if (!row) throw new Error(`session not found: ${id}`)
+      const finalTitle = t.slice(0, 200)
+      const tx = ctx.db.sqlite.transaction(() => {
+        ctx.db.sqlite
+          .prepare(`UPDATE sessions SET title = ?, title_locked = 1, updated_at = ? WHERE id = ?`)
+          .run(finalTitle, Date.now(), id)
+        ctx.db.sqlite.prepare(`DELETE FROM sessions_fts WHERE rowid = ?`).run(id)
+        ctx.db.sqlite
+          .prepare(`INSERT INTO sessions_fts (rowid, title, summary) VALUES (?, ?, ?)`)
+          .run(id, finalTitle, row.summary ?? '')
+      })
+      tx()
+      ctx.events.emit('sessions:changed')
+      return { ok: true, title: finalTitle }
+    })
+
+    ctx.ipc.handle('sessions:archive', (payload) => {
+      const { id, archived } = (payload ?? {}) as { id?: number; archived?: boolean }
+      if (!id || typeof archived !== 'boolean') throw new Error('sessions:archive requires {id, archived}')
+      ctx.db.sqlite
+        .prepare(`UPDATE sessions SET archived = ?, updated_at = ? WHERE id = ? AND deleted = 0`)
+        .run(archived ? 1 : 0, Date.now(), id)
+      ctx.events.emit('sessions:changed')
+      return { ok: true }
     })
 
     ctx.ipc.handle('search:all', (payload) => {

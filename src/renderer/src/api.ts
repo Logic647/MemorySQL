@@ -34,10 +34,19 @@ export interface Overview {
 }
 
 export const api = {
-  listSessions: (agentType: string): Promise<SessionSummaryRow[]> =>
-    window.memorysql.invoke('core-schema:sessions:list', { agentType, limit: 200 }) as Promise<
-      SessionSummaryRow[]
-    >,
+  listSessions: (agentType: string, opts?: { archived?: boolean }): Promise<SessionSummaryRow[]> =>
+    window.memorysql.invoke('core-schema:sessions:list', {
+      agentType,
+      limit: 200,
+      archived: opts?.archived ?? false
+    }) as Promise<SessionSummaryRow[]>,
+  renameSession: (id: number, title: string): Promise<{ ok: boolean; title: string }> =>
+    window.memorysql.invoke('core-schema:sessions:rename', { id, title }) as Promise<{
+      ok: boolean
+      title: string
+    }>,
+  archiveSession: (id: number, archived: boolean): Promise<{ ok: boolean }> =>
+    window.memorysql.invoke('core-schema:sessions:archive', { id, archived }) as Promise<{ ok: boolean }>,
   getSession: (id: number): Promise<SessionDetail> =>
     window.memorysql.invoke('core-schema:sessions:get', { id }) as Promise<SessionDetail>,
   search: (q: string): Promise<SearchHit[]> =>
@@ -247,5 +256,37 @@ export const api = {
     window.memorysql.invoke('memorysql:host:pluginSetting', { id, key, value }) as Promise<{
       ok: boolean
       restartNeeded: boolean
-    }>
+    }>,
+  // ---- about page / curated paths ---------------------------------------
+  paths: (): Promise<{ dataDir: string; backupsDir: string; dispatchDir: string; devlogDir: string; pluginsDir: string }> =>
+    window.memorysql.invoke('memorysql:host:paths') as Promise<{
+      dataDir: string
+      backupsDir: string
+      dispatchDir: string
+      devlogDir: string
+      pluginsDir: string
+    }>,
+  openPath: (path: string): Promise<{ ok: boolean }> =>
+    window.memorysql.invoke('memorysql:host:openPath', { path }) as Promise<{ ok: boolean }>,
+  openExternal: (url: string): Promise<{ ok: boolean }> =>
+    window.memorysql.invoke('memorysql:host:openExternal', { url }) as Promise<{ ok: boolean }>,
+  appInfo: (): Promise<{ version: string; electron: string; packaged: boolean }> =>
+    window.memorysql.invoke('memorysql:host:appInfo') as Promise<{
+      version: string
+      electron: string
+      packaged: boolean
+    }>,
+  checkUpdate: (): Promise<{ available: boolean; version?: string; reason?: string }> =>
+    window.memorysql.invoke('memorysql:host:checkUpdate') as Promise<{
+      available: boolean
+      version?: string
+      reason?: string
+    }>,
+  updateNow: (): Promise<{ ok: boolean; relaunching?: boolean }> =>
+    window.memorysql.invoke('memorysql:host:updateNow') as Promise<{ ok: boolean; relaunching?: boolean }>,
+  releases: (): Promise<{ releases: Array<{ tag: string; date: string | null; notes: string }>; error?: string }> =>
+    window.memorysql.invoke('memorysql:host:releases') as Promise<{
+      releases: Array<{ tag: string; date: string | null; notes: string }>
+      error?: string
+    }>,
 }

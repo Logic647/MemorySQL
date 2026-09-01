@@ -316,6 +316,76 @@ function registerHostChannels(
     void shell.openPath(path.join(env.dataDir, 'plugins'))
     return { ok: true }
   })
+  // ---- curated paths + about page ---------------------------------------
+  hostChannels.set('memorysql:host:paths', () => ({
+    dataDir: env.dataDir,
+    backupsDir: path.join(env.dataDir, 'backups'),
+    dispatchDir: path.join(env.vaultDir, 'dispatch'),
+    devlogDir: path.join(env.vaultDir, 'devlog'),
+    pluginsDir: path.join(env.dataDir, 'plugins')
+  }))
+  hostChannels.set('memorysql:host:openPath', (payload) => {
+    const p = String((payload as { path?: string })?.path ?? '')
+    if (!p.startsWith(env.dataDir) && !p.startsWith(env.vaultDir)) {
+      throw new Error('只允许打开数据目录内的路径')
+    }
+    if (!fs.existsSync(p)) throw new Error(`目录不存在: ${p}`)
+    void shell.openPath(p)
+    return { ok: true }
+  })
+  hostChannels.set('memorysql:host:openExternal', (payload) => {
+    const url = String((payload as { url?: string })?.url ?? '')
+    if (!/^https?:\/\//.test(url) && !url.startsWith('mailto:')) {
+      throw new Error('仅允许 http(s)/mailto 链接')
+    }
+    void shell.openExternal(url)
+    return { ok: true }
+  })
+  hostChannels.set('memorysql:host:appInfo', () => ({
+    version: app.getVersion(),
+    electron: process.versions.electron ?? '',
+    packaged: app.isPackaged
+  }))
+  hostChannels.set('memorysql:host:checkUpdate', async () => {
+    if (!app.isPackaged) return { available: false, reason: '开发模式不检查更新' }
+    try {
+      const { autoUpdater } = await import('electron-updater')
+      const result = await autoUpdater.checkForUpdates()
+      const next = result?.updateInfo?.version
+      if (next && next !== app.getVersion()) {
+        return { available: true, version: next }
+      }
+      return { available: false, reason: '已是最新版本' }
+    } catch (err) {
+      return { available: false, reason: `检查失败: ${String(err instanceof Error ? err.message : err)}` }
+    }
+  })
+  hostChannels.set('memorysql:host:updateNow', async () => {
+    if (!app.isPackaged) throw new Error('开发模式不支持')
+    const { autoUpdater } = await import('electron-updater')
+    await autoUpdater.downloadUpdate()
+    setImmediate(() => autoUpdater.quitAndInstall())
+    return { ok: true, relaunching: true }
+  })
+  hostChannels.set('memorysql:host:releases', async () => {
+    try {
+      const res = await fetch('https://api.github.com/repos/Logic647/MemorySQL/releases?per_page=10', {
+        headers: { 'User-Agent': 'memorysql-app' },
+        signal: AbortSignal.timeout(8000)
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const list = (await res.json()) as Array<{ tag_name: string; published_at: string | null; body: string | null }>
+      return {
+        releases: list.map((r) => ({
+          tag: r.tag_name,
+          date: r.published_at,
+          notes: (r.body ?? '').slice(0, 1200)
+        }))
+      }
+    } catch (err) {
+      return { releases: [], error: String(err instanceof Error ? err.message : err) }
+    }
+  })
   // spotlight (tray + global hotkey) helpers, used by the ?spotlight=1 window
   hostChannels.set('memorysql:host:openSession', (payload) => {
     const { id } = (payload ?? {}) as { id?: number }

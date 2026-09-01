@@ -114,5 +114,15 @@ ALTER TABLE memories ADD COLUMN tags TEXT;
 ALTER TABLE memories ADD COLUMN project_id INTEGER REFERENCES projects(id);
 CREATE INDEX idx_memories_project ON memories(project_id);
 `
+  },
+  {
+    version: 5,
+    up: `
+-- v5: session curation (matrix v2 follow-ups)
+ALTER TABLE sessions ADD COLUMN title_locked INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN similar_to INTEGER REFERENCES sessions(id);
+CREATE INDEX idx_sessions_archived ON sessions(archived, deleted);
+`
   }
 ]

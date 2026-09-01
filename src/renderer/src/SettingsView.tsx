@@ -10,6 +10,32 @@ const PROVIDER_LABEL: Record<Provider, string> = {
   ollama: 'Ollama 本地模型'
 }
 
+const CATEGORIES = ['通用', '会话捕获', '智能引擎', '同步与备份', '插件', '关于'] as const
+type Category = (typeof CATEGORIES)[number]
+
+const PLUGIN_DESC: Record<string, string> = {
+  'core-schema': '核心数据层 —— 表结构、会话入库、全文检索',
+  'core-vault': '笔记库 —— Markdown 笔记、双向链接、知识图谱',
+  'capture-codex': 'Codex CLI 会话捕获',
+  'capture-zcode': 'ZCode 会话捕获',
+  'capture-hermes': 'Hermes 桌面版会话捕获',
+  'capture-claudecode': 'Claude Code 会话捕获',
+  'capture-gemini': 'Gemini CLI 会话捕获',
+  'capture-cursor': 'Cursor 会话捕获(实验性)',
+  'capture-opencode': 'OpenCode / Copilot CLI 会话捕获',
+  'capture-watcher': '项目文件监听(AGENTS.md 等只读导入)',
+  'mcp-server': 'MCP 服务端 —— 所有 agent 的连接入口',
+  'privacy-export': '出口脱敏 —— 导出分享前自动遮蔽密钥',
+  'sync-archive': '归档备份 —— .msqlv 一键导出/导入',
+  'sync-folder': '增量同步 —— 通过网盘文件夹多机合并',
+  'memory-core': '记忆管理 —— 增删改、LLM 精炼、冲突检测',
+  'memory-dispatch': '记忆分发 —— 生成各 agent 可用的记忆文件',
+  'project-devlog': '自动项目日志 —— vault/devlog 按项目生成',
+  'semantic-search': '语义检索 —— 本地向量模型,字面未命中时补足召回',
+  'summarizer-llm': 'LLM 摘要引擎(可选,自动降级)',
+  'summarizer-rules': '本地规则摘要(默认,零依赖)'
+}
+
 export default function SettingsView() {
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
   const [folder, setFolder] = useState('')
@@ -20,6 +46,7 @@ export default function SettingsView() {
   const [pluginList, setPluginList] = useState<Array<{ id: string; name: string; version: string; enabled: boolean; external: boolean }>>([])
   const [loadErrors, setLoadErrors] = useState<string[]>([])
   const [pluginsDir, setPluginsDir] = useState('')
+  const [category, setCategory] = useState<Category>('通用')
 
   const load = useCallback(async () => {
     setCfg(await api.llmGetConfig())
@@ -62,295 +89,448 @@ export default function SettingsView() {
   return (
     <div className="settings-pane">
       <div className="pane-title">设置</div>
+      <div className="settings-cats">
+        {CATEGORIES.map((c) => (
+          <button key={c} className={`chip ${category === c ? 'chip-active' : ''}`} onClick={() => setCategory(c)}>
+            {c}
+          </button>
+        ))}
+      </div>
       <div className="settings-body">
-        <section>
-          <h3>连接 Agent 向导</h3>
-          <p className="hint">
-            应用运行中时,点「一键连接」把 MemorySQL 的 MCP 服务写入对应 agent 的配置文件(自动备份原配置),
-            重启该 agent 后即可使用 memory_get_context / memory_search 等工具。「复制配置」给出可手工粘贴的片段。
-          </p>
-          <AgentConnectSection onMsg={setMsg} />
-        </section>
-
-        <section>
-          <h3>摘要引擎</h3>
-          <p className="hint">
-            默认本地规则,零成本零依赖。切换为 LLM 后新导入的会话用模型生成标题与摘要;LLM 不可用时自动降级回规则。
-          </p>
-          <label className="field">
-            <span>引擎</span>
-            <select value={provider} onChange={(e) => set('provider', e.target.value)}>
-              {(Object.keys(PROVIDER_LABEL) as Provider[]).map((p) => (
-                <option key={p} value={p}>
-                  {PROVIDER_LABEL[p]}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {provider === 'openai' && (
-            <>
+        {category === '通用' && (
+          <>
+            <section>
+              <h3>存储位置</h3>
+              <p className="hint">
+                整个知识库(数据库 + 笔记 + 设置)的存放目录。迁移会复制全部数据到新目录并在重启后切换,原目录保留可回退。
+              </p>
               <label className="field">
-                <span>API Key{Boolean(cfg.hasOpenaiKey) && '(已保存,留空保持不变)'}</span>
-                <input
-                  type="password"
-                  value={String(cfg.openaiKey ?? '')}
-                  onChange={(e) => set('openaiKey', e.target.value)}
-                  placeholder="sk-…"
-                />
+                <span>新目录</span>
+                <input value={dataDir} onChange={(e) => setDataDir(e.target.value)} placeholder="D:\MemorySQL-Data" />
               </label>
-              <label className="field">
-                <span>Base URL(可填兼容网关)</span>
-                <input value={String(cfg.openaiBaseUrl ?? '')} onChange={(e) => set('openaiBaseUrl', e.target.value)} />
-              </label>
-              <ModelField
-                value={String(cfg.openaiModel ?? '')}
-                onChange={(v) => set('openaiModel', v)}
-                onFetch={() =>
-                  api.llmListModels().then((r) => {
-                    if (r.ok && r.models) {
-                      setCfg((c) => (c ? { ...c, _models: r.models } : c))
-                      setMsg(`已获取 ${r.models.length} 个模型`)
-                    } else setMsg(r.message ?? '获取失败')
-                  })
-                }
-                models={(cfg._models as string[] | undefined) ?? []}
-              />
-            </>
-          )}
-
-          {provider === 'anthropic' && (
-            <>
-              <label className="field">
-                <span>API Key{Boolean(cfg.hasAnthropicKey) && '(已保存,留空保持不变)'}</span>
-                <input
-                  type="password"
-                  value={String(cfg.anthropicKey ?? '')}
-                  onChange={(e) => set('anthropicKey', e.target.value)}
-                />
-              </label>
-              <label className="field">
-                <span>Base URL</span>
-                <input value={String(cfg.anthropicBaseUrl ?? '')} onChange={(e) => set('anthropicBaseUrl', e.target.value)} />
-              </label>
-              <ModelField
-                value={String(cfg.anthropicModel ?? '')}
-                onChange={(v) => set('anthropicModel', v)}
-                onFetch={() =>
-                  api.llmListModels().then((r) => {
-                    if (r.ok && r.models) {
-                      setCfg((c) => (c ? { ...c, _models: r.models } : c))
-                      setMsg(`已获取 ${r.models.length} 个模型`)
-                    } else setMsg(r.message ?? '获取失败')
-                  })
-                }
-                models={(cfg._models as string[] | undefined) ?? []}
-              />
-            </>
-          )}
-
-          {provider === 'ollama' && (
-            <>
-              <label className="field">
-                <span>Ollama 地址</span>
-                <input value={String(cfg.ollamaUrl ?? '')} onChange={(e) => set('ollamaUrl', e.target.value)} />
-              </label>
-              <ModelField
-                value={String(cfg.ollamaModel ?? '')}
-                onChange={(v) => set('ollamaModel', v)}
-                onFetch={() =>
-                  api.llmListModels().then((r) => {
-                    if (r.ok && r.models) {
-                      setCfg((c) => (c ? { ...c, _models: r.models } : c))
-                      setMsg(`已获取 ${r.models.length} 个模型`)
-                    } else setMsg(r.message ?? '获取失败')
-                  })
-                }
-                models={(cfg._models as string[] | undefined) ?? []}
-              />
-            </>
-          )}
-
-          <button className="btn btn-accent btn-small" onClick={() => void saveLlm()}>
-            保存摘要引擎
-          </button>
-          {Boolean(cfg.available) && provider !== 'none' && (
-            <span className="ok-tag">✓ 已就绪,新导入将使用 LLM 摘要</span>
-          )}
-        </section>
-
-        <section>
-          <h3>语义检索(本地向量)</h3>
-          <p className="hint">
-            sqlite-vec + bge-small-zh 本地 embedding(全程离线):memory_search 字面未命中时按语义补足召回。
-            首次启用会下载 ~100MB 模型,缓存于数据目录 fastembed-cache;停用后纯关键词检索照常。
-          </p>
-          <SemanticSection onMsg={setMsg} />
-        </section>
-
-        <section>
-          <h3>增量同步(通过同步文件夹)</h3>
-          <p className="hint">
-            选择 OneDrive / 坚果云等网盘同步的文件夹,多台机器各自指向同一文件夹即可双向合并(按自然键并集 + LWW;删除不传播,整库迁移用导出/导入备份)。
-          </p>
-          <label className="field">
-            <span>同步文件夹</span>
-            <input
-              value={folder}
-              onChange={(e) => setFolder(e.target.value)}
-              placeholder="D:\OneDrive\memorysql-sync-root"
-            />
-          </label>
-          <div className="field-row">
-            <button
-              className="btn btn-small"
-              onClick={() =>
-                void api
-                  .syncConfigure(folder)
-                  .then(() => setMsg('同步文件夹已保存'))
-                  .catch((e) => setMsg(`保存失败: ${String(e)}`))
-              }
-            >
-              保存文件夹
-            </button>
-            <button
-              className="btn btn-small"
-              onClick={() =>
-                void api.syncNow().then(
-                  (r) =>
-                    setMsg(
-                      `同步完成:拉取 ${r.filesPulled} 个文件,新增会话 ${r.sessionsAdded},更新 ${r.sessionsUpdated},新增记忆 ${r.memoriesAdded}`
-                    ),
-                  (e) => setMsg(`同步失败: ${String(e)}`)
-                )
-              }
-            >
-              立即同步
-            </button>
-          </div>
-          {syncInfo && (
-            <p className="hint">
-              设备 ID: {syncInfo.deviceId} · 上次同步: {syncInfo.lastSyncAt ? new Date(syncInfo.lastSyncAt).toLocaleString('zh-CN') : '从未'}
-            </p>
-          )}
-        </section>
-
-        <section>
-          <h3>存储位置</h3>
-          <p className="hint">
-            整个知识库(数据库 + 笔记 + 设置)的存放目录。迁移会复制全部数据到新目录并在重启后切换,原目录保留可回退。
-          </p>
-          <label className="field">
-            <span>新目录</span>
-            <input value={dataDir} onChange={(e) => setDataDir(e.target.value)} placeholder="D:\MemorySQL-Data" />
-          </label>
-          <div className="field-row">
-            <button
-              className="btn btn-small"
-              disabled={!dataDir.trim()}
-              onClick={() =>
-                void api
-                  .hostDataDir(dataDir.trim())
-                  .then(() => setMsg('迁移完成,应用即将重启…'))
-                  .catch((e) => setMsg(`迁移失败: ${String(e)}`))
-              }
-            >
-              迁移到新目录
-            </button>
-            <button
-              className="btn btn-small"
-              onClick={() =>
-                void api
-                  .hostDataDir(undefined, true)
-                  .then(() => setMsg('将恢复默认位置,应用即将重启…'))
-                  .catch((e) => setMsg(`操作失败: ${String(e)}`))
-              }
-            >
-              恢复默认位置
-            </button>
-          </div>
-        </section>
-
-        <section>
-          <h3>MCP 服务</h3>
-          <p className="hint">agent 连接端点 http://127.0.0.1:端口/mcp。端口被占用时自动向后顺延并在侧栏提示。</p>
-          <label className="field">
-            <span>端口</span>
-            <input
-              value={mcpPort}
-              onChange={(e) => setMcpPort(e.target.value.replace(/\D/g, ''))}
-              placeholder="8642"
-            />
-          </label>
-          <button
-            className="btn btn-small"
-            onClick={() =>
-              void api
-                .hostPluginSetting('mcp-server', 'port', Number(mcpPort) || 8642)
-                .then(() => setMsg('端口已保存,重启生效'))
-                .catch((e) => setMsg(`保存失败: ${String(e)}`))
-            }
-          >
-            保存端口
-          </button>
-        </section>
-
-        <section>
-          <h3>插件管理</h3>
-          <p className="hint">
-            外部插件放 <code>{pluginsDir || '<数据目录>/plugins'}</code> 下(每个插件一个文件夹:manifest.json + main.js),
-            规范见 README。启停重启后生效。
-          </p>
-          {loadErrors.length > 0 && (
-            <div className="kb-msg">
-              {loadErrors.map((e) => (
-                <div key={e}>⚠ {e}</div>
-              ))}
-            </div>
-          )}
-          {pluginList.map((p) => (
-            <div key={p.id} className="field-row">
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={p.enabled}
-                  onChange={(e) =>
+              <div className="field-row">
+                <button
+                  className="btn btn-small"
+                  disabled={!dataDir.trim()}
+                  onClick={() =>
                     void api
-                      .hostPluginEnable(p.id, e.target.checked)
-                      .then(() => setMsg(`${p.name} 已${e.target.checked ? '启用' : '停用'},重启生效`))
-                      .catch((err) => setMsg(`操作失败: ${String(err)}`))
+                      .hostDataDir(dataDir.trim())
+                      .then(() => setMsg('迁移完成,应用即将重启…'))
+                      .catch((e) => setMsg(`迁移失败: ${String(e)}`))
                   }
+                >
+                  迁移到新目录
+                </button>
+                <button
+                  className="btn btn-small"
+                  onClick={() =>
+                    void api
+                      .hostDataDir(undefined, true)
+                      .then(() => setMsg('将恢复默认位置,应用即将重启…'))
+                      .catch((e) => setMsg(`操作失败: ${String(e)}`))
+                  }
+                >
+                  恢复默认位置
+                </button>
+              </div>
+            </section>
+
+            <section>
+              <h3>MCP 服务</h3>
+              <p className="hint">agent 连接端点 http://127.0.0.1:端口/mcp。端口被占用时自动向后顺延并在侧栏提示。</p>
+              <label className="field">
+                <span>端口</span>
+                <input
+                  value={mcpPort}
+                  onChange={(e) => setMcpPort(e.target.value.replace(/\D/g, ''))}
+                  placeholder="8642"
                 />
-                <span className="slider" />
               </label>
-              <span className="mono-tag">
-                {p.name} ({p.id}@{p.version}){p.external ? ' · 外部' : ''}
-              </span>
-            </div>
-          ))}
-          <button className="btn btn-small" onClick={() => void window.memorysql.invoke('memorysql:host:openPluginsDir')}>
-            打开插件目录
-          </button>
-        </section>
+              <button
+                className="btn btn-small"
+                onClick={() =>
+                  void api
+                    .hostPluginSetting('mcp-server', 'port', Number(mcpPort) || 8642)
+                    .then(() => setMsg('端口已保存,重启生效'))
+                    .catch((e) => setMsg(`保存失败: ${String(e)}`))
+                }
+              >
+                保存端口
+              </button>
+            </section>
+          </>
+        )}
 
-        <section>
-          <h3>Agent 会话捕获</h3>
-          <p className="hint">启停各家 agent 的会话自动导入(关闭后重启应用生效);数据路径可改。未检测到数据目录的 agent 会显示「未检测到」,装好后点立即扫描或等增量监听。</p>
-          <AgentCaptureSection onMsg={setMsg} />
-        </section>
+        {category === '会话捕获' && (
+          <>
+            <section>
+              <h3>连接 Agent 向导</h3>
+              <p className="hint">
+                应用运行中时,点「一键连接」把 MemorySQL 的 MCP 服务写入对应 agent 的配置文件(自动备份原配置),
+                重启该 agent 后即可使用 memory_get_context / memory_search 等工具。「复制配置」给出可手工粘贴的片段。
+              </p>
+              <AgentConnectSection onMsg={setMsg} />
+            </section>
 
-        <section>
-          <h3>自定义 agent 登记</h3>
-          <p className="hint">
-            使用未内置支持的 agent?登记它的项目目录与要捕获的文件(如 AGENTS.md / CLAUDE.md / MEMORY.md / *.jsonl),
-            命中文件将只读导入为该 agent 的记忆。
-          </p>
-          <WatcherSection onMsg={setMsg} />
-        </section>
+            <section>
+              <h3>Agent 会话捕获</h3>
+              <p className="hint">启停各家 agent 的会话自动导入(关闭后重启应用生效);数据路径可改。未检测到数据目录的 agent 会显示「未检测到」,装好后点立即扫描或等增量监听。</p>
+              <AgentCaptureSection onMsg={setMsg} />
+            </section>
+
+            <section>
+              <h3>自定义 agent 登记</h3>
+              <p className="hint">
+                使用未内置支持的 agent?登记它的项目目录与要捕获的文件(如 AGENTS.md / CLAUDE.md / MEMORY.md / *.jsonl),
+                命中文件将只读导入为该 agent 的记忆。
+              </p>
+              <WatcherSection onMsg={setMsg} />
+            </section>
+          </>
+        )}
+
+        {category === '智能引擎' && (
+          <>
+            <section>
+              <h3>摘要引擎</h3>
+              <p className="hint">
+                默认本地规则,零成本零依赖。切换为 LLM 后新导入的会话用模型生成标题与摘要;LLM 不可用时自动降级回规则。
+              </p>
+              <label className="field">
+                <span>引擎</span>
+                <select value={provider} onChange={(e) => set('provider', e.target.value)}>
+                  {(Object.keys(PROVIDER_LABEL) as Provider[]).map((p) => (
+                    <option key={p} value={p}>
+                      {PROVIDER_LABEL[p]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {provider === 'openai' && (
+                <>
+                  <label className="field">
+                    <span>API Key{Boolean(cfg.hasOpenaiKey) && '(已保存,留空保持不变)'}</span>
+                    <input
+                      type="password"
+                      value={String(cfg.openaiKey ?? '')}
+                      onChange={(e) => set('openaiKey', e.target.value)}
+                      placeholder="sk-…"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Base URL(可填兼容网关)</span>
+                    <input value={String(cfg.openaiBaseUrl ?? '')} onChange={(e) => set('openaiBaseUrl', e.target.value)} />
+                  </label>
+                  <ModelField
+                    value={String(cfg.openaiModel ?? '')}
+                    onChange={(v) => set('openaiModel', v)}
+                    onFetch={() =>
+                      api.llmListModels().then((r) => {
+                        if (r.ok && r.models) {
+                          setCfg((c) => (c ? { ...c, _models: r.models } : c))
+                          setMsg(`已获取 ${r.models.length} 个模型`)
+                        } else setMsg(r.message ?? '获取失败')
+                      })
+                    }
+                    models={(cfg._models as string[] | undefined) ?? []}
+                  />
+                </>
+              )}
+
+              {provider === 'anthropic' && (
+                <>
+                  <label className="field">
+                    <span>API Key{Boolean(cfg.hasAnthropicKey) && '(已保存,留空保持不变)'}</span>
+                    <input
+                      type="password"
+                      value={String(cfg.anthropicKey ?? '')}
+                      onChange={(e) => set('anthropicKey', e.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Base URL</span>
+                    <input value={String(cfg.anthropicBaseUrl ?? '')} onChange={(e) => set('anthropicBaseUrl', e.target.value)} />
+                  </label>
+                  <ModelField
+                    value={String(cfg.anthropicModel ?? '')}
+                    onChange={(v) => set('anthropicModel', v)}
+                    onFetch={() =>
+                      api.llmListModels().then((r) => {
+                        if (r.ok && r.models) {
+                          setCfg((c) => (c ? { ...c, _models: r.models } : c))
+                          setMsg(`已获取 ${r.models.length} 个模型`)
+                        } else setMsg(r.message ?? '获取失败')
+                      })
+                    }
+                    models={(cfg._models as string[] | undefined) ?? []}
+                  />
+                </>
+              )}
+
+              {provider === 'ollama' && (
+                <>
+                  <label className="field">
+                    <span>Ollama 地址</span>
+                    <input value={String(cfg.ollamaUrl ?? '')} onChange={(e) => set('ollamaUrl', e.target.value)} />
+                  </label>
+                  <ModelField
+                    value={String(cfg.ollamaModel ?? '')}
+                    onChange={(v) => set('ollamaModel', v)}
+                    onFetch={() =>
+                      api.llmListModels().then((r) => {
+                        if (r.ok && r.models) {
+                          setCfg((c) => (c ? { ...c, _models: r.models } : c))
+                          setMsg(`已获取 ${r.models.length} 个模型`)
+                        } else setMsg(r.message ?? '获取失败')
+                      })
+                    }
+                    models={(cfg._models as string[] | undefined) ?? []}
+                  />
+                </>
+              )}
+
+              <button className="btn btn-accent btn-small" onClick={() => void saveLlm()}>
+                保存摘要引擎
+              </button>
+              {Boolean(cfg.available) && provider !== 'none' && (
+                <span className="ok-tag">✓ 已就绪,新导入将使用 LLM 摘要</span>
+              )}
+            </section>
+
+            <section>
+              <h3>语义检索(本地向量)</h3>
+              <p className="hint">
+                sqlite-vec + bge-small-zh 本地 embedding(全程离线):memory_search 字面未命中时按语义补足召回。
+                首次启用会下载 ~100MB 模型,缓存于数据目录 fastembed-cache;停用后纯关键词检索照常。
+              </p>
+              <SemanticSection onMsg={setMsg} />
+            </section>
+          </>
+        )}
+
+        {category === '同步与备份' && (
+          <>
+            <section>
+              <h3>增量同步(通过同步文件夹)</h3>
+              <p className="hint">
+                选择 OneDrive / 坚果云等网盘同步的文件夹,多台机器各自指向同一文件夹即可双向合并(按自然键并集 + LWW;删除不传播,整库迁移用导出/导入备份)。
+              </p>
+              <label className="field">
+                <span>同步文件夹</span>
+                <input
+                  value={folder}
+                  onChange={(e) => setFolder(e.target.value)}
+                  placeholder="D:\OneDrive\memorysql-sync-root"
+                />
+              </label>
+              <div className="field-row">
+                <button
+                  className="btn btn-small"
+                  onClick={() =>
+                    void api
+                      .syncConfigure(folder)
+                      .then(() => setMsg('同步文件夹已保存'))
+                      .catch((e) => setMsg(`保存失败: ${String(e)}`))
+                  }
+                >
+                  保存文件夹
+                </button>
+                <button
+                  className="btn btn-small"
+                  onClick={() =>
+                    void api.syncNow().then(
+                      (r) =>
+                        setMsg(
+                          `同步完成:拉取 ${r.filesPulled} 个文件,新增会话 ${r.sessionsAdded},更新 ${r.sessionsUpdated},新增记忆 ${r.memoriesAdded}`
+                        ),
+                      (e) => setMsg(`同步失败: ${String(e)}`)
+                    )
+                  }
+                >
+                  立即同步
+                </button>
+              </div>
+              {syncInfo && (
+                <p className="hint">
+                  设备 ID: {syncInfo.deviceId} · 上次同步: {syncInfo.lastSyncAt ? new Date(syncInfo.lastSyncAt).toLocaleString('zh-CN') : '从未'}
+                </p>
+              )}
+            </section>
+
+            <BackupPathsSection onMsg={setMsg} />
+          </>
+        )}
+
+        {category === '插件' && (
+          <section>
+            <h3>插件管理</h3>
+            <p className="hint">
+              外部插件放 <code>{pluginsDir || '<数据目录>/plugins'}</code> 下(每个插件一个文件夹:manifest.json + main.js),
+              规范见 README。启停重启后生效。
+            </p>
+            {loadErrors.length > 0 && (
+              <div className="kb-msg">
+                {loadErrors.map((e) => (
+                  <div key={e}>⚠ {e}</div>
+                ))}
+              </div>
+            )}
+            {pluginList.map((p) => (
+              <div key={p.id} className="plugin-row">
+                <div className="plugin-main">
+                  <div className="field-row" style={{ margin: 0 }}>
+                    <label className="switch">
+                      <input
+                        type="checkbox"
+                        checked={p.enabled}
+                        onChange={(e) =>
+                          void api
+                            .hostPluginEnable(p.id, e.target.checked)
+                            .then(() => setMsg(`${p.name} 已${e.target.checked ? '启用' : '停用'},重启生效`))
+                            .catch((err) => setMsg(`操作失败: ${String(err)}`))
+                        }
+                      />
+                      <span className="slider" />
+                    </label>
+                    <span className="mono-tag">
+                      {p.name} ({p.id}@{p.version}){p.external ? ' · 外部' : ''}
+                    </span>
+                  </div>
+                  {PLUGIN_DESC[p.id] && <div className="plugin-desc">{PLUGIN_DESC[p.id]}</div>}
+                </div>
+              </div>
+            ))}
+            <button className="btn btn-small" onClick={() => void window.memorysql.invoke('memorysql:host:openPluginsDir')}>
+              打开插件目录
+            </button>
+          </section>
+        )}
+
+        {category === '关于' && <AboutSection onMsg={setMsg} />}
 
         {msg && <div className="kb-msg">{msg}</div>}
       </div>
     </div>
+  )
+}
+
+function BackupPathsSection({ onMsg }: { onMsg: (s: string) => void }) {
+  const [paths, setPaths] = useState<{ backupsDir: string; dispatchDir: string; devlogDir: string } | null>(null)
+  useEffect(() => {
+    void api.paths().then(setPaths).catch(() => setPaths(null))
+  }, [])
+  const open = (p: string): void => {
+    void api.openPath(p).catch((e) => onMsg(`打开失败: ${String(e)}`))
+  }
+  return (
+    <section>
+      <h3>备份与生成文件位置</h3>
+      <p className="hint">
+        「导出备份」默认写入备份目录(.msqlv 快照);「记忆分发」与「项目日志」写入 vault 对应子目录,由笔记检索自动索引。
+      </p>
+      {paths ? (
+        <>
+          {[
+            ['导出备份(.msqlv)', paths.backupsDir],
+            ['记忆分发文件', paths.dispatchDir],
+            ['项目开发日志', paths.devlogDir]
+          ].map(([label, dir]) => (
+            <div key={label} className="field-row">
+              <span className="mono-tag" style={{ flex: 1 }}>
+                {label}: {dir}
+              </span>
+              <button className="btn btn-small" onClick={() => open(dir)}>
+                打开
+              </button>
+            </div>
+          ))}
+        </>
+      ) : (
+        <p className="hint">路径加载中…</p>
+      )}
+    </section>
+  )
+}
+
+function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
+  const [info, setInfo] = useState<{ version: string; electron: string; packaged: boolean } | null>(null)
+  const [update, setUpdate] = useState<{ available: boolean; version?: string; reason?: string } | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [log, setLog] = useState<Array<{ tag: string; date: string | null; notes: string }>>([])
+
+  useEffect(() => {
+    void api.appInfo().then(setInfo).catch(() => setInfo(null))
+    void api
+      .releases()
+      .then((r) => setLog(r.releases))
+      .catch(() => setLog([]))
+  }, [])
+
+  const check = (): void => {
+    setChecking(true)
+    void api
+      .checkUpdate()
+      .then(setUpdate)
+      .catch((e) => onMsg(`检查失败: ${String(e)}`))
+      .finally(() => setChecking(false))
+  }
+
+  return (
+    <section>
+      <h3>关于 MemorySQL</h3>
+      <p className="hint">
+        版本 {info?.version ?? '…'} · Electron {info?.electron || '…'} · 面向个人开发者的本地优先知识库,数据 100% 存本机。
+      </p>
+
+      <div className="field-row">
+        <button className="btn btn-small" disabled={checking} onClick={check}>
+          {checking ? '检查中…' : '检查更新'}
+        </button>
+        <button className="btn btn-small" onClick={() => void api.openExternal('https://github.com/Logic647/MemorySQL')}>
+          GitHub 仓库
+        </button>
+        <button
+          className="btn btn-small"
+          onClick={() => void api.openExternal('https://github.com/Logic647/MemorySQL/issues/new')}
+        >
+          反馈 Bug(GitHub)
+        </button>
+        <button className="btn btn-small" onClick={() => void api.openExternal('mailto:logic6472@gmail.com')}>
+          邮件反馈
+        </button>
+      </div>
+      {update && (
+        <p className="hint">
+          {update.available ? `发现新版本 v${update.version}!` : update.reason ?? '已是最新版本'}
+        </p>
+      )}
+      {update?.available && (
+        <button
+          className="btn btn-accent btn-small"
+          onClick={() =>
+            void api
+              .updateNow()
+              .then(() => onMsg('更新包已下载,应用即将重启安装…'))
+              .catch((e) => onMsg(`更新失败: ${String(e)}`))
+          }
+        >
+          下载并安装 v{update.version}
+        </button>
+      )}
+
+      <h3 style={{ marginTop: 18 }}>更新日志</h3>
+      {log.length === 0 && <p className="hint">日志加载失败或暂无发布(可到 GitHub Releases 查看)。</p>}
+      {log.map((r) => (
+        <div key={r.tag} className="release-item">
+          <div className="mono-tag">
+            {r.tag}
+            {r.date ? ` · ${new Date(r.date).toLocaleDateString('zh-CN')}` : ''}
+          </div>
+          <pre className="release-notes">{r.notes.slice(0, 600)}</pre>
+        </div>
+      ))}
+    </section>
   )
 }
 

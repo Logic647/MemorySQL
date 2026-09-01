@@ -712,3 +712,21 @@ body::before {
 .spotlight-title { font-size: 13px; font-weight: 600; color: #eef3f8; }
 .spotlight-snippet { font-size: 12px; color: #9fb0c0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spotlight-empty { padding: 18px; text-align: center; color: #6d7f90; font-size: 13px; }
+
+/* ---------- settings categories / about ---------- */
+.settings-cats { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 18px 10px; }
+.plugin-row { padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.plugin-desc { font-size: 12px; color: #8fa0b2; padding-left: 46px; margin-top: 2px; }
+.release-item { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.release-notes { margin: 6px 0 0; white-space: pre-wrap; font-size: 12px; color: #9fb0c0; font-family: inherit; max-height: 180px; overflow-y: auto; }
+
+/* ---------- session grouping ---------- */
+.group-head {
+  padding: 10px 14px 4px; font-size: 12px; font-weight: 700; color: #9fb8d8;
+  display: flex; align-items: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.group-count { font-size: 11px; color: #5d7185; font-weight: 400; }
+.group-subhead { padding: 6px 14px 2px; font-size: 11px; color: #6d8296; display: flex; gap: 6px; align-items: center; }
+.session .mem-actions { margin-left: auto; opacity: 0; transition: opacity 0.12s; display: inline-flex; gap: 8px; }
+.session:hover .mem-actions { opacity: 1; }
+.session-title input { min-width: 180px; background: #1a2129; border: 1px solid #2c3947; color: #e8edf2; border-radius: 6px; padding: 2px 6px; }
