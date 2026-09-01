@@ -91,7 +91,7 @@ export default function SettingsView() {
       <div className="pane-title">设置</div>
       <aside className="sidebar settings-sidebar">
         <div className="side-section">
-          <div className="side-title">设置分类</div>
+          <div className="side-title settings-title">设置</div>
           {CATEGORIES.map((c) => (
             <button key={c} className={`side-item ${category === c ? 'active' : ''}`} onClick={() => setCategory(c)}>
               {c}

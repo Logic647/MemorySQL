@@ -527,3 +527,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .topbar .btn,
 .topbar .brand-icon { -webkit-app-region: no-drag; }
 .brand { display: flex; align-items: center; gap: 8px; }
+
+/* ---------- settings sidebar title centered ---------- */
+.settings-sidebar .side-title.settings-title {
+  display: block; text-align: center; font-size: var(--msql-fs-md);
+  letter-spacing: 0.2em; margin-bottom: 12px; color: var(--msql-fg-muted);
+}

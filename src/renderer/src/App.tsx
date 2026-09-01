@@ -322,7 +322,7 @@ export default function App() {
           {(['sessions', 'memories', 'notes', 'graph'] as View[]).map((v) => {
             const Icon = VIEW_ICON[v]
             return (
-              <button key={v} className={`rail-btn ${view === v ? 'active' : ''}`} title={VIEW_LABEL[v]} onClick={() => setView(v)}>
+              <button key={v} className={`rail-btn ${view === v ? 'active' : ''}`} aria-label={VIEW_LABEL[v]} onClick={() => setView(v)}>
                 <Icon size={18} strokeWidth={1.8} />
               </button>
             )
@@ -331,7 +331,7 @@ export default function App() {
         <div className="rail-bottom">
           <button
             className={`rail-btn ${view === 'settings' ? 'active' : ''}`}
-            title={VIEW_LABEL.settings}
+            aria-label={VIEW_LABEL.settings}
             onClick={() => setView('settings')}
           >
             <Settings2 size={18} strokeWidth={1.8} />
@@ -340,9 +340,7 @@ export default function App() {
       </nav>
       <div className="app-main">
       <header className="topbar">
-        <div className="brand">
-          <img className="brand-icon" src={appIcon} alt="MemorySQL" /> MemorySQL
-        </div>
+        <div className="brand">MemorySQL</div>
         <input
           className="search"
           placeholder="全文搜索会话与消息 (Enter 搜索)…"
