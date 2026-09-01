@@ -30,6 +30,7 @@ export default function MemoriesView() {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [msg, setMsg] = useState('')
   const [agentFilter, setAgentFilter] = useState<string>('all')
+  const [kindFilter, setKindFilter] = useState<string>('all')
   const [refining, setRefining] = useState(false)
   const [detecting, setDetecting] = useState(false)
   const [conflicts, setConflicts] = useState<
@@ -85,8 +86,36 @@ export default function MemoriesView() {
     }
   }, [])
 
+  const kindRows = kindFilter === 'all' ? undefined : rows.filter((r) => r.kind === kindFilter)
+
   return (
     <div className="memories-pane">
+      <aside className="sidebar mem-sidebar">
+        <div className="side-section">
+          <div className="side-title">分类</div>
+          <button className={`side-item ${kindFilter === 'all' ? 'active' : ''}`} onClick={() => setKindFilter('all')}>
+            全部 <span className="count">{rows.length}</span>
+          </button>
+          {KINDS.map((k) => (
+            <button
+              key={k}
+              className={`side-item ${kindFilter === k ? 'active' : ''}`}
+              onClick={() => setKindFilter(k)}
+            >
+              {KIND_LABEL[k]} <span className="count">{rows.filter((r) => r.kind === k).length}</span>
+            </button>
+          ))}
+        </div>
+        <div className="side-section">
+          <div className="side-title">Agent</div>
+          {['all', 'global', ...agents].map((a) => (
+            <button key={a} className={`side-item ${agentFilter === a ? 'active' : ''}`} onClick={() => setAgentFilter(a)}>
+              {a === 'all' ? '全部' : a === 'global' ? '全局' : a}
+            </button>
+          ))}
+        </div>
+      </aside>
+      <div className="mem-main">
       <div className="pane-title">
         记忆 ({rows.length})
         <button className="btn btn-small" style={{ marginLeft: 12 }} onClick={() => setDraft({ kind: 'fact', content: '' })}>
@@ -126,14 +155,6 @@ export default function MemoriesView() {
           确认候选
         </button>
         {msg && <span className="pane-msg">{msg}</span>}
-      </div>
-
-      <div className="mem-filters">
-        {['all', 'global', ...agents].map((a) => (
-          <button key={a} className={`chip ${agentFilter === a ? 'chip-active' : ''}`} onClick={() => setAgentFilter(a)}>
-            {a === 'all' ? '全部' : a === 'global' ? '全局' : a}
-          </button>
-        ))}
       </div>
 
       {conflicts.length > 0 && (
@@ -192,7 +213,10 @@ export default function MemoriesView() {
       )}
 
       <div className="mem-list">
-        {KINDS.map((kind) => {
+        {kindFilter !== 'all' && (kindRows?.length ?? 0) === 0 && (
+          <div className="empty">该分类暂无记忆</div>
+        )}
+        {(kindFilter === 'all' ? KINDS : [kindFilter as (typeof KINDS)[number]]).map((kind) => {
           const group = visible.filter((r) => r.kind === kind)
           if (group.length === 0) return null
           return (
@@ -231,6 +255,7 @@ export default function MemoriesView() {
           )
         })}
         {rows.length === 0 && <div className="empty">暂无记忆 — 通过 MCP memory_write、Hermes 记忆导入或手动新增</div>}
+      </div>
       </div>
     </div>
   )

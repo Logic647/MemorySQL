@@ -47,6 +47,14 @@ export const api = {
     }>,
   archiveSession: (id: number, archived: boolean): Promise<{ ok: boolean }> =>
     window.memorysql.invoke('core-schema:sessions:archive', { id, archived }) as Promise<{ ok: boolean }>,
+  assignProject: (id: number, projectName: string): Promise<{ ok: boolean; projectId: number; project: string }> =>
+    window.memorysql.invoke('core-schema:sessions:assignProject', { id, projectName }) as Promise<{
+      ok: boolean
+      projectId: number
+      project: string
+    }>,
+  setRelay: (id: number, targetId: number | null): Promise<{ ok: boolean }> =>
+    window.memorysql.invoke('core-schema:sessions:setRelay', { id, targetId }) as Promise<{ ok: boolean }>,
   getSession: (id: number): Promise<SessionDetail> =>
     window.memorysql.invoke('core-schema:sessions:get', { id }) as Promise<SessionDetail>,
   search: (q: string): Promise<SearchHit[]> =>

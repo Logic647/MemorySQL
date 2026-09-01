@@ -52,7 +52,9 @@ const plugin: MemorySQLPlugin = {
         ''
       ].join('\n')
 
-      const dir = path.join(ctx.env.vaultDir, 'dispatch')
+      // user-configurable via settings key `dispatchDir`
+      const custom = String(ctx.settings.get('dispatchDir', '') || '').trim()
+      const dir = custom || path.join(ctx.env.vaultDir, 'dispatch')
       fs.mkdirSync(dir, { recursive: true })
       const files = [path.join(dir, 'MEMORY.md'), path.join(dir, 'AGENTS-snippet.md')]
       fs.writeFileSync(files[0], memoryMd, 'utf-8')

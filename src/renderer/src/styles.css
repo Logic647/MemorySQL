@@ -161,7 +161,7 @@ body {
 .link.danger { color: var(--msql-danger); }
 
 .chip {
-  padding: 3px 12px; border-radius: 999px; font-size: var(--msql-fs-sm); cursor: pointer;
+  padding: 5px 16px; border-radius: 999px; font-size: var(--msql-fs-sm); cursor: pointer;
   border: 1px solid var(--msql-glass-border); background: transparent; color: var(--msql-fg-muted);
   transition: all var(--msql-t-fast) var(--msql-ease);
 }
@@ -220,7 +220,7 @@ body {
   font-family: var(--msql-font-mono); position: sticky; top: 0;
   background: var(--msql-glass-strong); backdrop-filter: blur(var(--msql-blur)); z-index: 2;
 }
-.group-count { font-size: 10px; color: var(--msql-fg-dim); font-weight: 400; }
+.group-count { font-size: 11px; color: var(--msql-fg-dim); font-weight: 400; }
 .group-subhead { padding: 6px 14px 2px; font-size: 11px; color: var(--msql-fg-dim); display: flex; gap: 6px; align-items: center; }
 .relay-fold {
   margin: 4px 14px; padding: 6px 12px; text-align: left; width: calc(100% - 28px);
@@ -253,7 +253,7 @@ body {
 
 /* ---------- badges ---------- */
 .badge {
-  font-family: var(--msql-font-mono); font-size: 10px; padding: 1px 7px; border-radius: 999px;
+  font-family: var(--msql-font-mono); font-size: 11px; padding: 1px 7px; border-radius: 999px;
   border: 1px solid; flex-shrink: 0; letter-spacing: 0.02em;
 }
 .badge-codex { color: var(--msql-agent-codex); border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.08); }
@@ -269,13 +269,13 @@ body {
 }
 .hit:hover { background: rgba(255, 255, 255, 0.045); border-left-color: var(--msql-accent); }
 .hit-head { display: flex; gap: 7px; align-items: center; }
-.hit-kind { font-family: var(--msql-font-mono); font-size: 10px; color: var(--msql-fg-dim); }
+.hit-kind { font-family: var(--msql-font-mono); font-size: 11px; color: var(--msql-fg-dim); }
 .hit-title { font-size: var(--msql-fs-md); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hit-snippet { font-size: var(--msql-fs-sm); color: var(--msql-fg-dim); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- memories ---------- */
 .memories-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
-.mem-filters { display: flex; gap: 6px; padding: 10px 18px; flex-wrap: wrap; }
+.mem-filters { display: flex; gap: 10px; padding: 12px 18px; flex-wrap: wrap; }
 .mem-edit { margin: 0 18px 12px; padding: var(--msql-sp-3); border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md); background: var(--msql-glass-soft); display: flex; flex-direction: column; gap: 8px; }
 .mem-edit select, .mem-edit textarea {
   padding: 6px 10px; border-radius: var(--msql-radius-sm); background: rgba(0, 0, 0, 0.28);
@@ -308,7 +308,7 @@ body {
 
 /* ---------- settings ---------- */
 .settings-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
-.settings-cats { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 18px 10px; }
+.settings-cats { display: flex; gap: 10px; flex-wrap: wrap; padding: 4px 18px 14px; }
 .settings-body { padding: 0 18px var(--msql-sp-6); max-width: 860px; }
 section { margin-bottom: var(--msql-sp-5); }
 section h3 { font-size: var(--msql-fs-lg); margin: 0 0 4px; font-weight: 600; }
@@ -373,3 +373,37 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     to { opacity: 1; transform: translateY(0); }
   }
 }
+
+/* ---------- sidebar-ified views / modal / drop target ---------- */
+.memories-pane { flex-direction: row; }
+.mem-main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
+.graph-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.graph-sidebar { width: 240px; }
+.notes-list { width: var(--msql-side-w); background: var(--msql-glass-soft); backdrop-filter: blur(var(--msql-blur)); }
+.group-head.drop-target {
+  background: var(--msql-accent-soft);
+  outline: 1px dashed rgba(79, 140, 255, 0.6); outline-offset: -2px;
+  color: #bcd4ff;
+}
+.session .mem-actions { opacity: 0.55; }
+.session:hover .mem-actions { opacity: 1; }
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.5);
+  display: grid; place-items: center;
+}
+.modal {
+  width: min(520px, 80vw); max-height: 70vh; display: flex; flex-direction: column; gap: 10px;
+  padding: var(--msql-sp-4); border-radius: var(--msql-radius-lg);
+  background: var(--msql-glass-strong); backdrop-filter: blur(var(--msql-blur-strong)) saturate(1.4);
+  border: 1px solid var(--msql-glass-border-strong);
+  box-shadow: var(--msql-glass-highlight), 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+.modal-title { font-weight: 600; font-size: var(--msql-fs-md); }
+.modal-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.modal-item {
+  text-align: left; padding: 8px 10px; border-radius: var(--msql-radius-sm); cursor: pointer;
+  background: transparent; border: 1px solid transparent; color: var(--msql-fg); font-size: var(--msql-fs-md);
+  display: flex; gap: 8px; align-items: center;
+  transition: all var(--msql-t-fast) var(--msql-ease);
+}
+.modal-item:hover { background: var(--msql-accent-soft); border-color: var(--msql-glass-border); }

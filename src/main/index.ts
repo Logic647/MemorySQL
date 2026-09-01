@@ -317,13 +317,17 @@ function registerHostChannels(
     return { ok: true }
   })
   // ---- curated paths + about page ---------------------------------------
-  hostChannels.set('memorysql:host:paths', () => ({
-    dataDir: env.dataDir,
-    backupsDir: path.join(env.dataDir, 'backups'),
-    dispatchDir: path.join(env.vaultDir, 'dispatch'),
-    devlogDir: path.join(env.vaultDir, 'devlog'),
-    pluginsDir: path.join(env.dataDir, 'plugins')
-  }))
+  hostChannels.set('memorysql:host:paths', () => {
+    const backupDir = String(settings.get('sync-archive:backupDir', '') || '').trim() || path.join(env.dataDir, 'backups')
+    const dispatchDir = String(settings.get('memory-dispatch:dispatchDir', '') || '').trim() || path.join(env.vaultDir, 'dispatch')
+    return {
+      dataDir: env.dataDir,
+      backupsDir: backupDir,
+      dispatchDir,
+      devlogDir: path.join(env.vaultDir, 'devlog'),
+      pluginsDir: path.join(env.dataDir, 'plugins')
+    }
+  })
   hostChannels.set('memorysql:host:openPath', (payload) => {
     const p = String((payload as { path?: string })?.path ?? '')
     if (!p.startsWith(env.dataDir) && !p.startsWith(env.vaultDir)) {
@@ -436,6 +440,7 @@ function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
     height: 860,
     minWidth: 960,
     title: 'MemorySQL',
+    icon: path.join(app.getAppPath(), 'build', 'icon.png'),
     backgroundColor: '#101418',
     autoHideMenuBar: true,
     webPreferences: {

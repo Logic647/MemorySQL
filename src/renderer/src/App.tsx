@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Brain, Diamond, FileText, Settings2, Share2, History } from 'lucide-react'
-import type { AgentType, SearchHit, SessionSummaryRow } from '../../shared/types'
+import type { SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
 import MemoriesView from './MemoriesView'
 import SettingsView from './SettingsView'
@@ -56,7 +56,8 @@ export default function App() {
   const [view, setView] = useState<View>('sessions')
   const [showArchived, setShowArchived] = useState(false)
   const [rename, setRename] = useState<{ id: number; value: string } | null>(null)
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
+  const [relayPick, setRelayPick] = useState<{ id: number; project: string } | null>(null)
 
   const refresh = useCallback(async () => {
     setSessions(await api.listSessions(filter, { archived: showArchived }))
@@ -166,7 +167,17 @@ export default function App() {
   }, [rename, refresh, selected])
 
   const sessionRow = (s: SessionSummaryRow) => (
-    <div key={s.id} className="session" data-agent={s.agentType} onClick={() => void openSession(s.id)}>
+    <div
+      key={s.id}
+      className="session"
+      data-agent={s.agentType}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/session-id', String(s.id))
+        e.dataTransfer.effectAllowed = 'move'
+      }}
+      onClick={() => void openSession(s.id)}
+    >
       <div className="session-head">
         <AgentBadge type={s.agentType} />
         {rename?.id === s.id ? (
@@ -191,6 +202,7 @@ export default function App() {
           <span className="session-title">
             {s.title ?? s.externalId}
             {s.titleLocked ? ' 🖊' : ''}
+            {s.similarTo != null && <span className="relay-tag">↩ #{s.similarTo}</span>}
           </span>
         )}
         <span className="sess-id">#{s.id}</span>
@@ -206,6 +218,18 @@ export default function App() {
           <button className="link" onClick={() => setRename({ id: s.id, value: s.title ?? '' })}>
             重命名
           </button>
+          {s.similarTo != null ? (
+            <button className="link" onClick={() => void api.setRelay(s.id, null).then(refresh)}>
+              取消续接
+            </button>
+          ) : (
+            <button
+              className="link"
+              onClick={() => setRelayPick({ id: s.id, project: s.project ?? '(未分配项目)' })}
+            >
+              设为续接
+            </button>
+          )}
           <button className="link" onClick={() => void api.archiveSession(s.id, s.archived !== 1).then(refresh)}>
             {s.archived === 1 ? '取消归档' : '归档'}
           </button>
@@ -327,7 +351,13 @@ export default function App() {
                 className="btn btn-small"
                 onClick={() => {
                   void api.exportArchive().then(
-                    (r) => setKbMsg(`已导出 ${(r.bytes / 1024 / 1024).toFixed(1)} MB`),
+                    (r) => {
+                      setKbMsg(`已导出 ${(r.bytes / 1024 / 1024).toFixed(1)} MB,已打开备份文件夹`)
+                      void api
+                        .paths()
+                        .then((pp) => api.openPath(pp.backupsDir))
+                        .catch(() => {})
+                    },
                     (e) => setKbMsg(`导出失败: ${String(e)}`)
                   )
                 }}
@@ -406,8 +436,8 @@ export default function App() {
               </div>
               <div className="session-list">
                 {(() => {
-                  // group: all→project (multi-agent projects get agent sub-heads);
-                  // agent filter→project. Sessions without a project land in (未分配).
+                  // group by project; a relay session always sits right after
+                  // the session it continues (chain order, multi-hop safe)
                   const groups = new Map<string, SessionSummaryRow[]>()
                   for (const s of sessions) {
                     const key = s.project ?? '(未分配项目)'
@@ -415,69 +445,64 @@ export default function App() {
                     if (bucket) bucket.push(s)
                     else groups.set(key, [s])
                   }
-                  const latest = (k: string): number =>
-                    Math.max(...groups.get(k)!.map((r) => r.startedAt ?? 0))
-                  const keys = [...groups.keys()].sort((a, b) => {
-                    if (a === '(未分配项目)') return 1
-                    if (b === '(未分配项目)') return -1
-                    return latest(b) - latest(a)
+                  const keys = [...groups.keys()].sort((x, y) => {
+                    if (x === '(未分配项目)') return 1
+                    if (y === '(未分配项目)') return -1
+                    const lx = Math.max(...groups.get(x)!.map((r) => r.startedAt ?? 0))
+                    const ly = Math.max(...groups.get(y)!.map((r) => r.startedAt ?? 0))
+                    return ly - lx
                   })
                   return keys.flatMap((project) => {
                     const rows = groups.get(project)!
-                    const ids = new Set(rows.map((r) => r.id))
-                    const primary = rows.filter((r) => !(r.similarTo != null && ids.has(r.similarTo)))
-                    const relay = rows.filter((r) => r.similarTo != null && ids.has(r.similarTo))
-                    const agents = [...new Set(primary.map((r) => r.agentType))]
-                    const body: ReactNode[] = []
-                    if (filter === 'all' && agents.length > 1) {
-                      for (const a of agents.sort()) {
-                        body.push(
-                          <div key={`${project}-${a}-head`} className="group-subhead">
-                            <AgentBadge type={a as AgentType} />
-                            <span>{a}</span>
-                          </div>
-                        )
-                        for (const s of primary.filter((r) => r.agentType === a)) body.push(sessionRow(s))
-                      }
-                    } else {
-                      for (const s of primary) body.push(sessionRow(s))
+                    const byId = new Map(rows.map((r) => [r.id, r]))
+                    const children = new Map<number, SessionSummaryRow[]>()
+                    const origins: SessionSummaryRow[] = []
+                    for (const r of rows) {
+                      if (r.similarTo != null && byId.has(r.similarTo)) {
+                        const arr = children.get(r.similarTo) ?? []
+                        arr.push(r)
+                        children.set(r.similarTo, arr)
+                      } else origins.push(r)
                     }
-                    if (relay.length > 0) {
-                      if (expandedGroups.has(project)) {
-                        body.push(...relay.map((r) => sessionRow(r)))
-                        body.push(
-                          <button
-                            key={`${project}-relay-fold`}
-                            className="relay-fold"
-                            onClick={() =>
-                              setExpandedGroups((prev) => {
-                                const next = new Set(prev)
-                                next.delete(project)
-                                return next
-                              })
-                            }
-                          >
-                            收起接力会话
-                          </button>
-                        )
-                      } else {
-                        body.push(
-                          <button
-                            key={`${project}-relay`}
-                            className="relay-fold"
-                            onClick={() => setExpandedGroups((prev) => new Set(prev).add(project))}
-                          >
-                            ↩ {relay.length} 条接力会话(与组内高相似,点击展开)
-                          </button>
-                        )
-                      }
+                    const byTime = (x: SessionSummaryRow, y: SessionSummaryRow): number =>
+                      (y.startedAt ?? 0) - (x.startedAt ?? 0)
+                    origins.sort(byTime)
+                    for (const arr of children.values()) arr.sort(byTime)
+                    const ordered: SessionSummaryRow[] = []
+                    const seen = new Set<number>()
+                    const walk = (r: SessionSummaryRow): void => {
+                      if (seen.has(r.id)) return
+                      seen.add(r.id)
+                      ordered.push(r)
+                      for (const c of children.get(r.id) ?? []) walk(c)
                     }
+                    origins.forEach(walk)
+                    rows.forEach((r) => walk(r))
                     return [
-                      <div key={`${project}-head`} className="group-head">
+                      <div
+                        key={`${project}-head`}
+                        className={`group-head ${dropTarget === project ? 'drop-target' : ''}`}
+                        onDragOver={(e) => {
+                          e.preventDefault()
+                          setDropTarget(project)
+                        }}
+                        onDragLeave={() => setDropTarget((prev) => (prev === project ? null : prev))}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          setDropTarget(null)
+                          const sid = Number(e.dataTransfer.getData('text/session-id'))
+                          if (!sid) return
+                          const clear = project === '(未分配项目)'
+                          void api
+                            .assignProject(sid, clear ? '' : project)
+                            .then(() => refresh())
+                            .catch((err) => setKbMsg(`移动失败: ${String(err)}`))
+                        }}
+                      >
                         {project}
                         <span className="group-count">{rows.length}</span>
                       </div>,
-                      ...body
+                      ...ordered.map((r) => sessionRow(r)),
                     ]
                   })
                 })()}
@@ -542,6 +567,42 @@ export default function App() {
         </main>
         )}
       </div>
+        {relayPick && (
+          <div className="modal-overlay" onClick={() => setRelayPick(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-title">把会话 #{relayPick.id} 设为哪条会话的续接?</div>
+              <div className="modal-list">
+                {sessions
+                  .filter(
+                    (r) =>
+                      r.id !== relayPick.id && (r.project ?? '(未分配项目)') === relayPick.project
+                  )
+                  .map((r) => (
+                    <button
+                      key={r.id}
+                      className="modal-item"
+                      onClick={() => {
+                        void api
+                          .setRelay(relayPick.id, r.id)
+                          .then(() => {
+                            setRelayPick(null)
+                            return refresh()
+                          })
+                          .catch((err) => setKbMsg(`设置失败: ${String(err)}`))
+                      }}
+                    >
+                      <span className="sess-id">#{r.id}</span> {r.title ?? '(无标题)'}
+                      <span className="session-time">{fmtTime(r.startedAt)}</span>
+                    </button>
+                  ))}
+              </div>
+              <button className="btn btn-small" onClick={() => setRelayPick(null)}>
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   )

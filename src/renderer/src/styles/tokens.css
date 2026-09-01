@@ -38,11 +38,11 @@
   /* ---- typography ---- */
   --msql-font-body: 'IBM Plex Sans', 'Segoe UI', 'Microsoft YaHei', sans-serif;
   --msql-font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
-  --msql-fs-xs: 11px;
-  --msql-fs-sm: 12px;
-  --msql-fs-md: 13px;
-  --msql-fs-lg: 15px;
-  --msql-fs-xl: 18px;
+  --msql-fs-xs: 12px;
+  --msql-fs-sm: 13px;
+  --msql-fs-md: 14px;
+  --msql-fs-lg: 16px;
+  --msql-fs-xl: 20px;
 
   /* ---- spacing (dense scale, 4px base) ---- */
   --msql-sp-1: 4px;

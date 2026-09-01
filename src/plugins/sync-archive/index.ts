@@ -25,7 +25,10 @@ const plugin: MemorySQLPlugin = {
     ctx.ipc.handle('export', (payload) => {
       const { dest } = (payload ?? {}) as { dest?: string }
       const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
-      const target = dest ?? path.join(ctx.env.dataDir, 'backups', `MemorySQL-${stamp}.msqlv`)
+      // user-configurable via settings key `backupDir` (设置页可自定义)
+      const backupDir = String(ctx.settings.get('backupDir', '') || '').trim()
+      const baseDir = backupDir || path.join(ctx.env.dataDir, 'backups')
+      const target = dest ?? path.join(baseDir, `MemorySQL-${stamp}.msqlv`)
       fs.mkdirSync(path.dirname(target), { recursive: true })
 
       // clean snapshot of the live db (WAL-consistent, no file juggling)

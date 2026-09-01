@@ -135,6 +135,57 @@ const plugin: MemorySQLPlugin = {
       return { ok: true }
     })
 
+    // drag & drop: move a session into a project (created on demand)
+    ctx.ipc.handle('sessions:assignProject', (payload) => {
+      const { id, projectName } = (payload ?? {}) as { id?: number; projectName?: string }
+      if (!id) throw new Error('sessions:assignProject requires {id, projectName}')
+      if (!projectName?.trim()) {
+        ctx.db.sqlite
+          .prepare(`UPDATE sessions SET project_id = NULL, updated_at = ? WHERE id = ? AND deleted = 0`)
+          .run(Date.now(), id)
+        ctx.events.emit('sessions:changed')
+        return { ok: true, cleared: true }
+      }
+      const name = projectName.trim().slice(0, 120)
+      let project = ctx.db.sqlite
+        .prepare(`SELECT id FROM projects WHERE name = ? AND deleted = 0`)
+        .get(name) as { id: number } | undefined
+      if (!project) {
+        const ins = ctx.db.sqlite
+          .prepare(`INSERT INTO projects (name, updated_at, device_id) VALUES (?, ?, 'local')`)
+          .run(name, Date.now()) as { lastInsertRowid: number | bigint }
+        project = { id: Number(ins.lastInsertRowid) }
+      }
+      ctx.db.sqlite
+        .prepare(`UPDATE sessions SET project_id = ?, updated_at = ? WHERE id = ? AND deleted = 0`)
+        .run(project.id, Date.now(), id)
+      ctx.events.emit('sessions:changed')
+      return { ok: true, projectId: project.id, project: name }
+    })
+
+    // manual relay curation: mark a session as a continuation of another
+    // (targetId null clears an automatic/manual mark)
+    ctx.ipc.handle('sessions:setRelay', (payload) => {
+      const { id, targetId } = (payload ?? {}) as { id?: number; targetId?: number | null }
+      if (!id) throw new Error('sessions:setRelay requires id')
+      if (targetId != null) {
+        if (targetId === id) throw new Error('不能把会话设为它自己的续接')
+        const target = ctx.db.sqlite
+          .prepare(`SELECT project_id, started_at FROM sessions WHERE id = ? AND deleted = 0`)
+          .get(targetId) as { project_id: number | null; started_at: number | null } | undefined
+        if (!target) throw new Error(`目标会话不存在: #${targetId}`)
+        ctx.db.sqlite
+          .prepare(`UPDATE sessions SET similar_to = ?, updated_at = ? WHERE id = ? AND deleted = 0`)
+          .run(targetId, Date.now(), id)
+      } else {
+        ctx.db.sqlite
+          .prepare(`UPDATE sessions SET similar_to = NULL, updated_at = ? WHERE id = ? AND deleted = 0`)
+          .run(Date.now(), id)
+      }
+      ctx.events.emit('sessions:changed')
+      return { ok: true }
+    })
+
     ctx.ipc.handle('search:all', (payload) => {
       const { q, limit = 40 } = (payload ?? {}) as { q?: string; limit?: number }
       return search.searchAll(q ?? '', limit) as SearchHit[]

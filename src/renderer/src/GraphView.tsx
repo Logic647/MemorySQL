@@ -70,6 +70,25 @@ export default function GraphView() {
 
   return (
     <div className="graph-view">
+      <aside className="sidebar graph-sidebar">
+        <div className="side-section">
+          <div className="side-title">知识图谱</div>
+          <div className="kb-stat">笔记为节点,[[双链]]为边。</div>
+          <div className="kb-stat">缩放/拖拽画布,点选节点高亮关联。</div>
+          {stats && (
+            <div className="kb-stat">
+              节点 {stats.nodes} · 边 {stats.edges}
+            </div>
+          )}
+        </div>
+        <div className="side-section">
+          <div className="side-title">操作</div>
+          <button className="btn btn-small" onClick={() => void render()}>
+            重新布局
+          </button>
+        </div>
+      </aside>
+      <div className="graph-main">
       <div className="pane-title">
         知识图谱 {stats ? `· ${stats.nodes} 节点 / ${stats.edges} 链接` : ''}
         {selected && <span className="pane-msg">选中: {selected}</span>}
@@ -79,6 +98,7 @@ export default function GraphView() {
       </div>
       <div ref={containerRef} className="graph-container" />
       {stats && stats.nodes === 0 && <div className="empty">vault/ 下还没有笔记 — 到「笔记」视图新建,用 [[标题]] 建立链接</div>}
+      </div>
     </div>
   )
 }

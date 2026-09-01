@@ -417,8 +417,17 @@ export default function SettingsView() {
 
 function BackupPathsSection({ onMsg }: { onMsg: (s: string) => void }) {
   const [paths, setPaths] = useState<{ backupsDir: string; dispatchDir: string; devlogDir: string } | null>(null)
+  const [backupDraft, setBackupDraft] = useState('')
+  const [dispatchDraft, setDispatchDraft] = useState('')
   useEffect(() => {
-    void api.paths().then(setPaths).catch(() => setPaths(null))
+    void api
+      .paths()
+      .then((pp) => {
+        setPaths(pp)
+        setBackupDraft(pp.backupsDir)
+        setDispatchDraft(pp.dispatchDir)
+      })
+      .catch(() => setPaths(null))
   }, [])
   const open = (p: string): void => {
     void api.openPath(p).catch((e) => onMsg(`打开失败: ${String(e)}`))
@@ -427,27 +436,62 @@ function BackupPathsSection({ onMsg }: { onMsg: (s: string) => void }) {
     <section>
       <h3>备份与生成文件位置</h3>
       <p className="hint">
-        「导出备份」默认写入备份目录(.msqlv 快照);「记忆分发」与「项目日志」写入 vault 对应子目录,由笔记检索自动索引。
+        「导出备份」(.msqlv 快照)与「记忆分发」的写入目录,均可自定义;导出完成后会自动打开对应文件夹。
+        注意:分发目录若移出 vault,将不再进入笔记自动检索。
       </p>
-      {paths ? (
+      {paths && (
         <>
-          {[
-            ['导出备份(.msqlv)', paths.backupsDir],
-            ['记忆分发文件', paths.dispatchDir],
-            ['项目开发日志', paths.devlogDir]
-          ].map(([label, dir]) => (
-            <div key={label} className="field-row">
-              <span className="mono-tag" style={{ flex: 1 }}>
-                {label}: {dir}
-              </span>
-              <button className="btn btn-small" onClick={() => open(dir)}>
-                打开
-              </button>
-            </div>
-          ))}
+          <label className="field">
+            <span>导出备份目录(.msqlv)</span>
+            <input value={backupDraft} onChange={(e) => setBackupDraft(e.target.value)} />
+          </label>
+          <div className="field-row">
+            <button
+              className="btn btn-small"
+              onClick={() =>
+                void api
+                  .hostPluginSetting('sync-archive', 'backupDir', backupDraft.trim())
+                  .then(() => onMsg('备份目录已保存,即时生效'))
+                  .catch((e) => onMsg(`保存失败: ${String(e)}`))
+              }
+            >
+              保存
+            </button>
+            <button className="btn btn-small" onClick={() => open(backupDraft.trim())}>
+              打开
+            </button>
+          </div>
+
+          <label className="field">
+            <span>记忆分发目录</span>
+            <input value={dispatchDraft} onChange={(e) => setDispatchDraft(e.target.value)} />
+          </label>
+          <div className="field-row">
+            <button
+              className="btn btn-small"
+              onClick={() =>
+                void api
+                  .hostPluginSetting('memory-dispatch', 'dispatchDir', dispatchDraft.trim())
+                  .then(() => onMsg('分发目录已保存,即时生效'))
+                  .catch((e) => onMsg(`保存失败: ${String(e)}`))
+              }
+            >
+              保存
+            </button>
+            <button className="btn btn-small" onClick={() => open(dispatchDraft.trim())}>
+              打开
+            </button>
+          </div>
+
+          <div className="field-row">
+            <span className="mono-tag" style={{ flex: 1 }}>
+              项目开发日志: {paths.devlogDir}(随 vault,不可改)
+            </span>
+            <button className="btn btn-small" onClick={() => open(paths.devlogDir)}>
+              打开
+            </button>
+          </div>
         </>
-      ) : (
-        <p className="hint">路径加载中…</p>
       )}
     </section>
   )
@@ -467,6 +511,9 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
       .catch(() => setLog([]))
   }, [])
 
+  const currentTag = info ? `v${info.version}` : ''
+  const currentLog = log.filter((r) => r.tag === currentTag)
+
   const check = (): void => {
     setChecking(true)
     void api
@@ -479,25 +526,20 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
   return (
     <section>
       <h3>关于 MemorySQL</h3>
-      <p className="hint">
-        版本 {info?.version ?? '…'} · Electron {info?.electron || '…'} · 面向个人开发者的本地优先知识库,数据 100% 存本机。
-      </p>
+      <p className="hint">面向个人开发者的本地优先知识库 · 版本 {info?.version ?? '…'}</p>
 
       <div className="field-row">
         <button className="btn btn-small" disabled={checking} onClick={check}>
           {checking ? '检查中…' : '检查更新'}
         </button>
         <button className="btn btn-small" onClick={() => void api.openExternal('https://github.com/Logic647/MemorySQL')}>
-          GitHub 仓库
+          GitHub
         </button>
         <button
           className="btn btn-small"
           onClick={() => void api.openExternal('https://github.com/Logic647/MemorySQL/issues/new')}
         >
-          反馈 Bug(GitHub)
-        </button>
-        <button className="btn btn-small" onClick={() => void api.openExternal('mailto:logic6472@gmail.com')}>
-          邮件反馈
+          BUG 反馈
         </button>
       </div>
       {update && (
@@ -519,9 +561,9 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
         </button>
       )}
 
-      <h3 style={{ marginTop: 18 }}>更新日志</h3>
-      {log.length === 0 && <p className="hint">日志加载失败或暂无发布(可到 GitHub Releases 查看)。</p>}
-      {log.map((r) => (
+      <h3 style={{ marginTop: 18 }}>更新日志(当前版本)</h3>
+      {currentLog.length === 0 && <p className="hint">暂无当前版本的更新日志(可到 GitHub Releases 查看)。</p>}
+      {currentLog.map((r) => (
         <div key={r.tag} className="release-item">
           <div className="mono-tag">
             {r.tag}

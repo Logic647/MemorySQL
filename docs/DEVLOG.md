@@ -14,6 +14,8 @@
 
 **批3 UI 重构「Obsidian Glass Console」:**ui-ux-pro-max design-system 定调(Developer Tool/IDE → Dark OLED + Swiss 极简 + 液态玻璃硬性要求)+ JetBrains Mono/IBM Plex 字阶。全部样式 token 化(styles/tokens.css `--msql-*`,换肤=覆盖 :root,保留其它设计方向);56px lucide 图标栏替代文字导航(emoji 图标清除);深色玻璃面板(blur 18-26px + 1px 亮边 + inset 高光)覆于漂移极光渐变上;紧凑 4px 间距阶;Ctrl+1..5 视图快捷键;入场 stagger/reduced-motion/焦点环/滚动条全按 checklist。真机截图验收:会话分组/接力折叠/设置分类/记忆视图全部正常。
 
+**用户走查第二轮反馈落地(同日):**接力会话改为**紧跟被续接会话之后**的链式排序(多跳安全,替代折叠);支持拖拽会话到项目分组头(动态建项目/拖回未分配=清除);续接手动管理(行内「设为续接」弹出同项目选择器 / relay 行「取消续接」);重命名与归档操作改常显(此前悬停隐藏导致用户以为没做);导出备份成功后自动打开备份文件夹;备份目录/分发目录可自定义(sync-archive/mem-dispatch 各自 settings 键);记忆/笔记/图谱三视图统一改用侧边栏布局;字号整体+1、chips 间距加大;应用图标重绘为深色圆角+蓝菱形(纯 JS 生成 icon.png/ico 四尺寸,窗口/打包全部引用)。
+
 **设计决策保留项(用户要求):**风格与导航均采用 skills 定夺版但保留其它三个方向(专业工具流/知识库文档流/控制台科技风;侧导航+项目一级/顶部Tab+项目树/命令面板优先),后续可能切换——token 架构即为支撑这点。
 
 ---
