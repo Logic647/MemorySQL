@@ -51,6 +51,8 @@ export interface SessionSummaryRow {
   titleLocked?: number
   archived?: number
   similarTo?: number | null
+  sortKey?: number | null
+  projectId?: number | null
 }
 
 export interface MessageRow {

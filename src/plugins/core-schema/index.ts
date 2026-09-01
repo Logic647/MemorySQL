@@ -72,7 +72,8 @@ const plugin: MemorySQLPlugin = {
                   s.title, s.summary, p.name AS project,
                   s.started_at AS startedAt, s.ended_at AS endedAt,
                   s.message_count AS messageCount, s.tool_call_count AS toolCallCount,
-                  s.title_locked AS titleLocked, s.archived AS archived, s.similar_to AS similarTo
+                  s.title_locked AS titleLocked, s.archived AS archived, s.similar_to AS similarTo,
+                  s.sort_key AS sortKey, s.project_id AS projectId
            FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
            WHERE s.deleted = 0 ${archivedWhere} ${where}
            ORDER BY COALESCE(s.started_at, s.updated_at) DESC
@@ -133,6 +134,39 @@ const plugin: MemorySQLPlugin = {
         .run(archived ? 1 : 0, Date.now(), id)
       ctx.events.emit('sessions:changed')
       return { ok: true }
+    })
+
+    // manual ordering: place a session between prevId/nextId (either may be
+    // null = start/end of the list) and optionally move it to a project
+    ctx.ipc.handle('sessions:move', (payload) => {
+      const { id, projectId, prevId, nextId } = (payload ?? {}) as {
+        id?: number
+        projectId?: number | null
+        prevId?: number | null
+        nextId?: number | null
+      }
+      if (!id) throw new Error('sessions:move requires id')
+      const keyOf = (rid: number): number | null => {
+        const r = ctx.db.sqlite
+          .prepare(`SELECT sort_key, started_at FROM sessions WHERE id = ?`)
+          .get(rid) as { sort_key: number | null; started_at: number | null } | undefined
+        return r ? (r.sort_key ?? r.started_at ?? null) : null
+      }
+      const prev = prevId != null ? keyOf(prevId) : null
+      const next = nextId != null ? keyOf(nextId) : null
+      let sortKey: number | null
+      if (prev != null && next != null) sortKey = (prev + next) / 2
+      else if (prev != null) sortKey = prev + 1
+      else if (next != null) sortKey = next - 1
+      else sortKey = null
+      ctx.db.sqlite
+        .prepare(
+          `UPDATE sessions SET sort_key = ?, project_id = COALESCE(?, project_id), updated_at = ?
+           WHERE id = ? AND deleted = 0`
+        )
+        .run(sortKey, projectId ?? null, Date.now(), id)
+      ctx.events.emit('sessions:changed')
+      return { ok: true, sortKey }
     })
 
     // drag & drop: move a session into a project (created on demand)

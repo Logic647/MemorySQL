@@ -89,13 +89,17 @@ export default function SettingsView() {
   return (
     <div className="settings-pane">
       <div className="pane-title">设置</div>
-      <div className="settings-cats">
-        {CATEGORIES.map((c) => (
-          <button key={c} className={`chip ${category === c ? 'chip-active' : ''}`} onClick={() => setCategory(c)}>
-            {c}
-          </button>
-        ))}
-      </div>
+      <aside className="sidebar settings-sidebar">
+        <div className="side-section">
+          <div className="side-title">设置分类</div>
+          {CATEGORIES.map((c) => (
+            <button key={c} className={`side-item ${category === c ? 'active' : ''}`} onClick={() => setCategory(c)}>
+              {c}
+            </button>
+          ))}
+        </div>
+      </aside>
+      <div className="settings-main">
       <div className="settings-body">
         {category === '通用' && (
           <>
@@ -410,6 +414,7 @@ export default function SettingsView() {
         {category === '关于' && <AboutSection onMsg={setMsg} />}
 
         {msg && <div className="kb-msg">{msg}</div>}
+      </div>
       </div>
     </div>
   )

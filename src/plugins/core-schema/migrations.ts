@@ -124,5 +124,13 @@ ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN similar_to INTEGER REFERENCES sessions(id);
 CREATE INDEX idx_sessions_archived ON sessions(archived, deleted);
 `
+  },
+  {
+    version: 6,
+    up: `
+-- v6: manual session ordering (drag between sessions); NULL = use started_at
+ALTER TABLE sessions ADD COLUMN sort_key REAL;
+CREATE INDEX idx_sessions_sort ON sessions(project_id, sort_key);
+`
   }
 ]

@@ -47,6 +47,16 @@ export const api = {
     }>,
   archiveSession: (id: number, archived: boolean): Promise<{ ok: boolean }> =>
     window.memorysql.invoke('core-schema:sessions:archive', { id, archived }) as Promise<{ ok: boolean }>,
+  moveSession: (
+    id: number,
+    opts: { projectId?: number | null; prevId?: number | null; nextId?: number | null }
+  ): Promise<{ ok: boolean; sortKey: number | null }> =>
+    window.memorysql.invoke('core-schema:sessions:move', {
+      id,
+      projectId: opts.projectId ?? null,
+      prevId: opts.prevId ?? null,
+      nextId: opts.nextId ?? null
+    }) as Promise<{ ok: boolean; sortKey: number | null }>,
   assignProject: (id: number, projectName: string): Promise<{ ok: boolean; projectId: number; project: string }> =>
     window.memorysql.invoke('core-schema:sessions:assignProject', { id, projectName }) as Promise<{
       ok: boolean

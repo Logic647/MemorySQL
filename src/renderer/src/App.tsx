@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Brain, Diamond, FileText, Settings2, Share2, History } from 'lucide-react'
 import type { SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
@@ -57,6 +57,8 @@ export default function App() {
   const [showArchived, setShowArchived] = useState(false)
   const [rename, setRename] = useState<{ id: number; value: string } | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
+  const [dropLine, setDropLine] = useState<{ afterId: number; below: boolean } | null>(null)
+  const [expandedChains, setExpandedChains] = useState<Set<number>>(new Set())
   const [relayPick, setRelayPick] = useState<{ id: number; project: string } | null>(null)
 
   const refresh = useCallback(async () => {
@@ -166,77 +168,115 @@ export default function App() {
     }
   }, [rename, refresh, selected])
 
-  const sessionRow = (s: SessionSummaryRow) => (
-    <div
-      key={s.id}
-      className="session"
-      data-agent={s.agentType}
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData('text/session-id', String(s.id))
-        e.dataTransfer.effectAllowed = 'move'
-      }}
-      onClick={() => void openSession(s.id)}
-    >
-      <div className="session-head">
-        <AgentBadge type={s.agentType} />
-        {rename?.id === s.id ? (
-          <span className="session-title" onClick={(e) => e.stopPropagation()}>
-            <input
-              autoFocus
-              value={rename.value}
-              onChange={(e) => setRename({ id: s.id, value: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void commitRename()
-                if (e.key === 'Escape') setRename(null)
-              }}
-            />
-            <button className="btn btn-small" onClick={(e) => { e.stopPropagation(); void commitRename() }}>
-              保存
-            </button>
-            <button className="btn btn-small" onClick={(e) => { e.stopPropagation(); setRename(null) }}>
-              取消
-            </button>
-          </span>
-        ) : (
-          <span className="session-title">
-            {s.title ?? s.externalId}
-            {s.titleLocked ? ' 🖊' : ''}
-            {s.similarTo != null && <span className="relay-tag">↩ #{s.similarTo}</span>}
-          </span>
-        )}
-        <span className="sess-id">#{s.id}</span>
-        <span className="session-time">{fmtTime(s.startedAt)}</span>
-      </div>
-      {s.summary && <div className="session-summary">{s.summary.split('\n')[0]}</div>}
-      <div className="session-meta">
-        {s.project && <span>{s.project}</span>}
-        {s.similarTo != null && <span className="relay-tag">↩ 续 #{s.similarTo}</span>}
-        <span>{s.messageCount} msg</span>
-        <span>{s.toolCallCount} tool</span>
-        <span className="mem-actions" onClick={(e) => e.stopPropagation()}>
-          <button className="link" onClick={() => setRename({ id: s.id, value: s.title ?? '' })}>
-            重命名
-          </button>
-          {s.similarTo != null ? (
-            <button className="link" onClick={() => void api.setRelay(s.id, null).then(refresh)}>
-              取消续接
-            </button>
+  const sessionRow = (
+    s: SessionSummaryRow,
+    depth = 0,
+    listCtx?: { ordered: SessionSummaryRow[]; projectId: number | null }
+  ): ReactNode => {
+    const selectedRow = selected?.session.id === s.id
+    const dropHere = dropLine?.afterId === s.id
+    return (
+      <div
+        key={s.id}
+        className={`session ${selectedRow ? 'selected' : ''} ${
+          dropHere ? (dropLine?.below ? 'drop-below' : 'drop-above') : ''
+        }`}
+        data-agent={s.agentType}
+        draggable
+        style={depth > 0 ? { marginLeft: depth * 16 } : undefined}
+        onDragStart={(e) => {
+          e.dataTransfer.setData('text/session-id', String(s.id))
+          e.dataTransfer.effectAllowed = 'move'
+        }}
+        onDragOver={(e) => {
+          if (!listCtx) return
+          e.preventDefault()
+          e.stopPropagation()
+          const rect = e.currentTarget.getBoundingClientRect()
+          const below = e.clientY - rect.top > rect.height / 2
+          if (dropLine?.afterId !== s.id || dropLine?.below !== below) {
+            setDropLine({ afterId: s.id, below })
+          }
+        }}
+        onDragLeave={() => setDropLine(null)}
+        onDrop={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          const below = dropLine?.below ?? false
+          setDropLine(null)
+          if (!listCtx) return
+          const sid = Number(e.dataTransfer.getData('text/session-id'))
+          if (!sid || sid === s.id) return
+          const i = listCtx.ordered.findIndex((x) => x.id === s.id)
+          const prevId = below ? s.id : i > 0 ? listCtx.ordered[i - 1].id : null
+          const nextId = below ? listCtx.ordered[i + 1]?.id ?? null : s.id
+          void api
+            .moveSession(sid, { projectId: listCtx.projectId, prevId, nextId })
+            .then(refresh)
+            .catch((err) => setKbMsg(`移动失败: ${String(err)}`))
+        }}
+        onClick={() => void openSession(s.id)}
+      >
+        <div className="session-head">
+          <AgentBadge type={s.agentType} />
+          {rename?.id === s.id ? (
+            <span className="session-title" onClick={(e) => e.stopPropagation()}>
+              <input
+                autoFocus
+                value={rename.value}
+                onChange={(e) => setRename({ id: s.id, value: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void commitRename()
+                  if (e.key === 'Escape') setRename(null)
+                }}
+              />
+              <button className="btn btn-small" onClick={(e) => { e.stopPropagation(); void commitRename() }}>
+                保存
+              </button>
+              <button className="btn btn-small" onClick={(e) => { e.stopPropagation(); setRename(null) }}>
+                取消
+              </button>
+            </span>
           ) : (
-            <button
-              className="link"
-              onClick={() => setRelayPick({ id: s.id, project: s.project ?? '(未分配项目)' })}
-            >
-              设为续接
-            </button>
+            <span className="session-title">
+              {s.title ?? s.externalId}
+              {s.titleLocked ? ' 🖊' : ''}
+              {s.similarTo != null && <span className="relay-tag">↩ #{s.similarTo}</span>}
+            </span>
           )}
-          <button className="link" onClick={() => void api.archiveSession(s.id, s.archived !== 1).then(refresh)}>
-            {s.archived === 1 ? '取消归档' : '归档'}
-          </button>
-        </span>
+          <span className="sess-id">#{s.id}</span>
+          <span className="session-time">{fmtTime(s.startedAt)}</span>
+        </div>
+        {s.summary && <div className="session-summary">{s.summary.split('\n')[0]}</div>}
+        <div className="session-meta">
+          {s.project && <span>{s.project}</span>}
+          {s.similarTo != null && <span className="relay-tag">↩ 续 #{s.similarTo}</span>}
+          <span>{s.messageCount} msg</span>
+          <span>{s.toolCallCount} tool</span>
+          <span className="mem-actions" onClick={(e) => e.stopPropagation()}>
+            <button className="link" onClick={() => setRename({ id: s.id, value: s.title ?? '' })}>
+              重命名
+            </button>
+            {s.similarTo != null ? (
+              <button className="link" onClick={() => void api.setRelay(s.id, null).then(refresh)}>
+                取消续接
+              </button>
+            ) : (
+              <button
+                className="link"
+                onClick={() => setRelayPick({ id: s.id, project: s.project ?? '(未分配项目)' })}
+              >
+                设为续接
+              </button>
+            )}
+            <button className="link" onClick={() => void api.archiveSession(s.id, s.archived !== 1).then(refresh)}>
+              {s.archived === 1 ? '取消归档' : '归档'}
+            </button>
+          </span>
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   return (
     <div className="app">
@@ -464,20 +504,44 @@ export default function App() {
                         children.set(r.similarTo, arr)
                       } else origins.push(r)
                     }
+                    const effKey = (r: SessionSummaryRow): number => r.sortKey ?? r.startedAt ?? 0
                     const byTime = (x: SessionSummaryRow, y: SessionSummaryRow): number =>
-                      (y.startedAt ?? 0) - (x.startedAt ?? 0)
+                      effKey(y) - effKey(x)
                     origins.sort(byTime)
                     for (const arr of children.values()) arr.sort(byTime)
+                    const body: ReactNode[] = []
                     const ordered: SessionSummaryRow[] = []
                     const seen = new Set<number>()
-                    const walk = (r: SessionSummaryRow): void => {
+                    const listCtx = { ordered, projectId: rows[0]?.projectId ?? -1 }
+                    const pushChain = (r: SessionSummaryRow, depth: number): void => {
                       if (seen.has(r.id)) return
                       seen.add(r.id)
                       ordered.push(r)
-                      for (const c of children.get(r.id) ?? []) walk(c)
+                      body.push(sessionRow(r, depth, listCtx))
+                      const kids = children.get(r.id) ?? []
+                      const open = expandedChains.has(r.id)
+                      if (kids.length > 0 && !open) {
+                        body.push(
+                          <button
+                            key={`${r.id}-fold`}
+                            className="relay-fold chain"
+                            style={{ marginLeft: 14 + depth * 16 }}
+                            onClick={() =>
+                              setExpandedChains((prev) => new Set(prev).add(r.id))
+                            }
+                          >
+                            ↩ {kids.length} 条续接会话 — 展开
+                          </button>
+                        )
+                        seen.add(-r.id) // marker: subtree folded
+                        return
+                      }
+                      for (const c of kids) pushChain(c, depth + 1)
                     }
-                    origins.forEach(walk)
-                    rows.forEach((r) => walk(r))
+                    for (const r of [...origins].sort(byTime)) pushChain(r, 0)
+                    rows.forEach((r) => {
+                      if (!seen.has(r.id)) pushChain(r, 0)
+                    })
                     return [
                       <div
                         key={`${project}-head`}
@@ -490,6 +554,7 @@ export default function App() {
                         onDrop={(e) => {
                           e.preventDefault()
                           setDropTarget(null)
+                          setDropLine(null)
                           const sid = Number(e.dataTransfer.getData('text/session-id'))
                           if (!sid) return
                           const clear = project === '(未分配项目)'
@@ -502,7 +567,7 @@ export default function App() {
                         {project}
                         <span className="group-count">{rows.length}</span>
                       </div>,
-                      ...ordered.map((r) => sessionRow(r)),
+                      ...body,
                     ]
                   })
                 })()}
