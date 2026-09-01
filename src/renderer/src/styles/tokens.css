@@ -1,0 +1,76 @@
+/* ============================================================
+   MemorySQL Design Tokens — "Obsidian Glass Console"
+   深色唯一主题(紧凑密度)。所有颜色/间距/圆角/模糊走 token,
+   换肤 = 覆盖 :root 变量(预留 [data-theme] 切换其它设计方向)。
+   ============================================================ */
+:root {
+  /* ---- color: base (OLED-leaning slate) ---- */
+  --msql-bg: #070b12;
+  --msql-bg-elevated: #0c111b;
+  --msql-fg: #eef3f9;
+  --msql-fg-muted: #94a3b8;
+  --msql-fg-dim: #64748b;
+
+  /* ---- color: glass surfaces (液态玻璃核心) ---- */
+  --msql-glass: rgba(30, 41, 59, 0.52);
+  --msql-glass-strong: rgba(30, 41, 59, 0.78);
+  --msql-glass-soft: rgba(30, 41, 59, 0.32);
+  --msql-glass-border: rgba(255, 255, 255, 0.08);
+  --msql-glass-border-strong: rgba(255, 255, 255, 0.14);
+  --msql-glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --msql-blur: 18px;
+  --msql-blur-strong: 26px;
+
+  /* ---- color: accents ---- */
+  --msql-accent: #4f8cff;
+  --msql-accent-soft: rgba(79, 140, 255, 0.14);
+  --msql-accent-glow: rgba(79, 140, 255, 0.35);
+  --msql-success: #22c55e;
+  --msql-danger: #ef4444;
+  --msql-warning: #f59e0b;
+
+  /* ---- color: agent identity ---- */
+  --msql-agent-codex: #f59e0b;
+  --msql-agent-zcode: #4f8cff;
+  --msql-agent-hermes: #a78bfa;
+  --msql-agent-other: #64748b;
+
+  /* ---- typography ---- */
+  --msql-font-body: 'IBM Plex Sans', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  --msql-font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  --msql-fs-xs: 11px;
+  --msql-fs-sm: 12px;
+  --msql-fs-md: 13px;
+  --msql-fs-lg: 15px;
+  --msql-fs-xl: 18px;
+
+  /* ---- spacing (dense scale, 4px base) ---- */
+  --msql-sp-1: 4px;
+  --msql-sp-2: 8px;
+  --msql-sp-3: 12px;
+  --msql-sp-4: 16px;
+  --msql-sp-5: 24px;
+  --msql-sp-6: 32px;
+
+  /* ---- geometry ---- */
+  --msql-rail-w: 56px;
+  --msql-side-w: 264px;
+  --msql-radius-sm: 6px;
+  --msql-radius-md: 10px;
+  --msql-radius-lg: 14px;
+  --msql-topbar-h: 46px;
+
+  /* ---- motion ---- */
+  --msql-t-fast: 120ms;
+  --msql-t-med: 200ms;
+  --msql-t-slow: 320ms;
+  --msql-ease: cubic-bezier(0.25, 0.6, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --msql-t-fast: 0ms;
+    --msql-t-med: 0ms;
+    --msql-t-slow: 0ms;
+  }
+}

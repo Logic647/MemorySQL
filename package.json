@@ -20,6 +20,7 @@
     "chokidar": "^5.0.0",
     "electron-updater": "^6.8.9",
     "fastembed": "^2.1.0",
+    "lucide-react": "^1.38.0",
     "sqlite-vec": "^0.1.9"
   },
   "devDependencies": {

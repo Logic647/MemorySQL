@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { Brain, Diamond, FileText, Settings2, Share2, History } from 'lucide-react'
 import type { AgentType, SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
 import MemoriesView from './MemoriesView'
@@ -15,6 +16,14 @@ const VIEW_LABEL: Record<View, string> = {
   notes: '笔记',
   graph: '图谱',
   settings: '设置'
+}
+
+const VIEW_ICON: Record<View, typeof History> = {
+  sessions: History,
+  memories: Brain,
+  notes: FileText,
+  graph: Share2,
+  settings: Settings2
 }
 const CAPTURE_PLUGINS: Array<{ id: string; label: string }> = [
   { id: 'capture-codex', label: 'Codex' },
@@ -78,6 +87,21 @@ export default function App() {
 
   const openSession = useCallback(async (id: number) => {
     setSelected(await api.getSession(id))
+  }, [])
+
+  // Ctrl+1..5 switch views (command-driven navigation)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if (!e.ctrlKey || e.shiftKey || e.altKey) return
+      const views: View[] = ['sessions', 'memories', 'notes', 'graph', 'settings']
+      const i = ['1', '2', '3', '4', '5'].indexOf(e.key)
+      if (i >= 0) {
+        e.preventDefault()
+        setView(views[i])
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
   }, [])
 
   // spotlight result → open the session in the main window
@@ -192,6 +216,32 @@ export default function App() {
 
   return (
     <div className="app">
+      <div className="aurora" aria-hidden />
+      <nav className="rail">
+        <div className="rail-brand" title="MemorySQL">
+          <Diamond size={17} strokeWidth={2.4} />
+        </div>
+        <div className="rail-nav">
+          {(['sessions', 'memories', 'notes', 'graph'] as View[]).map((v) => {
+            const Icon = VIEW_ICON[v]
+            return (
+              <button key={v} className={`rail-btn ${view === v ? 'active' : ''}`} title={VIEW_LABEL[v]} onClick={() => setView(v)}>
+                <Icon size={18} strokeWidth={1.8} />
+              </button>
+            )
+          })}
+        </div>
+        <div className="rail-bottom">
+          <button
+            className={`rail-btn ${view === 'settings' ? 'active' : ''}`}
+            title={VIEW_LABEL.settings}
+            onClick={() => setView('settings')}
+          >
+            <Settings2 size={18} strokeWidth={1.8} />
+          </button>
+        </div>
+      </nav>
+      <div className="app-main">
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">◆</span> MemorySQL
@@ -234,15 +284,6 @@ export default function App() {
 
       <div className="body">
         <aside className="sidebar">
-          <div className="side-section">
-            <div className="side-title">视图</div>
-            {(['sessions', 'memories', 'notes', 'graph', 'settings'] as View[]).map((v) => (
-              <button key={v} className={`side-item ${view === v ? 'active' : ''}`} onClick={() => setView(v)}>
-                {VIEW_LABEL[v]}
-              </button>
-            ))}
-          </div>
-
           {view === 'sessions' && (
             <>
           <div className="side-section">
@@ -374,7 +415,13 @@ export default function App() {
                     if (bucket) bucket.push(s)
                     else groups.set(key, [s])
                   }
-                  const keys = [...groups.keys()].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+                  const latest = (k: string): number =>
+                    Math.max(...groups.get(k)!.map((r) => r.startedAt ?? 0))
+                  const keys = [...groups.keys()].sort((a, b) => {
+                    if (a === '(未分配项目)') return 1
+                    if (b === '(未分配项目)') return -1
+                    return latest(b) - latest(a)
+                  })
                   return keys.flatMap((project) => {
                     const rows = groups.get(project)!
                     const ids = new Set(rows.map((r) => r.id))
@@ -494,6 +541,7 @@ export default function App() {
           </div>
         </main>
         )}
+      </div>
       </div>
     </div>
   )

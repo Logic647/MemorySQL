@@ -54,6 +54,7 @@ export default function SpotlightView(): React.JSX.Element {
 
   return (
     <div className="spotlight">
+      <div className="aurora" aria-hidden />
       <input
         ref={inputRef}
         className="spotlight-input"
