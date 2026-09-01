@@ -411,7 +411,7 @@ export default function SettingsView() {
 onChange={(e) => {
                   const next = e.target.checked
                   setPluginList((prev) => prev.map((q) => (q.id === p.id ? { ...q, enabled: next } : q)))
-                  onMsg(`${p.name} 已${next ? '启用' : '停用'},重启生效`)
+                  setMsg(`${p.name} 已${next ? '启用' : '停用'},重启生效`)
                   void api.hostPluginEnable(p.id, next).catch((err) => {
                     setPluginList((prev) => prev.map((q) => (q.id === p.id ? { ...q, enabled: !next } : q)))
                     setMsg(`操作失败: ${String(err)}`)
