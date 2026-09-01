@@ -60,7 +60,7 @@ body {
   width: 38px; height: 38px; border-radius: var(--msql-radius-md); border: none;
   display: grid; place-items: center; cursor: pointer;
   color: var(--msql-fg-dim); background: transparent;
-  transition: all var(--msql-t-med) var(--msql-ease);
+  transition: color var(--msql-t-med) var(--msql-ease), background var(--msql-t-med) var(--msql-ease), box-shadow var(--msql-t-med) var(--msql-ease), transform 160ms ease-out;
 }
 .rail-btn:hover { color: var(--msql-fg); background: rgba(255, 255, 255, 0.06); }
 .rail-btn.active {
@@ -446,4 +446,46 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @keyframes drop-pulse {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
+}
+
+/* ---------- press feedback (emil-design-eng) ---------- */
+.btn:active, .rail-btn:active, .chip:active, .rail-nav .rail-btn:active {
+  transform: scale(0.97);
+}
+.btn, .chip { transition: background var(--msql-t-fast) var(--msql-ease), border-color var(--msql-t-fast) var(--msql-ease), color var(--msql-t-fast) var(--msql-ease), box-shadow var(--msql-t-fast) var(--msql-ease), transform 160ms ease-out; }
+
+/* ---------- modal entrance: scale(0.95)+opacity, center origin (modal exempt from trigger origin) ---------- */
+.modal {
+  animation: modal-in var(--msql-t-med) var(--msql-ease) both;
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.modal-overlay { animation: overlay-in var(--msql-t-fast) ease-out both; }
+@keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------- list stagger: 30ms/row capped at 300ms ---------- */
+.session, .hit, .mem-row {
+  animation-delay: min(calc(var(--i, 0) * 30ms), 300ms);
+}
+
+/* ---------- detail messages: gentle container transition on session switch ---------- */
+.messages { animation: fade-slide var(--msql-t-med) var(--msql-ease) both; }
+@keyframes fade-slide {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- settings category switch: near-imperceptible fade ---------- */
+.settings-body { animation: fade-in-fast var(--msql-t-fast) ease-out both; }
+@keyframes fade-in-fast { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------- kb-msg / devlog-note toast-in ---------- */
+.kb-msg, .devlog-note, .pane-msg { animation: fade-in-fast var(--msql-t-fast) ease-out both; }
+
+/* ---------- hover gating (touch devices don't fake hover) ---------- */
+@media (hover: none), (pointer: coarse) {
+  .session:hover, .hit:hover, .rail-btn:hover, .btn:hover, .chip:hover, .side-item:hover, .spotlight-hit:hover, .modal-item:hover { background: inherit; }
+  .session .mem-actions, .session .mem-actions { opacity: 1; }
 }

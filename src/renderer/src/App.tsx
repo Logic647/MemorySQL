@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { Brain, Diamond, FileText, Settings2, Share2, History } from 'lucide-react'
 import type { SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
@@ -173,7 +173,7 @@ export default function App() {
   const sessionRow = (
     s: SessionSummaryRow,
     depth = 0,
-    listCtx?: { ordered: SessionSummaryRow[]; projectId: number | null },
+    listCtx?: { ordered: SessionSummaryRow[]; projectId: number | null; stagger?: number },
     draggingId?: number | null,
     dropLine?: { afterId: number; below: boolean } | null
   ): ReactNode => {
@@ -190,7 +190,12 @@ export default function App() {
         data-id={s.id}
         data-dragging={isDragging ? '1' : '0'}
         draggable
-        style={depth > 0 ? { marginLeft: depth * 16 } : undefined}
+        style={
+          {
+            marginLeft: depth > 0 ? depth * 16 : undefined,
+            '--i': String(Math.min(listCtx?.stagger ?? 0, 10))
+          } as CSSProperties
+        }
         onDragStart={(e) => {
           setDraggingId(s.id)
           e.dataTransfer.setData('text/session-id', String(s.id))
@@ -554,6 +559,7 @@ export default function App() {
                       if (!seen.has(r.id)) pushChain(r, 0)
                     })
                     const body: ReactNode[] = []
+                    let staggerIdx = 0
                     for (const e of entries) {
                       if (e.kind === 'toggle') {
                         body.push(
@@ -581,7 +587,11 @@ export default function App() {
                         sessionRow(
                           e.r,
                           e.depth,
-                          { ordered: entries.filter((x) => x.kind === 'row').map((x) => x.r), projectId: rows[0]?.projectId ?? -1 },
+                          {
+                            ordered: entries.filter((x) => x.kind === 'row').map((x) => x.r),
+                            projectId: rows[0]?.projectId ?? -1,
+                            stagger: staggerIdx++
+                          },
                           draggingId,
                           dropLine
                         )
