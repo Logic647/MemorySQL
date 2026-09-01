@@ -103,3 +103,26 @@ describe('semantic core', () => {
     expect(core().stats().rows).toBe(0)
   })
 })
+
+describe('similarSessions (relay detection)', () => {
+  it('finds the near-duplicate session and excludes itself', async () => {
+    db.prepare(
+      `INSERT INTO sessions (agent_type, external_id, title, summary, content_hash, updated_at)
+       VALUES ('codex', 'a1', '部署流程改造', '把部署脚本化并验证', 'h1', 1)`
+    ).run()
+    db.prepare(
+      `INSERT INTO sessions (agent_type, external_id, title, summary, content_hash, updated_at)
+       VALUES ('hermes', 'h1', '部署流程改造(续)', '接手部署脚本化工作继续推进', 'h2', 2)`
+    ).run()
+    db.prepare(
+      `INSERT INTO sessions (agent_type, external_id, title, summary, content_hash, updated_at)
+       VALUES ('codex', 'a2', '完全无关的会话', '别的项目内容', 'h3', 3)`
+    ).run()
+    const c = core()
+    await c.sync()
+    const sims = await c.similarSessions(2, 2)
+    expect(sims.length).toBeGreaterThan(0)
+    expect(sims[0]?.refId).toBe(1) // the near-duplicate ranks first
+    expect(sims.some((s) => s.refId === 2)).toBe(false) // never itself
+  })
+})

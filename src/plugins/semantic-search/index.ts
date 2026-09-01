@@ -95,9 +95,38 @@ const plugin: MemorySQLPlugin = {
 
     ctx.services.provide<SemanticCore>('semantic-search', core)
 
+    // handoff-dedup: a newly indexed session very similar to an earlier one is
+    // a "relay" continuation — mark similar_to (report-only, UI folds it)
+    const markSimilarity = async (sessionIds: number[]): Promise<void> => {
+      for (const sid of sessionIds) {
+        try {
+          const self = ctx.db.sqlite
+            .prepare(`SELECT similar_to, project_id FROM sessions WHERE id = ?`)
+            .get(sid) as { similar_to: number | null; project_id: number | null } | undefined
+          if (!self || self.similar_to != null) continue
+          const sims = await core.similarSessions(sid, 4)
+          for (const s of sims) {
+            // normalized embeddings: L2 d ∈ [0,2] → cosine = 1 - d²/2
+            const cosine = 1 - (s.distance * s.distance) / 2
+            if (cosine < 0.85) break
+            const cand = ctx.db.sqlite
+              .prepare(`SELECT project_id FROM sessions WHERE id = ? AND deleted = 0`)
+              .get(s.refId) as { project_id: number | null } | undefined
+            if (!cand) continue
+            if (self.project_id != null && cand.project_id != null && self.project_id !== cand.project_id) continue
+            ctx.db.sqlite.prepare(`UPDATE sessions SET similar_to = ? WHERE id = ?`).run(s.refId, sid)
+            break
+          }
+        } catch (err) {
+          ctx.log.warn(`similarity mark failed for session ${sid}:`, err)
+        }
+      }
+    }
+
     const refresh = async (): Promise<void> => {
       try {
         const res = await core.sync()
+        if (res.embeddedSessions.length > 0) await markSimilarity(res.embeddedSessions)
         if (res.embedded + res.removed > 0) {
           ctx.log.info(`semantic index synced: +${res.embedded}/-${res.removed}, ${res.rows} rows`)
         }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import type { AgentType, SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
 import MemoriesView from './MemoriesView'
@@ -47,6 +47,7 @@ export default function App() {
   const [view, setView] = useState<View>('sessions')
   const [showArchived, setShowArchived] = useState(false)
   const [rename, setRename] = useState<{ id: number; value: string } | null>(null)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
   const refresh = useCallback(async () => {
     setSessions(await api.listSessions(filter, { archived: showArchived }))
@@ -174,6 +175,7 @@ export default function App() {
       {s.summary && <div className="session-summary">{s.summary.split('\n')[0]}</div>}
       <div className="session-meta">
         {s.project && <span>{s.project}</span>}
+        {s.similarTo != null && <span className="relay-tag">↩ 续 #{s.similarTo}</span>}
         <span>{s.messageCount} msg</span>
         <span>{s.toolCallCount} tool</span>
         <span className="mem-actions" onClick={(e) => e.stopPropagation()}>
@@ -375,8 +377,11 @@ export default function App() {
                   const keys = [...groups.keys()].sort((a, b) => a.localeCompare(b, 'zh-CN'))
                   return keys.flatMap((project) => {
                     const rows = groups.get(project)!
-                    const agents = [...new Set(rows.map((r) => r.agentType))]
-                    const body: React.ReactNode[] = []
+                    const ids = new Set(rows.map((r) => r.id))
+                    const primary = rows.filter((r) => !(r.similarTo != null && ids.has(r.similarTo)))
+                    const relay = rows.filter((r) => r.similarTo != null && ids.has(r.similarTo))
+                    const agents = [...new Set(primary.map((r) => r.agentType))]
+                    const body: ReactNode[] = []
                     if (filter === 'all' && agents.length > 1) {
                       for (const a of agents.sort()) {
                         body.push(
@@ -385,10 +390,40 @@ export default function App() {
                             <span>{a}</span>
                           </div>
                         )
-                        for (const s of rows.filter((r) => r.agentType === a)) body.push(sessionRow(s))
+                        for (const s of primary.filter((r) => r.agentType === a)) body.push(sessionRow(s))
                       }
                     } else {
-                      for (const s of rows) body.push(sessionRow(s))
+                      for (const s of primary) body.push(sessionRow(s))
+                    }
+                    if (relay.length > 0) {
+                      if (expandedGroups.has(project)) {
+                        body.push(...relay.map((r) => sessionRow(r)))
+                        body.push(
+                          <button
+                            key={`${project}-relay-fold`}
+                            className="relay-fold"
+                            onClick={() =>
+                              setExpandedGroups((prev) => {
+                                const next = new Set(prev)
+                                next.delete(project)
+                                return next
+                              })
+                            }
+                          >
+                            收起接力会话
+                          </button>
+                        )
+                      } else {
+                        body.push(
+                          <button
+                            key={`${project}-relay`}
+                            className="relay-fold"
+                            onClick={() => setExpandedGroups((prev) => new Set(prev).add(project))}
+                          >
+                            ↩ {relay.length} 条接力会话(与组内高相似,点击展开)
+                          </button>
+                        )
+                      }
                     }
                     return [
                       <div key={`${project}-head`} className="group-head">

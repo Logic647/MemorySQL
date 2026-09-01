@@ -730,3 +730,12 @@ body::before {
 .session .mem-actions { margin-left: auto; opacity: 0; transition: opacity 0.12s; display: inline-flex; gap: 8px; }
 .session:hover .mem-actions { opacity: 1; }
 .session-title input { min-width: 180px; background: #1a2129; border: 1px solid #2c3947; color: #e8edf2; border-radius: 6px; padding: 2px 6px; }
+
+/* ---------- relay sessions ---------- */
+.relay-fold {
+  margin: 4px 14px; padding: 6px 12px; text-align: left; width: calc(100% - 28px);
+  background: rgba(79, 140, 255, 0.06); border: 1px dashed rgba(79, 140, 255, 0.25);
+  border-radius: 8px; color: #7fa8e0; font-size: 12px; cursor: pointer;
+}
+.relay-fold:hover { background: rgba(79, 140, 255, 0.12); }
+.relay-tag { color: #7fa8e0; }

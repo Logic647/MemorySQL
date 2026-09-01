@@ -9,8 +9,10 @@ export interface SemanticHit {
 
 export interface SemanticCore {
   /** incremental index pass: embeds new/changed rows, drops disappeared ones */
-  sync(): Promise<{ embedded: number; removed: number; rows: number }>
+  sync(): Promise<{ embedded: number; removed: number; rows: number; embeddedSessions: number[] }>
   search(query: string, limit?: number): Promise<SemanticHit[]>
+  /** nearest indexed sessions to one indexed session, itself excluded */
+  similarSessions(refId: number, k?: number): Promise<Array<{ refId: number; distance: number }>>
   stats(): { rows: number; dims: number; model: string }
 }
 
@@ -82,7 +84,7 @@ export function createSemanticCore(deps: {
   `)
 
   return {
-    async sync(): Promise<{ embedded: number; removed: number; rows: number }> {
+    async sync(): Promise<{ embedded: number; removed: number; rows: number; embeddedSessions: number[] }> {
       const rows = (sources.all() as Array<{ kind: string; ref_id: number; text: string }>).filter(
         (r) => r.text.trim().length > 0
       )
@@ -112,6 +114,7 @@ export function createSemanticCore(deps: {
         return cur == null || cur.content_hash !== w.hash
       })
       let embedded = 0
+      const embeddedSessions: number[] = []
       if (stale.length > 0) {
         const vectors = await embedDocs(stale.map(([, w]) => w.text))
         // one transaction per row: a ref row must never exist without its vector
@@ -131,10 +134,39 @@ export function createSemanticCore(deps: {
         for (let i = 0; i < stale.length; i++) {
           const [key, w] = stale[i]
           insertRow(w, vectors[i], existing.get(key))
+          if (w.kind === 'session') embeddedSessions.push(w.refId)
           embedded++
         }
       }
-      return { embedded, removed, rows: existing.size - removed + embedded }
+      return { embedded, removed, rows: existing.size - removed + embedded, embeddedSessions }
+    },
+
+    async similarSessions(refId: number, k = 4): Promise<Array<{ refId: number; distance: number }>> {
+      const row = sqlite
+        .prepare(
+          `SELECT r.id, s.title, s.summary FROM semantic_refs r
+           JOIN sessions s ON s.id = r.ref_id
+           WHERE r.kind = 'session' AND r.ref_id = ?`
+        )
+        .get(refId) as { id: number; title: string | null; summary: string | null } | undefined
+      const text = [row?.title ?? '', row?.summary ?? ''].join('\n').trim()
+      if (!text || !row) return []
+      const [qv] = await embedDocs([text])
+      const knn = sqlite
+        .prepare(
+          `SELECT v.rowid AS id, v.distance FROM semantic_vec v
+           WHERE v.embedding MATCH ? AND k = ? ORDER BY distance`
+        )
+        .all(vecParam(qv), k + 1) as Array<{ id: number; distance: number }>
+      const out: Array<{ refId: number; distance: number }> = []
+      for (const r of knn) {
+        if (r.id === row.id) continue
+        const ref = sqlite
+          .prepare(`SELECT kind, ref_id FROM semantic_refs WHERE id = ?`)
+          .get(r.id) as { kind: string; ref_id: number } | undefined
+        if (ref?.kind === 'session') out.push({ refId: ref.ref_id, distance: r.distance })
+      }
+      return out
     },
 
     async search(query: string, limit = 8): Promise<SemanticHit[]> {
