@@ -428,3 +428,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .settings-sidebar .side-item { font-size: var(--msql-fs-lg); padding: 10px 14px; margin-bottom: 6px; border-radius: var(--msql-radius-md); }
 .settings-sidebar .side-title { font-size: var(--msql-fs-sm); margin-bottom: 10px; }
 .settings-main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
+
+/* ---------- precise drag visuals (restored) ---------- */
+.session.dragging { opacity: 0.35; }
+.session.drop-above { box-shadow: 0 -3px 0 0 var(--msql-accent); }
+.session.drop-below { box-shadow: 0 3px 0 0 var(--msql-accent); }
+.session.drop-above::after,
+.session.drop-below::after {
+  content: ''; position: absolute; left: 10px; right: 10px; height: 2px;
+  background: var(--msql-accent); border-radius: 2px;
+  box-shadow: 0 0 10px var(--msql-accent-glow);
+  animation: drop-pulse 0.9s ease-in-out infinite;
+}
+.session.drop-above::after { top: -2px; }
+.session.drop-below::after { bottom: -2px; }
+.session { position: relative; }
+@keyframes drop-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
