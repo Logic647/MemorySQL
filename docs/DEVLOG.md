@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-08-31 · 用户需求批量落地:功能改进 + 重复会话治理 + UI 重构(Obsidian Glass Console)
+
+用户提出一批需求(经可行性评估 + 四问确认后执行),三批完成:
+
+**批1 功能:**CI tag 触发自动 Release(push v* 即发版);设置页六分类(通用/会话捕获/智能引擎/同步与备份/插件/关于);插件管理中文一句话说明;备份/分发/日志路径展示+一键打开;「关于」页(版本/手动检查更新+下载安装/GitHub+邮件双反馈通道/更新日志拉 GitHub API);会话列表按项目分组(all=项目→agent 二级,agent 筛选=项目);会话重命名(v5 加 title_locked,自动摘要永不覆盖,FTS 同步);会话归档开关(v5 加 archived,默认隐藏可切换)。迁移 v5 = title_locked + archived + similar_to。
+
+**批2 重复会话三层治理:**核心在 semantic-search——sync 返回新嵌入会话 id;similarSessions() KNN 找近邻;插件标记 `similar_to`(两个信号:同标题精确匹配兜底 + cosine ≥ 0.85 且候选早于自身、同项目优先);手动 reindex 重置全量补标。UI 项目组内接力会话默认折叠为「↩ N 条接力会话」+ 行内「↩ 续 #id」徽标。**调参实录:**首跑 0.72 过标(58/63,小语料同项目全串+KNN 缺时间方向出互标)→ 0.85 + started_at 约束 → 35 标记逐一核验全为真接力(丢失占位串/transcript 注入/重复审查/明确续接)。
+
+**批3 UI 重构「Obsidian Glass Console」:**ui-ux-pro-max design-system 定调(Developer Tool/IDE → Dark OLED + Swiss 极简 + 液态玻璃硬性要求)+ JetBrains Mono/IBM Plex 字阶。全部样式 token 化(styles/tokens.css `--msql-*`,换肤=覆盖 :root,保留其它设计方向);56px lucide 图标栏替代文字导航(emoji 图标清除);深色玻璃面板(blur 18-26px + 1px 亮边 + inset 高光)覆于漂移极光渐变上;紧凑 4px 间距阶;Ctrl+1..5 视图快捷键;入场 stagger/reduced-motion/焦点环/滚动条全按 checklist。真机截图验收:会话分组/接力折叠/设置分类/记忆视图全部正常。
+
+**设计决策保留项(用户要求):**风格与导航均采用 skills 定夺版但保留其它三个方向(专业工具流/知识库文档流/控制台科技风;侧导航+项目一级/顶部Tab+项目树/命令面板优先),后续可能切换——token 架构即为支撑这点。
+
+---
+
+
 ## 2026-08-31 · M8 收尾:CI 双绿 + scoop bucket 上线 + winget PR 已提
 
 - **CI 首跑双绿**(4m47s/4m53s):ci + package 两 job 全过,GitHub 端每次 main 推送产出 167MB 免安装包 artifact
