@@ -3,6 +3,7 @@ import type { MemoriesService } from '../core-schema'
 import type { RawMessage } from '../../shared/types'
 import { distill } from './distill'
 import { buildConflictPrompt, parseConflictResponse } from './conflicts'
+import { redactWithCount } from '../../main/core/redact'
 
 /** Memory CRUD for the UI, plus rule-based auto-distillation and LLM refinement. */
 const VALID_KINDS = new Set(['fact', 'preference', 'persona', 'decision'])
@@ -136,7 +137,7 @@ const plugin: MemorySQLPlugin = {
         )
         .all() as Array<{ id: number; kind: string; content: string }>
       if (rows.length < 2) return { ok: true as const, conflicts: [], message: '记忆太少,无需检测' }
-      const text = await refine.refine(buildConflictPrompt(rows))
+      const text = await refine.refine(redactWithCount(buildConflictPrompt(rows)).text)
       const validIds = new Set(rows.map((r) => r.id))
       const pairs = parseConflictResponse(text, validIds)
       const byId = new Map(rows.map((r) => [r.id, r]))
@@ -182,7 +183,7 @@ const plugin: MemorySQLPlugin = {
         '下面是若干条自动提取的候选记忆(JSON)。请去重、合并同类项,改写为不超过 15 条精炼、互不重复的记忆。' +
         'kind 只能是 fact/preference/persona/decision。只输出 JSON 数组,格式 [{"kind":"…","content":"…"}],不要其它文字。\n' +
         JSON.stringify(rows.map((r) => ({ kind: r.kind, content: r.content })))
-      const text = await refine.refine(prompt)
+      const text = await refine.refine(redactWithCount(prompt).text)
       const cleaned = text.replace(/```json|```/g, '').trim()
       let items: Array<{ kind?: string; content?: string }>
       try {

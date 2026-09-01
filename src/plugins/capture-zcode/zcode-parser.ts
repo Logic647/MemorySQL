@@ -79,29 +79,36 @@ export function parseZcodeRollout(filePath: string, text: string): RawSession[] 
     const messages: RawMessage[] = []
     let lastUser = ''
     let lastAssistant = ''
+    let lastUserLine = -1
+    let lastAssistantLine = -1
     let cwd: string | undefined
 
     // lines are chronological within a session dump
-    for (const line of bucket.lines) {
+    for (let lineIdx = 0; lineIdx < bucket.lines.length; lineIdx++) {
+      const line = bucket.lines[lineIdx]
       const history = line.request?.messages ?? []
       if (!cwd) cwd = extractCwd(history)
 
-      // newest user message in this request = the incremental user turn
+      // newest user message in this request = the incremental user turn;
+      // dedup key includes the line index so an identical text in a NEW
+      // request (user deliberately repeating) is kept
       for (let i = history.length - 1; i >= 0; i--) {
         const m = history[i]
         if (m.role !== 'user') continue
         const text2 = flattenContent(m.content as MsgContent)
-        if (text2.trim() && text2 !== lastUser) {
+        if (text2.trim() && !(text2 === lastUser && lineIdx === lastUserLine)) {
           messages.push({ role: 'user', content: text2 })
           lastUser = text2
+          lastUserLine = lineIdx
         }
         break
       }
 
       const resp = line.response
-      if (resp?.text && resp.text.trim() && resp.text !== lastAssistant) {
+      if (resp?.text && resp.text.trim() && !(resp.text === lastAssistant && lineIdx === lastAssistantLine)) {
         messages.push({ role: 'assistant', content: resp.text })
         lastAssistant = resp.text
+        lastAssistantLine = lineIdx
       }
       for (const tc of resp?.toolCalls ?? []) {
         const name = tc.toolName ?? tc.name ?? 'tool'

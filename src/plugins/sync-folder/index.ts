@@ -34,7 +34,8 @@ const plugin: MemorySQLPlugin = {
     ctx.ipc.handle('status', () => ({
       deviceId,
       folder: getFolder(),
-      lastSyncAt: ctx.settings.get('lastSyncAt', 0)
+      lastSyncAt: ctx.settings.get('lastSyncAt', 0),
+      plaintextAck: ctx.settings.get<boolean>('plaintextAck', false)
     }))
 
     ctx.ipc.handle('configure', (payload) => {
@@ -44,6 +45,11 @@ const plugin: MemorySQLPlugin = {
     })
 
     ctx.ipc.handle('syncNow', () => {
+      // iron rule 2 gate: cloud sync writes plaintext into a third-party
+      // synced folder — the user must acknowledge this explicitly, once
+      if (ctx.settings.get<boolean>('plaintextAck', false) !== true) {
+        throw new Error('云同步明文未确认：请在设置→同步与备份中勾选「云同步不做脱敏」确认后再同步')
+      }
       const folder = getFolder()
       if (!folder) throw new Error('请先在设置中配置同步文件夹')
       const root = path.join(folder, 'memorysql-sync')
@@ -152,7 +158,8 @@ const plugin: MemorySQLPlugin = {
       }
       // cap the ledger
       const ledger = [...importedSet]
-      ctx.settings.set('importedFiles', ledger.slice(-300))
+      // rolling ledger: keep the most recent 2000 so old bundles never replay
+      ctx.settings.set('importedFiles', ledger.slice(-2000))
 
       ctx.settings.set('lastSyncAt', Date.now())
       if (report.sessionsAdded + report.sessionsUpdated + report.memoriesAdded > 0) {

@@ -200,11 +200,12 @@ export const api = {
       detected: boolean
     }>,
   // sync-folder
-  syncStatus: (): Promise<{ deviceId: string; folder: string; lastSyncAt: number }> =>
+  syncStatus: (): Promise<{ deviceId: string; folder: string; lastSyncAt: number; plaintextAck: boolean }> =>
     window.memorysql.invoke('sync-folder:status') as Promise<{
       deviceId: string
       folder: string
       lastSyncAt: number
+      plaintextAck: boolean
     }>,
   syncConfigure: (folder: string): Promise<{ folder: string }> =>
     window.memorysql.invoke('sync-folder:configure', { folder }) as Promise<{ folder: string }>,

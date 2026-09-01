@@ -38,7 +38,8 @@ function startServer(): void {
       // DNS-rebinding / cross-origin hardening: browsers always send Origin on
       // cross-site POSTs; MCP clients send neither. Anything unexpected → 403.
       const hostHeader = String(req.headers.host ?? '')
-      if (!hostHeader.startsWith(`127.0.0.1:${port}`) && !hostHeader.startsWith(`localhost:${port}`)) {
+      const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`])
+      if (!allowedHosts.has(hostHeader)) {
         res.writeHead(403).end()
         return
       }

@@ -39,7 +39,7 @@ const PLUGIN_DESC: Record<string, string> = {
 export default function SettingsView() {
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
   const [folder, setFolder] = useState('')
-  const [syncInfo, setSyncInfo] = useState<{ deviceId: string; lastSyncAt: number } | null>(null)
+  const [syncInfo, setSyncInfo] = useState<{ deviceId: string; lastSyncAt: number; plaintextAck: boolean } | null>(null)
   const [msg, setMsg] = useState('')
   const [mcpPort, setMcpPort] = useState('')
   const [dataDir, setDataDir] = useState('')
@@ -359,6 +359,7 @@ export default function SettingsView() {
                 </button>
                 <button
                   className="btn btn-small"
+                  disabled={!syncInfo?.plaintextAck}
                   onClick={() =>
                     void api.syncNow().then(
                       (r) =>
@@ -372,6 +373,25 @@ export default function SettingsView() {
                   立即同步
                 </button>
               </div>
+              <label
+                className="hint"
+                style={{ display: 'flex', gap: 6, alignItems: 'flex-start', cursor: 'pointer' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={syncInfo?.plaintextAck ?? false}
+                  onChange={(e) =>
+                    void api
+                      .hostPluginSetting('sync-folder', 'plaintextAck', e.target.checked)
+                      .then(() => {
+                        setSyncInfo((prev) => (prev ? { ...prev, plaintextAck: e.target.checked } : prev))
+                        setMsg(e.target.checked ? '已确认：云同步将不做脱敏(明文写入网盘目录)' : '已撤销确认')
+                      })
+                      .catch((err) => setMsg(`操作失败: ${String(err)}`))
+                  }
+                />
+                我已知晓:云同步不做脱敏,会话与记忆明文写入网盘目录(两机数据一致所需)
+              </label>
               {syncInfo && (
                 <p className="hint">
                   设备 ID: {syncInfo.deviceId} · 上次同步: {syncInfo.lastSyncAt ? new Date(syncInfo.lastSyncAt).toLocaleString('zh-CN') : '从未'}

@@ -89,7 +89,7 @@ const plugin: MemorySQLPlugin = {
       const session = ctx.db.sqlite
         .prepare(
           `SELECT s.*, p.name AS project FROM sessions s
-           LEFT JOIN projects p ON p.id = s.project_id WHERE s.id = ?`
+           LEFT JOIN projects p ON p.id = s.project_id WHERE s.id = ? AND s.deleted = 0`
         )
         .get(id) as Record<string, unknown> | undefined
       if (!session) throw new Error(`session not found: ${id}`)

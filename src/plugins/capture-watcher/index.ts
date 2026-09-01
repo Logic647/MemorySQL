@@ -98,19 +98,33 @@ const plugin: MemorySQLPlugin = {
       return { entries: next }
     })
 
+    // unwatch fns keyed per entry so remove() can unbind a live watcher
+    const liveWatchers = new Map<string, () => void>()
+    const keyOf = (agent: string, root: string): string => `${agent}|${root}`
+
     ctx.ipc.handle('remove', (payload) => {
       const { agent, root } = (payload ?? {}) as { agent?: string; root?: string }
       const next = getEntries().filter((e) => !(e.agent === agent && e.root === root))
       ctx.settings.set('entries', next)
+      const un = liveWatchers.get(keyOf(agent ?? '', root ?? ''))
+      if (un) {
+        un()
+        liveWatchers.delete(keyOf(agent ?? '', root ?? ''))
+      }
       return { entries: next }
     })
 
     watcherRuntime.attach = (entry: WatchEntry): void => {
       const re = patternToRegExp(entry.patterns)
-      ctx.watcher.watch([entry.root], (changed) => importFile(changed, entry.agent), {
-        match: re,
-        debounceMs: 800
-      })
+      const key = keyOf(entry.agent, entry.root)
+      liveWatchers.get(key)?.()
+      liveWatchers.set(
+        key,
+        ctx.watcher.watch([entry.root], (changed) => importFile(changed, entry.agent), {
+          match: re,
+          debounceMs: 800
+        })
+      )
     }
     watcherRuntime.entries = getEntries
   },

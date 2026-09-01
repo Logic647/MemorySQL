@@ -1,4 +1,5 @@
 import type { MemorySQLPlugin, SummarizerProvider } from '../../main/core/plugin-host'
+import { redactWithCount } from '../../main/core/redact'
 import type { RawMessage } from '../../shared/types'
 
 /** LLM provider ids the settings UI offers. */
@@ -68,6 +69,7 @@ export function parseLlmResponse(text: string): { title: string; summary: string
 }
 
 async function callLlm(cfg: LlmConfig, transcript: string, maxTokens = 300): Promise<string> {
+  transcript = redactWithCount(transcript).text
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 45_000)
   try {
