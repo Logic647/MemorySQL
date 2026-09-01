@@ -68,10 +68,12 @@
   --msql-ease-inout: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
+/* reduced motion = 更少更柔和,而不是零(emil-animate):
+   位移类动画已单独用 no-preference 门控,这里只把时长压到更快更轻 */
 @media (prefers-reduced-motion: reduce) {
   :root {
-    --msql-t-fast: 0ms;
-    --msql-t-med: 0ms;
-    --msql-t-slow: 0ms;
+    --msql-t-fast: 80ms;
+    --msql-t-med: 120ms;
+    --msql-t-slow: 160ms;
   }
 }
