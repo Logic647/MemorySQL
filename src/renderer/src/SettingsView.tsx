@@ -408,12 +408,15 @@ export default function SettingsView() {
                       <input
                         type="checkbox"
                         checked={p.enabled}
-                        onChange={(e) =>
-                          void api
-                            .hostPluginEnable(p.id, e.target.checked)
-                            .then(() => setMsg(`${p.name} 已${e.target.checked ? '启用' : '停用'},重启生效`))
-                            .catch((err) => setMsg(`操作失败: ${String(err)}`))
-                        }
+onChange={(e) => {
+                  const next = e.target.checked
+                  setPluginList((prev) => prev.map((q) => (q.id === p.id ? { ...q, enabled: next } : q)))
+                  onMsg(`${p.name} 已${next ? '启用' : '停用'},重启生效`)
+                  void api.hostPluginEnable(p.id, next).catch((err) => {
+                    setPluginList((prev) => prev.map((q) => (q.id === p.id ? { ...q, enabled: !next } : q)))
+                    setMsg(`操作失败: ${String(err)}`)
+                  })
+}}
                       />
                       <span className="slider" />
                     </label>
@@ -610,6 +613,7 @@ function SemanticSection({ onMsg }: { onMsg: (s: string) => void }) {
     dims?: number
     rows?: number
   } | null>(null)
+  const [pending, setPending] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async (): Promise<void> => {
@@ -632,21 +636,28 @@ function SemanticSection({ onMsg }: { onMsg: (s: string) => void }) {
           <input
             type="checkbox"
             checked={status.enabled}
-            onChange={(e) =>
-              void api
-                .hostPluginSetting('semantic-search', 'enabled', e.target.checked)
-                .then(() => onMsg(`语义检索已${e.target.checked ? '启用' : '停用'},重启应用生效`))
-                .catch((err) => onMsg(`操作失败: ${String(err)}`))
-            }
+            onChange={(e) => {
+              const next = e.target.checked
+              setStatus((prev) => (prev ? { ...prev, enabled: next } : prev))
+              setPending(next)
+              onMsg(`语义检索已${next ? '启用' : '停用'},重启应用生效`)
+              void api.hostPluginSetting('semantic-search', 'enabled', next).catch((err) => {
+                setStatus((prev) => (prev ? { ...prev, enabled: !next } : prev))
+                setPending(null)
+                onMsg(`操作失败: ${String(err)}`)
+              })
+            }}
           />
           <span className="slider" />
         </label>
         <span className="mono-tag">
-          {!status.enabled
-            ? '已关闭(纯关键词检索)'
-            : status.available
-              ? `运行中 · ${status.model} · ${status.dims}维 · ${status.rows} 条已索引`
-              : `已启用但不可用: ${status.reason ?? '未知原因'}`}
+          {pending != null
+            ? `重启后${pending ? '启用' : '停用'}`
+            : !status.enabled
+              ? '已关闭(纯关键词检索)'
+              : status.available
+                ? `运行中 · ${status.model} · ${status.dims}维 · ${status.rows} 条已索引`
+                : `已启用但不可用: ${status.reason ?? '未知原因'}`}
         </span>
       </div>
       {status.enabled && status.available && (
