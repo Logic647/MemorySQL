@@ -788,16 +788,21 @@ function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
               <input
                 type="checkbox"
                 checked={on}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const next = e.target.checked
+                  // optimistic: flip immediately so no re-render (e.g.
+                  // sessions:changed refresh) can snap the knob back
+                  setEnabled((prev) => ({ ...prev, [a.id]: next }))
+                  setPending((prev) => ({ ...prev, [a.id]: next }))
+                  onMsg(`${a.label} 已${next ? '启用' : '停用'},重启应用生效`)
                   void api
-                    .hostPluginEnable(a.id, e.target.checked)
-                    .then(() => {
-                      setEnabled((prev) => ({ ...prev, [a.id]: e.target.checked }))
-                      setPending((prev) => ({ ...prev, [a.id]: e.target.checked }))
-                      onMsg(`${a.label} 已${e.target.checked ? '启用' : '停用'},重启应用生效`)
+                    .hostPluginEnable(a.id, next)
+                    .catch((err) => {
+                      setEnabled((prev) => ({ ...prev, [a.id]: !next }))
+                      setPending((prev) => ({ ...prev, [a.id]: !next }))
+                      onMsg(`操作失败: ${String(err)}`)
                     })
-                    .catch((err) => onMsg(`操作失败: ${String(err)}`))
-                }
+                }}
               />
               <span className="slider" />
             </label>
