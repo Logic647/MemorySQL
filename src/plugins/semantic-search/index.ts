@@ -174,9 +174,9 @@ const plugin: MemorySQLPlugin = {
     })
     ctx.ipc.handle('reindex', async () => {
       const res = await core.sync()
-      // a manual reindex backfills relay marks across ALL sessions — reset
-      // first so over-eager marks from previous thresholds get recomputed
-      ctx.db.sqlite.prepare(`UPDATE sessions SET similar_to = NULL`).run()
+      // a manual reindex backfills relay marks across ALL sessions — but only
+      // NULL slots: user-curated relays (sessions:setRelay) are never wiped.
+      // Stale auto-marks pointing at deleted sessions are inert in the UI.
       await markSimilarity(allSessionIds())
       return { ...res, ok: true }
     })

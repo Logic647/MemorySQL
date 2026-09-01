@@ -288,7 +288,6 @@ body {
 
 /* ---------- memories ---------- */
 .memories-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
-.mem-filters { display: flex; gap: 10px; padding: 12px 18px; flex-wrap: wrap; }
 .mem-edit { margin: 0 18px 12px; padding: var(--msql-sp-3); border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md); background: var(--msql-glass-soft); display: flex; flex-direction: column; gap: 8px; }
 .mem-edit select, .mem-edit textarea {
   padding: 6px 10px; border-radius: var(--msql-radius-sm); background: rgba(0, 0, 0, 0.28);
@@ -321,7 +320,7 @@ body {
 
 /* ---------- settings ---------- */
 .settings-pane { flex: 1; display: flex; flex-direction: row; min-width: 0; }
-.settings-cats { display: flex; gap: 10px; flex-wrap: wrap; padding: 4px 18px 14px; }
+
 .settings-body { padding: 0 18px var(--msql-sp-6); max-width: 860px; }
 section { margin-bottom: var(--msql-sp-5); }
 section h3 { font-size: var(--msql-fs-lg); margin: 0 0 4px; font-weight: 600; }
@@ -435,7 +434,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* ---------- settings sidebar column (flush against the rail) ---------- */
 .settings-sidebar {
-  width: var(--msql-side-w); flex-shrink: 0; overflow-y: auto; padding: 0;
+  width: var(--msql-side-w); flex-shrink: 0; overflow-y: auto; padding: 8px 0;
   border-right: 1px solid var(--msql-glass-border);
 }
 .settings-sidebar .side-title { padding: 0 14px; }
@@ -530,10 +529,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .brand { display: flex; align-items: center; gap: 8px; }
 
 /* ---------- settings sidebar title centered ---------- */
-.settings-sidebar .side-title.settings-title {
-  display: block; text-align: center; font-size: var(--msql-fs-md);
-  letter-spacing: 0.2em; margin-bottom: 12px; color: var(--msql-fg-muted);
-}
+
 /* TEMP DIAGNOSTIC 2 */
 .settings-pane { outline: 2px solid yellow; padding: 0 !important; }
 .settings-sidebar { margin: 0 !important; padding: 0 !important; }

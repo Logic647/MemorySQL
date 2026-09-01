@@ -36,7 +36,7 @@ export interface IngestResult {
 
 export interface IngestService {
   ingestSessions(sessions: RawSession[]): Promise<IngestResult>
-  upsertMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string }): { id: number; changed: boolean }
+  upsertMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string; tags?: string[]; projectId?: number | null }): { id: number; changed: boolean }
   addMemory(input: {
     kind: string
     content: string
@@ -285,7 +285,17 @@ export function createIngestService(deps: IngestDeps): IngestService {
         return { id: existing.id, changed: true }
       }
       const id = Number(
-        (memoryIns.run(input.kind, input.content, input.source, now(), 'local', input.agentType ?? null, input.status ?? 'active') as {
+        (memoryIns.run(
+          input.kind,
+          input.content,
+          input.source,
+          now(),
+          'local',
+          input.agentType ?? null,
+          input.status ?? 'active',
+          input.tags && input.tags.length > 0 ? JSON.stringify(input.tags.slice(0, 10)) : null,
+          input.projectId ?? null
+        ) as {
           lastInsertRowid: number | bigint
         }).lastInsertRowid
       )

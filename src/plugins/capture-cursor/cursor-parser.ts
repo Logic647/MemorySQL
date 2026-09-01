@@ -121,6 +121,12 @@ function parseCursorDiskKv(db: Database.Database, dbPath: string): RawSession[] 
         externalId: sessionId,
         agentType: 'cursor',
         title: typeof data.name === 'string' && data.name ? data.name : undefined,
+        startedAt:
+          typeof data.lastUpdatedAt === 'number'
+            ? Math.floor(data.lastUpdatedAt / 1000)
+            : typeof data.createdAt === 'number'
+              ? Math.floor(data.createdAt / 1000)
+              : undefined,
         endedAt:
           typeof data.lastUpdatedAt === 'number'
             ? Math.floor(data.lastUpdatedAt / 1000)

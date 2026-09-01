@@ -159,6 +159,11 @@ export function mergeBundle(db: Database.Database, bundle: SyncBundle): MergeRep
         ftsSessionIns.run(sessionId, s.title ?? '', s.summary ?? '')
         report.sessionsAdded++
       } else if (s.updated_at > local.updated_at && s.content_hash !== local.content_hash) {
+        // user-renamed titles survive sync (parity with the ingest path)
+        const lock = db
+          .prepare(`SELECT title_locked, title FROM sessions WHERE id = ?`)
+          .get(local.id) as { title_locked: number; title: string | null } | undefined
+        const effTitle = lock?.title_locked ? lock.title ?? s.title : s.title
         const oldIds = (msgIds.all(local.id) as Array<{ id: number }>).map((r) => r.id)
         for (const mid of oldIds) ftsMsgDel.run(mid)
         msgDel.run(local.id)
@@ -166,7 +171,7 @@ export function mergeBundle(db: Database.Database, bundle: SyncBundle): MergeRep
           s.cwd,
           s.started_at,
           s.ended_at,
-          s.title,
+          effTitle,
           s.summary,
           s.content_hash,
           s.message_count,
@@ -176,7 +181,7 @@ export function mergeBundle(db: Database.Database, bundle: SyncBundle): MergeRep
         )
         replaceMessages(local.id, msgs)
         ftsSessionDel.run(local.id)
-        ftsSessionIns.run(local.id, s.title ?? '', s.summary ?? '')
+        ftsSessionIns.run(local.id, effTitle ?? '', s.summary ?? '')
         report.sessionsUpdated++
       }
     }

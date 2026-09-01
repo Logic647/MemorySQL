@@ -6,7 +6,7 @@ import { createSearchService, type SearchService } from './search'
 import { createMcpTools } from './mcp-tools'
 
 export interface MemoriesService {
-  upsertMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string }): { id: number; changed: boolean }
+  upsertMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string; tags?: string[]; projectId?: number | null }): { id: number; changed: boolean }
   addMemory(input: {
     kind: string
     content: string

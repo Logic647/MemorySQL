@@ -46,7 +46,20 @@ const plugin: MemorySQLPlugin = {
           )
         )
         zip.addLocalFile(snapshot, '', 'memory.db')
-        if (fs.existsSync(ctx.env.settingsPath)) zip.addLocalFile(ctx.env.settingsPath, '', 'settings.json')
+        if (fs.existsSync(ctx.env.settingsPath)) {
+          // the archive is meant for migration/sharing — API keys never leave
+          // the machine (iron rule 2). Import keeps existing keys (summarizer-llm
+          // already ignores empty/masked values), so redacting here is safe.
+          const settings = JSON.parse(fs.readFileSync(ctx.env.settingsPath, 'utf-8')) as Record<string, unknown>
+          const scrub = (obj: Record<string, unknown>): void => {
+            for (const k of Object.keys(obj)) {
+              if (/key$/i.test(k) && typeof obj[k] === 'string' && obj[k]) obj[k] = '[REDACTED]'
+              else if (obj[k] && typeof obj[k] === 'object') scrub(obj[k] as Record<string, unknown>)
+            }
+          }
+          scrub(settings)
+          zip.addFile('settings.json', Buffer.from(JSON.stringify(settings, null, 2), 'utf-8'))
+        }
         if (fs.existsSync(ctx.env.vaultDir)) zip.addLocalFolder(ctx.env.vaultDir, 'vault')
         zip.writeZip(target)
       } finally {
