@@ -502,3 +502,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .session:hover, .hit:hover, .rail-btn:hover, .btn:hover, .chip:hover, .side-item:hover, .spotlight-hit:hover, .modal-item:hover { background: inherit; }
   .session .mem-actions, .session .mem-actions { opacity: 1; }
 }
+
+/* ---------- brand icon in-app + mcp guide + pending rows ---------- */
+.brand-icon { width: 22px; height: 22px; border-radius: 6px; display: block; }
+.rail-brand { padding: 2px; }
+.rail-brand .brand-icon { width: 28px; height: 28px; border-radius: 8px; }
+.mcp-guide {
+  margin: 8px 0 4px; padding: 12px 14px; border-radius: var(--msql-radius-md);
+  background: rgba(79, 140, 255, 0.06); border: 1px solid rgba(79, 140, 255, 0.18);
+  font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); line-height: 1.7;
+}
+.mcp-guide .guide-title { font-weight: 600; color: #bcd4ff; margin-bottom: 4px; }
+.mcp-guide ol { margin: 4px 0 0; padding-left: 18px; }
+.mcp-guide code {
+  font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs);
+  background: rgba(0, 0, 0, 0.3); padding: 1px 5px; border-radius: 4px; color: #bcd4ff;
+}
+.agent-pending { opacity: 0.75; }
+.agent-pending .switch .slider { outline: 1px dashed rgba(79, 140, 255, 0.45); outline-offset: 2px; }

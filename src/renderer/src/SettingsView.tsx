@@ -141,7 +141,27 @@ export default function SettingsView() {
 
             <section>
               <h3>MCP 服务</h3>
-              <p className="hint">agent 连接端点 http://127.0.0.1:端口/mcp。端口被占用时自动向后顺延并在侧栏提示。</p>
+              <p className="hint">
+                agent 连接端点 http://127.0.0.1:端口/mcp。端口被占用时自动向后顺延并在侧栏提示。
+              </p>
+              <div className="mcp-guide">
+                <div className="guide-title">使用指引</div>
+                <ol>
+                  <li>保持 MemorySQL 运行(它就是 MCP 服务端,可最小化到托盘)。</li>
+                  <li>
+                    支持 Streamable HTTP 的 agent:把 <code>http://127.0.0.1:端口/mcp</code> 填入其 MCP 配置,
+                    或直接用上方「连接 Agent 向导」一键写入。
+                  </li>
+                  <li>
+                    仅支持 stdio 的 agent:配置命令行
+                    <code>node &lt;应用目录&gt;/scripts/mcp-bridge.mjs</code>(环境变量 MEMORYSQL_MCP_PORT=端口)。
+                  </li>
+                  <li>
+                    验证连通:浏览器或终端访问 <code>http://127.0.0.1:端口/health</code>,返回 ok 即在线。
+                  </li>
+                  <li>工具调用入口:memory_get_context(续接包)、memory_search、memory_write 等 7 个工具。</li>
+                </ol>
+              </div>
               <label className="field">
                 <span>端口</span>
                 <input
@@ -720,6 +740,7 @@ const CAPTURE_AGENTS: CaptureAgent[] = [
 
 function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
   const [enabled, setEnabled] = useState<Record<string, boolean>>({})
+  const [pending, setPending] = useState<Record<string, boolean>>({})
   const [status, setStatus] = useState<Record<string, { available: boolean; sourceRoot: string; detail: string }>>({})
   const [drafts, setDrafts] = useState<Record<string, string>>({})
 
@@ -762,7 +783,7 @@ function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
         const on = enabled[a.id] ?? true
         const st = status[a.id]
         return (
-          <div key={a.id} className={`agent-row ${on ? '' : 'agent-off'}`}>
+          <div key={a.id} className={`agent-row ${on ? '' : 'agent-off'} ${pending[a.id] != null ? 'agent-pending' : ''}`}>
             <label className="switch">
               <input
                 type="checkbox"
@@ -772,6 +793,7 @@ function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
                     .hostPluginEnable(a.id, e.target.checked)
                     .then(() => {
                       setEnabled((prev) => ({ ...prev, [a.id]: e.target.checked }))
+                      setPending((prev) => ({ ...prev, [a.id]: e.target.checked }))
                       onMsg(`${a.label} 已${e.target.checked ? '启用' : '停用'},重启应用生效`)
                     })
                     .catch((err) => onMsg(`操作失败: ${String(err)}`))
@@ -782,7 +804,12 @@ function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
             <div className="agent-main">
               <div className="agent-name">
                 {a.label}
-                {st && <span className={`agent-state ${st.available ? 'ok' : 'dim'}`}>{st.detail}</span>}
+                {pending[a.id] != null && (
+                  <span className={`agent-state ${pending[a.id] ? 'ok' : 'dim'}`}>重启后{pending[a.id] ? '启用' : '停用'}</span>
+                )}
+                {!pending[a.id] && st && (
+                  <span className={`agent-state ${st.available ? 'ok' : 'dim'}`}>{st.detail}</span>
+                )}
               </div>
               {on && a.pathKey && st && (
                 <div className="field-row">

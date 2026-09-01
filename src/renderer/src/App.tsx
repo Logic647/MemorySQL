@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
-import { Brain, Diamond, FileText, Settings2, Share2, History } from 'lucide-react'
+import { Brain, FileText, Settings2, Share2, History } from 'lucide-react'
+import appIcon from './assets/icon.png'
 import type { SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
 import MemoriesView from './MemoriesView'
@@ -7,8 +8,6 @@ import SettingsView from './SettingsView'
 import NotesView from './NotesView'
 import GraphView from './GraphView'
 
-const AGENTS = ['all', 'codex', 'zcode', 'hermes'] as const
-type AgentFilter = (typeof AGENTS)[number]
 type View = 'sessions' | 'memories' | 'notes' | 'graph' | 'settings'
 const VIEW_LABEL: Record<View, string> = {
   sessions: '会话',
@@ -41,7 +40,7 @@ function AgentBadge({ type }: { type: string }) {
 }
 
 export default function App() {
-  const [filter, setFilter] = useState<AgentFilter>('all')
+  const [filter, setFilter] = useState<string>('all')
   const [sessions, setSessions] = useState<SessionSummaryRow[]>([])
   const [selected, setSelected] = useState<SessionDetail | null>(null)
   const [query, setQuery] = useState('')
@@ -54,6 +53,7 @@ export default function App() {
   const [mcp, setMcp] = useState<{ port: number; running: boolean; toolCount: number } | null>(null)
   const [kbMsg, setKbMsg] = useState('')
   const [view, setView] = useState<View>('sessions')
+  const [enabledCaptures, setEnabledCaptures] = useState<Record<string, boolean>>({})
   const [showArchived, setShowArchived] = useState(false)
   const [rename, setRename] = useState<{ id: number; value: string } | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
@@ -66,6 +66,14 @@ export default function App() {
   const refresh = useCallback(async () => {
     setSessions(await api.listSessions(filter, { archived: showArchived }))
     setOverview(await api.overview())
+    try {
+      const hp = await api.hostPlugins()
+      const map: Record<string, boolean> = {}
+      for (const p of hp.plugins) if (p.id.startsWith('capture-')) map[p.id] = p.enabled
+      setEnabledCaptures(map)
+    } catch {
+      /* host channels unavailable — assume all enabled */
+    }
   }, [filter, showArchived])
 
   useEffect(() => {
@@ -308,7 +316,7 @@ export default function App() {
       <div className="aurora" aria-hidden />
       <nav className="rail">
         <div className="rail-brand" title="MemorySQL">
-          <Diamond size={17} strokeWidth={2.4} />
+          <img className="brand-icon" src={appIcon} alt="MemorySQL" />
         </div>
         <div className="rail-nav">
           {(['sessions', 'memories', 'notes', 'graph'] as View[]).map((v) => {
@@ -333,7 +341,7 @@ export default function App() {
       <div className="app-main">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark">◆</span> MemorySQL
+          <img className="brand-icon" src={appIcon} alt="MemorySQL" /> MemorySQL
         </div>
         <input
           className="search"
@@ -377,7 +385,7 @@ export default function App() {
             <>
           <div className="side-section">
             <div className="side-title">Agent</div>
-            {AGENTS.map((a) => {
+            {['all', ...CAPTURE_PLUGINS.filter(({ id }) => enabledCaptures[id] !== false).map(({ id }) => id.replace('capture-', ''))].map((a) => {
               const stat = overview?.byAgent.find((x) => x.agent_type === a)
               const count = a === 'all'
                 ? overview?.byAgent.reduce((n, x) => n + x.sessions, 0) ?? 0
@@ -397,7 +405,7 @@ export default function App() {
 
           <div className="side-section">
             <div className="side-title">捕获状态</div>
-            {CAPTURE_PLUGINS.map(({ id, label }) => (
+            {CAPTURE_PLUGINS.filter(({ id }) => enabledCaptures[id] !== false).map(({ id, label }) => (
               <div key={id} className="capture-status">
                 <span className={`dot ${statuses[id]?.startsWith('错误') ? 'err' : 'ok'}`} />
                 <div>
