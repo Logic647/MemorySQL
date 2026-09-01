@@ -443,6 +443,14 @@ function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
     icon: path.join(app.getAppPath(), 'build', 'icon.png'),
     backgroundColor: '#101418',
     autoHideMenuBar: true,
+    // integrated title bar: native white strip removed; system window
+    // controls overlay the dark topbar instead
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#0a0e16',
+      symbolColor: '#d8e2ee',
+      height: 46
+    },
     webPreferences: {
       preload: path.join(import.meta.dirname, '../preload/index.cjs'),
       contextIsolation: true,

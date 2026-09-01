@@ -520,3 +520,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .agent-pending { opacity: 0.75; }
 .agent-pending .switch .slider { outline: 1px dashed rgba(79, 140, 255, 0.45); outline-offset: 2px; }
+
+/* ---------- integrated title bar ---------- */
+.topbar { -webkit-app-region: drag; }
+.topbar .search,
+.topbar .btn,
+.topbar .brand-icon { -webkit-app-region: no-drag; }
+.brand { display: flex; align-items: center; gap: 8px; }

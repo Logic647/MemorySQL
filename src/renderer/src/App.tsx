@@ -396,7 +396,7 @@ export default function App() {
                   className={`side-item ${filter === a ? 'active' : ''}`}
                   onClick={() => setFilter(a)}
                 >
-                  {a === 'all' ? '全部' : <AgentBadge type={a} />}
+                  {a === 'all' ? '全部' : a}
                   <span className="count">{count}</span>
                 </button>
               )
