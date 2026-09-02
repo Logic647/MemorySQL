@@ -1,6 +1,5 @@
 import Database from 'better-sqlite3'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { CORE_MIGRATIONS } from '../src/plugins/core-schema/migrations'
 import coreSchema from '../src/plugins/core-schema'
 
 type Handler = (payload?: unknown) => unknown
