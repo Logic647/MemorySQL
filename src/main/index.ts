@@ -261,6 +261,35 @@ async function loadExternalPlugins(dataDir: string, host: PluginHost): Promise<v
 
 const hostChannels = new Map<string, (payload: Record<string, unknown>) => unknown>()
 
+type AppUpdater = (typeof import('electron-updater'))['autoUpdater']
+
+/**
+ * electron-updater's CJS entry defines every export via
+ * `Object.defineProperty(exports, name, { get })` — a shape Node's
+ * cjs-module-lexer cannot detect, so the ESM namespace has NO named exports
+ * and `const { autoUpdater } = await import('electron-updater')` yields
+ * undefined (the updater actually lives on `default`, i.e. module.exports).
+ */
+async function loadUpdater(): Promise<AppUpdater> {
+  const mod = (await import('electron-updater')) as unknown as {
+    autoUpdater?: AppUpdater
+    default?: { autoUpdater?: AppUpdater }
+  }
+  const au = mod.autoUpdater ?? mod.default?.autoUpdater
+  if (!au) throw new Error('electron-updater 模块加载异常')
+  return au
+}
+
+/** compare "v0.4.2" style tags numerically; non-semver tags return null */
+function verParts(tag: string): number[] | null {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(tag.trim())
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
+}
+
+function isNewer(a: number[], b: number[]): boolean {
+  return a[0] !== b[0] ? a[0] > b[0] : a[1] !== b[1] ? a[1] > b[1] : a[2] > b[2]
+}
+
 function registerHostChannels(
   host: PluginHost,
   settings: SettingsStore,
@@ -356,12 +385,24 @@ function registerHostChannels(
   }))
   hostChannels.set('memorysql:host:checkUpdate', async () => {
     if (!app.isPackaged) return { available: false, reason: '开发模式不检查更新' }
+    // availability goes through the api.github.com releases endpoint (same
+    // feed the changelog uses) — the updater's own check fetches latest.yml
+    // from github.com/downloads, a different, frequently blocked route
     try {
-      const { autoUpdater } = await import('electron-updater')
-      const result = await autoUpdater.checkForUpdates()
-      const next = result?.updateInfo?.version
-      if (next && next !== app.getVersion()) {
-        return { available: true, version: next }
+      const res = await fetch('https://api.github.com/repos/Logic647/MemorySQL/releases?per_page=5', {
+        headers: { 'User-Agent': 'memorysql-app' },
+        signal: AbortSignal.timeout(8000)
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const list = (await res.json()) as Array<{ tag_name: string }>
+      const cur = verParts(app.getVersion())
+      if (cur) {
+        for (const r of list) {
+          const next = verParts(r.tag_name)
+          if (next && isNewer(next, cur)) {
+            return { available: true, version: r.tag_name.replace(/^v/, '') }
+          }
+        }
       }
       return { available: false, reason: '已是最新版本' }
     } catch (err) {
@@ -370,7 +411,8 @@ function registerHostChannels(
   })
   hostChannels.set('memorysql:host:updateNow', async () => {
     if (!app.isPackaged) throw new Error('开发模式不支持')
-    const { autoUpdater } = await import('electron-updater')
+    const autoUpdater = await loadUpdater()
+    await autoUpdater.checkForUpdates()
     await autoUpdater.downloadUpdate()
     setImmediate(() => autoUpdater.quitAndInstall())
     return { ok: true, relaunching: true }
@@ -526,7 +568,7 @@ app.whenReady().then(async () => {
     if (app.isPackaged) {
       // update feed = GitHub Releases latest.yml; silent offline failure is fine
       try {
-        const { autoUpdater } = await import('electron-updater')
+        const autoUpdater = await loadUpdater()
         autoUpdater.autoDownload = true
         void autoUpdater.checkForUpdatesAndNotify().catch(() => {})
       } catch {
