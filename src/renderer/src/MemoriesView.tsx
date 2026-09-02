@@ -25,8 +25,11 @@ interface Draft {
   content: string
 }
 
+const PAGE = 500
+
 export default function MemoriesView() {
   const [rows, setRows] = useState<MemoryRow[]>([])
+  const [hasMore, setHasMore] = useState(false)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [msg, setMsg] = useState('')
   const [agentFilter, setAgentFilter] = useState<string>('all')
@@ -38,8 +41,16 @@ export default function MemoriesView() {
   >([])
 
   const load = useCallback(async (): Promise<void> => {
-    setRows((await api.memories()) as unknown as MemoryRow[])
+    const first = (await api.memories()) as unknown as MemoryRow[]
+    setRows(first)
+    setHasMore(first.length >= PAGE)
   }, [])
+
+  const loadMore = useCallback(async (): Promise<void> => {
+    const more = (await api.memories({ offset: rows.length })) as unknown as MemoryRow[]
+    setRows((cur) => [...cur, ...more])
+    setHasMore(more.length >= PAGE)
+  }, [rows.length])
 
   useEffect(() => {
     void load()
@@ -255,6 +266,11 @@ export default function MemoriesView() {
           )
         })}
         {rows.length === 0 && <div className="empty">暂无记忆 — 通过 MCP memory_write、Hermes 记忆导入或手动新增</div>}
+        {hasMore && (
+          <button className="btn btn-small" style={{ alignSelf: 'center' }} onClick={() => void loadMore()}>
+            加载更多(已显示 {rows.length} 条)
+          </button>
+        )}
       </div>
       </div>
     </div>

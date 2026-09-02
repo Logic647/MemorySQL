@@ -389,14 +389,19 @@ export function createMcpTools(deps: {
           s.length > n ? `${s.slice(0, n)}…[截断]` : s
         const when = (ts: number | null): string => (ts ? fmtTime(ts) : '')
         const lines: string[] = []
+        // budget check stays O(n): track running length instead of re-joining
+        // every message on every iteration
+        const SEP = '\n\n---\n\n'
+        let budget = TOTAL_CAP
         for (const m of messages) {
           const label = m.role === 'tool' ? `TOOL(${m.tool_name ?? 'tool'})` : m.role.toUpperCase()
-          lines.push(`**${label}** ${when(m.ts)}\n${clipMsg(m.content, perMessage)}`)
-          if (lines.join('\n\n---\n\n').length > TOTAL_CAP) {
-            lines.pop()
+          const line = `**${label}** ${when(m.ts)}\n${clipMsg(m.content, perMessage)}`
+          if (line.length + (lines.length > 0 ? SEP.length : 0) > budget) {
             capped = true
             break
           }
+          lines.push(line)
+          budget -= line.length + (lines.length > 1 ? SEP.length : 0)
         }
         const body = lines.join('\n\n---\n\n')
         const head = `# ${session.title ?? `会话 #${id}`}\n- id: ${id}\n- agent: ${session.agent_type}\n- 开始: ${when(session.started_at)}\n- 消息数: ${messages.length}${omitted > 0 ? `(已省略前 ${omitted} 条,可用 tail=0 获取全量)` : ''}\n`

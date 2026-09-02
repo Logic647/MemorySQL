@@ -84,7 +84,12 @@ const plugin: MemorySQLPlugin = {
     })
 
     ctx.ipc.handle('sessions:get', (payload) => {
-      const { id } = (payload ?? {}) as { id?: number }
+      const { id, beforeSeq, limit = 200, all = false } = (payload ?? {}) as {
+        id?: number
+        beforeSeq?: number
+        limit?: number
+        all?: boolean
+      }
       if (!id) throw new Error('sessions:get requires id')
       const session = ctx.db.sqlite
         .prepare(
@@ -93,13 +98,32 @@ const plugin: MemorySQLPlugin = {
         )
         .get(id) as Record<string, unknown> | undefined
       if (!session) throw new Error(`session not found: ${id}`)
-      const messages = ctx.db.sqlite
-        .prepare(
-          `SELECT id, seq, role, content, ts, tool_name AS "toolName"
-           FROM session_messages WHERE session_id = ? ORDER BY seq`
-        )
-        .all(id)
-      return { session, messages: messages as MessageRow[] }
+      // tail-first paging: the default page is the LAST `limit` messages;
+      // beforeSeq walks earlier pages. `all` lifts the cap (privacy export).
+      const cap = all ? -1 : Math.min(Math.max(limit ?? 200, 1), 1000)
+      const select = `SELECT id, seq, role, content, ts, tool_name AS "toolName"
+           FROM session_messages WHERE session_id = ?`
+      const rows =
+        beforeSeq != null
+          ? (ctx.db.sqlite
+              .prepare(`${select} AND seq < ? ORDER BY seq DESC LIMIT ?`)
+              .all(id, beforeSeq, cap) as MessageRow[])
+          : (ctx.db.sqlite.prepare(`${select} ORDER BY seq DESC LIMIT ?`).all(id, cap) as MessageRow[])
+      const messages = rows.reverse()
+      const firstSeq = messages.length > 0 ? Number(messages[0].seq) : null
+      const total = (
+        ctx.db.sqlite
+          .prepare(`SELECT COUNT(*) AS n FROM session_messages WHERE session_id = ?`)
+          .get(id) as { n: number }
+      ).n
+      // `all` fetched everything — there can be nothing earlier to page in
+      const hasMore =
+        !all &&
+        firstSeq != null &&
+        !!ctx.db.sqlite
+          .prepare(`SELECT 1 FROM session_messages WHERE session_id = ? AND seq < ? LIMIT 1`)
+          .get(id, firstSeq)
+      return { session, messages, total, hasMore, firstSeq }
     })
 
     ctx.ipc.handle('sessions:rename', (payload) => {
@@ -236,13 +260,17 @@ const plugin: MemorySQLPlugin = {
       return search.searchAll(q ?? '', limit) as SearchHit[]
     })
 
-    ctx.ipc.handle('memories:list', () => {
+    ctx.ipc.handle('memories:list', (payload) => {
+      // paged: the memory list grows without bound (distill candidates, MCP
+      // writes), so the renderer fetches it in chunks
+      const { limit = 500, offset = 0 } = (payload ?? {}) as { limit?: number; offset?: number }
+      const cap = Math.min(Math.max(limit ?? 500, 1), 2000)
       return ctx.db.sqlite
         .prepare(
           `SELECT id, kind, content, source, status, agent_type AS agentType, tags, project_id AS projectId, updated_at FROM memories
-           WHERE deleted = 0 ORDER BY kind, updated_at DESC`
+           WHERE deleted = 0 ORDER BY kind, updated_at DESC LIMIT ? OFFSET ?`
         )
-        .all()
+        .all(cap, Math.max(offset ?? 0, 0))
     })
 
     ctx.ipc.handle('stats:overview', () => {

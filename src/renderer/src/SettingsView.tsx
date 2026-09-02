@@ -16,6 +16,7 @@ type Category = (typeof CATEGORIES)[number]
 const PLUGIN_DESC: Record<string, string> = {
   'core-schema': '核心数据层 —— 表结构、会话入库、全文检索',
   'core-vault': '笔记库 —— Markdown 笔记、双向链接、知识图谱',
+  'core-launcher': '开机自启动 —— 写入系统登录项,可选启动后驻留托盘',
   'capture-codex': 'Codex CLI 会话捕获',
   'capture-zcode': 'ZCode 会话捕获',
   'capture-hermes': 'Hermes 桌面版会话捕获',
@@ -100,6 +101,14 @@ export default function SettingsView() {
       <div className="settings-body">
         {category === '通用' && (
           <>
+            <section>
+              <h3>启动</h3>
+              <p className="hint">
+                开机自动运行 MemorySQL(写入系统登录项,即时生效)。启动后隐藏到托盘时窗口不弹出,MCP 服务照常可用,点托盘图标或全局秒搜热键唤起。
+              </p>
+              <LaunchSection onMsg={setMsg} />
+            </section>
+
             <section>
               <h3>存储位置</h3>
               <p className="hint">
@@ -618,6 +627,58 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
         </div>
       ))}
     </section>
+  )
+}
+
+function LaunchSection({ onMsg }: { onMsg: (s: string) => void }) {
+  const [status, setStatus] = useState<{ supported: boolean; openAtLogin: boolean; launchHidden: boolean } | null>(null)
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      setStatus(await api.launcherGet())
+    } catch {
+      setStatus({ supported: false, openAtLogin: false, launchHidden: false })
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  if (!status) return <p className="hint">加载中…</p>
+  if (!status.supported) return <p className="hint">开发模式下不可用(登录项注册的是 electron.exe)。</p>
+
+  const apply = (enabled: boolean, launchHidden: boolean): void => {
+    // optimistic: flip immediately, roll back if the login-item write fails
+    setStatus((prev) => (prev ? { ...prev, openAtLogin: enabled, launchHidden: enabled ? launchHidden : prev.launchHidden } : prev))
+    void api
+      .launcherSet(enabled, launchHidden)
+      .then((r) => setStatus((prev) => (prev ? { ...prev, ...r } : prev)))
+      .catch((err) => {
+        void load()
+        onMsg(`设置失败: ${String(err)}`)
+      })
+  }
+
+  return (
+    <>
+      <div className="field-row">
+        <label className="switch">
+          <input type="checkbox" checked={status.openAtLogin} onChange={(e) => apply(e.target.checked, status.launchHidden)} />
+          <span className="slider" />
+        </label>
+        <span className="mono-tag">{status.openAtLogin ? '已开启开机自启动' : '已关闭'}</span>
+      </div>
+      {status.openAtLogin && (
+        <div className="field-row">
+          <label className="switch">
+            <input type="checkbox" checked={status.launchHidden} onChange={(e) => apply(true, e.target.checked)} />
+            <span className="slider" />
+          </label>
+          <span className="mono-tag">{status.launchHidden ? '启动后隐藏到托盘' : '启动后显示主窗口'}</span>
+        </div>
+      )}
+    </>
   )
 }
 

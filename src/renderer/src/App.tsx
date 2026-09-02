@@ -102,6 +102,26 @@ export default function App() {
     setSelected(await api.getSession(id))
   }, [])
 
+  // walk back one page of messages (tail-first paging keeps big sessions out
+  // of the renderer until the user asks for them)
+  const loadEarlier = useCallback(async () => {
+    setSelected((cur) => {
+      if (!cur || !cur.hasMore || cur.firstSeq == null) return cur
+      const sid = cur.session.id
+      void api
+        .getSession(sid, { beforeSeq: cur.firstSeq })
+        .then((prev) => {
+          setSelected((c) =>
+            c && c.session.id === sid
+              ? { ...prev, messages: [...prev.messages, ...c.messages] }
+              : c
+          )
+        })
+        .catch((err) => setKbMsg(`加载更早消息失败: ${String(err)}`))
+      return cur
+    })
+  }, [])
+
   // Ctrl+1..5 switch views (command-driven navigation)
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
@@ -670,7 +690,10 @@ export default function App() {
                     </button>
                     {selected.session.project && <span>项目: {selected.session.project}</span>}
                     <span>开始: {fmtTime(selected.session.started_at)}</span>
-                    <span>消息: {selected.messages.length}</span>
+                    <span>
+                      消息: {selected.messages.length}
+                      {selected.total > selected.messages.length ? ` / ${selected.total}` : ''}
+                    </span>
                     <button
                       className="btn btn-small"
                       onClick={() =>
@@ -687,6 +710,11 @@ export default function App() {
                   )}
                 </div>
                 <div className="messages">
+                  {selected.hasMore && (
+                    <button className="btn btn-small load-earlier" onClick={() => void loadEarlier()}>
+                      加载更早的消息(已显示 {selected.messages.length} / {selected.total})
+                    </button>
+                  )}
                   {selected.messages.map((m) => (
                     <div key={m.id} className={`msg msg-${m.role}`}>
                       <div className="msg-role">

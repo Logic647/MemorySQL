@@ -4,6 +4,9 @@ import { api } from './api'
 
 export default function GraphView() {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  // the cytoscape instance is held here so a re-render destroys the previous
+  // one first — dropping it leaks the whole graph (canvas DOM + listeners)
+  const cyRef = useRef<cytoscape.Core | null>(null)
   const [stats, setStats] = useState<{ nodes: number; edges: number } | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
 
@@ -11,6 +14,8 @@ export default function GraphView() {
     const { nodes, edges } = await api.notesGraph()
     setStats({ nodes: nodes.length, edges: edges.length })
     if (!containerRef.current) return
+    cyRef.current?.destroy()
+    cyRef.current = null
     const cy = cytoscape({
       container: containerRef.current,
       elements: [
@@ -57,15 +62,15 @@ export default function GraphView() {
       wheelSensitivity: 0.2
     })
     cy.on('tap', 'node', (evt) => setSelected(String(evt.target.data('label'))))
-    return () => cy.destroy()
+    cyRef.current = cy
   }, [])
 
   useEffect(() => {
-    let cleanup: (() => void) | undefined
-    void render().then((fn) => {
-      cleanup = fn
-    })
-    return () => cleanup?.()
+    void render()
+    return () => {
+      cyRef.current?.destroy()
+      cyRef.current = null
+    }
   }, [render])
 
   return (

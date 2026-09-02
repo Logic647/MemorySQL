@@ -11,6 +11,7 @@ import { PluginHost } from './core/plugin-host'
 import summarizerRules from '../plugins/summarizer-rules'
 import summarizerLlm from '../plugins/summarizer-llm'
 import coreSchema from '../plugins/core-schema'
+import coreLauncher from '../plugins/core-launcher'
 import captureCodex from '../plugins/capture-codex'
 import captureZcode from '../plugins/capture-zcode'
 import captureHermes from '../plugins/capture-hermes'
@@ -44,6 +45,7 @@ const BUILTIN_PLUGINS = [
   summarizerRules,
   coreSchema,
   coreVault,
+  coreLauncher,
   captureCodex,
   captureZcode,
   captureHermes,
@@ -74,6 +76,8 @@ const EXPORT_ARCHIVE_DEST = (() => {
   const i = process.argv.indexOf('--export-archive')
   return i >= 0 ? (process.argv[i + 1] ?? '') : null
 })()
+// 开机自启「启动后隐藏到托盘」(core-launcher 写入的登录项参数)
+const LAUNCH_HIDDEN = process.argv.includes('--hidden')
 
 /**
  * A previous run staged an archive import: swap the staged db/vault into
@@ -439,6 +443,8 @@ function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
     width: 1360,
     height: 860,
     minWidth: 960,
+    // --hidden (login item): stay in the tray only; tray click / hotkey shows
+    show: !LAUNCH_HIDDEN,
     title: 'MemorySQL',
     icon: path.join(app.getAppPath(), 'build', 'icon.png'),
     backgroundColor: '#101418',
@@ -496,6 +502,21 @@ app.whenReady().then(async () => {
       await runHeadlessScan()
       return
     }
+    // GUI mode is single-instance: a second launch would double the memory and
+    // fight over the MCP port — focus the existing window instead. Headless
+    // runs (--scan/--sync/…) intentionally bypass the lock so they can run
+    // alongside a live app.
+    if (!app.requestSingleInstanceLock()) {
+      app.exit(0)
+      return
+    }
+    app.on('second-instance', () => {
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (w.isMinimized()) w.restore()
+        w.show()
+        w.focus()
+      }
+    })
     const boot = await bootstrap()
     running = { host: boot.host, db: boot.db }
     const win = createWindow(boot.host, boot.events)

@@ -8,8 +8,12 @@ export interface SemanticHit {
 }
 
 export interface SemanticCore {
-  /** incremental index pass: embeds new/changed rows, drops disappeared ones */
-  sync(): Promise<{ embedded: number; removed: number; rows: number; embeddedSessions: number[] }>
+  /**
+   * index pass: embeds new/changed rows, drops disappeared ones. Incremental
+   * by default (an `updated_at` watermark in semantic_meta gates the candidate
+   * set); `full: true` re-reads every source row (used by explicit reindex).
+   */
+  sync(opts?: { full?: boolean }): Promise<{ embedded: number; removed: number; rows: number; embeddedSessions: number[] }>
   search(query: string, limit?: number): Promise<SemanticHit[]>
   /** nearest indexed sessions to one indexed session, itself excluded */
   similarSessions(refId: number, k?: number): Promise<Array<{ refId: number; distance: number }>>
@@ -25,6 +29,12 @@ const vecParam = (v: VecInput): Buffer | string =>
     : JSON.stringify(v)
 
 const hashText = (t: string): string => crypto.createHash('sha1').update(t).digest('hex')
+
+interface Candidate {
+  kind: 'memory' | 'session'
+  refId: number
+  text: string
+}
 
 /**
  * Vector index over active memories and sessions (title+summary), kept in a
@@ -51,6 +61,8 @@ export function createSemanticCore(deps: {
   if (storedDims != null && Number(storedDims) !== dims) {
     sqlite.exec(`DROP TABLE IF EXISTS semantic_vec`)
     sqlite.exec(`DROP TABLE IF EXISTS semantic_refs`)
+    // the watermark is meaningless without the refs table it was built against
+    sqlite.exec(`DELETE FROM semantic_meta WHERE key LIKE 'wm_%'`)
   }
   if (storedDims == null) {
     sqlite
@@ -74,71 +86,112 @@ export function createSemanticCore(deps: {
   // number space, so the vec0 rowid must come from THIS table, not the source
   const refIns = sqlite.prepare(`INSERT INTO semantic_refs (kind, ref_id, content_hash) VALUES (?, ?, ?)`)
   const vecDel = sqlite.prepare(`DELETE FROM semantic_vec WHERE rowid = ?`)
-  const sources = sqlite.prepare(`
-    SELECT 'memory' AS kind, id AS ref_id, content AS text FROM memories
-      WHERE deleted = 0 AND status = 'active'
-    UNION ALL
-    SELECT 'session' AS kind, id AS ref_id,
+  const wmGet = (key: string): number =>
+    Number(
+      (sqlite.prepare(`SELECT value FROM semantic_meta WHERE key = ?`).get(key) as { value: string } | undefined)
+        ?.value ?? '0'
+    )
+  const wmSet = sqlite.prepare(
+    `INSERT INTO semantic_meta (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  )
+
+  // incremental candidates: only rows touched since the watermark are read
+  // into memory (the old full-table scan ran on every 30s debounce tick)
+  const CANDIDATE_MEMORY = `
+    SELECT 'memory' AS kind, id AS "refId", content AS text FROM memories
+      WHERE deleted = 0 AND status = 'active' AND updated_at >= ?`
+  const CANDIDATE_SESSION = `
+    SELECT 'session' AS kind, id AS "refId",
            trim(coalesce(title, '') || char(10) || coalesce(summary, '')) AS text
-    FROM sessions WHERE deleted = 0
-  `)
+      FROM sessions WHERE deleted = 0 AND updated_at >= ?`
+  // removal is watermark-independent and O(refs): a ref whose source row is
+  // gone, tombstoned, deactivated, or whose text became empty must drop out
+  const REMOVAL_MEMORY = `
+    SELECT r.id FROM semantic_refs r
+    LEFT JOIN memories m ON m.id = r.ref_id
+    WHERE r.kind = 'memory'
+      AND (m.id IS NULL OR m.deleted = 1 OR m.status != 'active' OR trim(m.content) = '')`
+  const REMOVAL_SESSION = `
+    SELECT r.id FROM semantic_refs r
+    LEFT JOIN sessions s ON s.id = r.ref_id
+    WHERE r.kind = 'session'
+      AND (s.id IS NULL OR s.deleted = 1
+           OR trim(coalesce(s.title, '') || char(10) || coalesce(s.summary, '')) = '')`
+
+  const insertRow = sqlite.transaction((w: Candidate, vec: VecInput) => {
+    const oldRef = refFind.get(w.kind, w.refId) as { id: number } | undefined
+    if (oldRef != null) {
+      vecDel.run(oldRef.id)
+      refDel.run(oldRef.id)
+    }
+    const newId = Number(
+      (refIns.run(w.kind, w.refId, hashText(w.text)) as { lastInsertRowid: number | bigint }).lastInsertRowid
+    )
+    // vec0 rejects bound rowid params — inline our own integer id
+    sqlite
+      .prepare(`INSERT INTO semantic_vec (rowid, embedding) VALUES (${newId}, ?)`)
+      .run(vecParam(vec))
+  })
 
   return {
-    async sync(): Promise<{ embedded: number; removed: number; rows: number; embeddedSessions: number[] }> {
-      const rows = (sources.all() as Array<{ kind: string; ref_id: number; text: string }>).filter(
-        (r) => r.text.trim().length > 0
-      )
-      const want = new Map<string, { kind: string; refId: number; text: string; hash: string }>()
-      for (const r of rows) {
-        want.set(`${r.kind}:${r.ref_id}`, { kind: r.kind, refId: r.ref_id, text: r.text, hash: hashText(r.text) })
-      }
-
-      const existing = new Map<string, number>() // key -> semantic_refs.id
-      for (const r of sqlite
-        .prepare(`SELECT id, kind, ref_id, content_hash FROM semantic_refs`)
-        .all() as Array<{ id: number; kind: string; ref_id: number; content_hash: string }>) {
-        existing.set(`${r.kind}:${r.ref_id}`, r.id)
-      }
+    async sync(opts?: { full?: boolean }): Promise<{
+      embedded: number
+      removed: number
+      rows: number
+      embeddedSessions: number[]
+    }> {
+      const refsCount = (sqlite.prepare(`SELECT COUNT(*) AS n FROM semantic_refs`).get() as { n: number }).n
+      // a wiped refs table must be rebuilt from scratch regardless of watermark
+      const full = opts?.full === true || refsCount === 0
+      const wmMem = full ? 0 : wmGet('wm_memory')
+      const wmSes = full ? 0 : wmGet('wm_session')
 
       let removed = 0
-      for (const [key, id] of existing) {
-        if (!want.has(key)) {
-          vecDel.run(id)
-          refDel.run(id)
+      for (const sql of [REMOVAL_MEMORY, REMOVAL_SESSION]) {
+        for (const r of sqlite.prepare(sql).all() as Array<{ id: number }>) {
+          vecDel.run(r.id)
+          refDel.run(r.id)
           removed++
         }
       }
 
-      const stale = [...want.entries()].filter(([, w]) => {
-        const cur = refFind.get(w.kind, w.refId) as { id: number; content_hash: string } | undefined
-        return cur == null || cur.content_hash !== w.hash
-      })
+      const candidates = (
+        [
+          ...(sqlite.prepare(CANDIDATE_MEMORY).all(wmMem) as Array<Candidate>),
+          ...(sqlite.prepare(CANDIDATE_SESSION).all(wmSes) as Array<Candidate>)
+        ] as Array<Candidate>
+      ).filter((r) => r.text.trim().length > 0)
+
+      // `>=` watermark re-reads the boundary millisecond, but the content hash
+      // skips unchanged rows so nothing is re-embedded without a real change
+      const stale: Candidate[] = []
+      for (const c of candidates) {
+        const cur = refFind.get(c.kind, c.refId) as { content_hash: string } | undefined
+        if (cur && cur.content_hash === hashText(c.text)) continue
+        stale.push(c)
+      }
+
       let embedded = 0
       const embeddedSessions: number[] = []
       if (stale.length > 0) {
-        const vectors = await embedDocs(stale.map(([, w]) => w.text))
-        // one transaction per row: a ref row must never exist without its vector
-        const insertRow = sqlite.transaction(
-          (w: { kind: string; refId: number; text: string }, vec: VecInput, oldId?: number) => {
-          if (oldId != null) vecDel.run(oldId)
-          const refRow = refFind.get(w.kind, w.refId) as { id: number } | undefined
-          if (refRow != null) refDel.run(refRow.id)
-          const newId = Number(
-            (refIns.run(w.kind, w.refId, hashText(w.text)) as { lastInsertRowid: number | bigint }).lastInsertRowid
-          )
-          // vec0 rejects bound rowid params — inline our own integer id
-          sqlite
-            .prepare(`INSERT INTO semantic_vec (rowid, embedding) VALUES (${newId}, ?)`)
-            .run(vecParam(vec))
-        })
+        const vectors = await embedDocs(stale.map((w) => w.text))
         for (let i = 0; i < stale.length; i++) {
-          const [key, w] = stale[i]
-          insertRow(w, vectors[i], existing.get(key))
-          if (w.kind === 'session') embeddedSessions.push(w.refId)
+          insertRow(stale[i], vectors[i])
+          if (stale[i].kind === 'session') embeddedSessions.push(stale[i].refId)
           embedded++
         }
       }
-      return { embedded, removed, rows: existing.size - removed + embedded, embeddedSessions }
+
+      // watermark = the source tables' own MAX(updated_at), not wall clock:
+      // rows written mid-sync are picked up by the next event-driven sync
+      const maxOf = (table: string): number =>
+        (sqlite.prepare(`SELECT COALESCE(MAX(updated_at), 0) AS m FROM ${table}`).get() as { m: number }).m
+      wmSet.run('wm_memory', String(maxOf('memories')))
+      wmSet.run('wm_session', String(maxOf('sessions')))
+
+      const rows = (sqlite.prepare(`SELECT COUNT(*) AS n FROM semantic_refs`).get() as { n: number }).n
+      return { embedded, removed, rows, embeddedSessions }
     },
 
     async similarSessions(refId: number, k = 4): Promise<Array<{ refId: number; distance: number }>> {

@@ -256,6 +256,8 @@ body {
 .copyable { cursor: pointer; }
 .copyable:hover { color: var(--msql-accent); }
 .messages { display: flex; flex-direction: column; gap: var(--msql-sp-3); }
+.load-earlier { align-self: center; color: var(--msql-fg-dim); }
+.load-earlier:hover { color: var(--msql-accent); }
 .msg { border-radius: var(--msql-radius-md); padding: var(--msql-sp-3); border: 1px solid var(--msql-glass-border); background: var(--msql-glass-soft); }
 .msg-user { border-left: 2px solid var(--msql-accent); }
 .msg-assistant { border-left: 2px solid var(--msql-success); }

@@ -26,6 +26,12 @@ export interface SessionDetail {
     raw_path: string | null
   }
   messages: MessageRow[]
+  /** total messages in the session (may exceed the returned page) */
+  total: number
+  /** true when older messages exist above the returned page */
+  hasMore: boolean
+  /** seq of the first message in the returned page (cursor for load-more) */
+  firstSeq: number | null
 }
 
 export interface Overview {
@@ -65,16 +71,20 @@ export const api = {
     }>,
   setRelay: (id: number, targetId: number | null): Promise<{ ok: boolean }> =>
     window.memorysql.invoke('core-schema:sessions:setRelay', { id, targetId }) as Promise<{ ok: boolean }>,
-  getSession: (id: number): Promise<SessionDetail> =>
-    window.memorysql.invoke('core-schema:sessions:get', { id }) as Promise<SessionDetail>,
+  getSession: (id: number, opts?: { beforeSeq?: number }): Promise<SessionDetail> =>
+    window.memorysql.invoke(
+      'core-schema:sessions:get',
+      opts?.beforeSeq != null ? { id, beforeSeq: opts.beforeSeq } : { id }
+    ) as Promise<SessionDetail>,
   search: (q: string): Promise<SearchHit[]> =>
     window.memorysql.invoke('core-schema:search:all', { q, limit: 50 }) as Promise<SearchHit[]>,
   overview: (): Promise<Overview> =>
     window.memorysql.invoke('core-schema:stats:overview') as Promise<Overview>,
-  memories: (): Promise<Array<Record<string, unknown>>> =>
-    window.memorysql.invoke('core-schema:memories:list') as Promise<
-      Array<Record<string, unknown>>
-    >,
+  memories: (opts?: { offset?: number }): Promise<Array<Record<string, unknown>>> =>
+    window.memorysql.invoke(
+      'core-schema:memories:list',
+      opts?.offset != null ? { offset: opts.offset } : {}
+    ) as Promise<Array<Record<string, unknown>>>,
   captureStatus: (pluginId: string): Promise<CaptureStatus> =>
     window.memorysql.invoke(`${pluginId}:status`) as Promise<CaptureStatus>,
   scanNow: (pluginId: string): Promise<CaptureStatus> =>
@@ -85,6 +95,19 @@ export const api = {
       message?: string
     }>,
   onSessionsChanged: (cb: () => void): (() => void) => window.memorysql.on('push:sessions:changed', cb),
+  // core-launcher (开机自启动)
+  launcherGet: (): Promise<{ supported: boolean; openAtLogin: boolean; launchHidden: boolean }> =>
+    window.memorysql.invoke('core-launcher:get') as Promise<{
+      supported: boolean
+      openAtLogin: boolean
+      launchHidden: boolean
+    }>,
+  launcherSet: (enabled: boolean, launchHidden: boolean): Promise<{ ok: boolean; openAtLogin: boolean; launchHidden: boolean }> =>
+    window.memorysql.invoke('core-launcher:set', { enabled, launchHidden }) as Promise<{
+      ok: boolean
+      openAtLogin: boolean
+      launchHidden: boolean
+    }>,
   // privacy-export
   exportSession: (sessionId: number): Promise<{ saved: boolean; filePath?: string; redactions?: number }> =>
     window.memorysql.invoke('privacy-export:exportSession', { sessionId }) as Promise<{

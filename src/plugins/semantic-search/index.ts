@@ -57,8 +57,12 @@ const plugin: MemorySQLPlugin = {
       const model = EmbeddingModel.BGESmallZH
       const dims = 512
       // lazy singleton: the ~100MB model download happens on the FIRST embed,
-      // not at startup
+      // not at startup. After 15 idle minutes the ONNX session is released
+      // (its arena allocator otherwise keeps peak memory from ever returning
+      // to the OS); the next search/sync re-loads it lazily.
       let embedder: Awaited<ReturnType<typeof FlagEmbedding.init>> | null = null
+      let lastUsed = 0
+      let busy = 0
       const getEmbedder = async () => {
         if (!embedder) {
           embedder = await FlagEmbedding.init({
@@ -68,20 +72,39 @@ const plugin: MemorySQLPlugin = {
         }
         return embedder
       }
+      const releaseIdle = (): void => {
+        if (!embedder || busy > 0 || Date.now() - lastUsed < 15 * 60_000) return
+        const fe = embedder
+        embedder = null
+        // fastembed holds the ort InferenceSession in a private field; release
+        // it best-effort so the native arena heap is handed back to the OS
+        void (fe as unknown as { session?: { release?: () => Promise<void> } }).session?.release?.().catch(
+          () => {}
+        )
+      }
+      const idleTimer = setInterval(releaseIdle, 5 * 60_000)
+      idleTimer.unref?.()
+      const withEmbedder = async <T>(fn: (fe: Awaited<ReturnType<typeof FlagEmbedding.init>>) => Promise<T>): Promise<T> => {
+        busy++
+        try {
+          const fe = await getEmbedder()
+          lastUsed = Date.now()
+          return await fn(fe)
+        } finally {
+          busy--
+        }
+      }
       core = createSemanticCore({
         sqlite: ctx.db.sqlite,
         dims,
         model: 'bge-small-zh-v1.5',
-        embedDocs: async (texts) => {
-          const fe = await getEmbedder()
-          const out: number[][] = []
-          for await (const batch of fe.passageEmbed(texts, 32)) out.push(...batch)
-          return out
-        },
-        embedQuery: async (q) => {
-          const fe = await getEmbedder()
-          return fe.queryEmbed(q)
-        }
+        embedDocs: async (texts) =>
+          withEmbedder(async (fe) => {
+            const out: number[][] = []
+            for await (const batch of fe.passageEmbed(texts, 32)) out.push(...batch)
+            return out
+          }),
+        embedQuery: (q) => withEmbedder((fe) => fe.queryEmbed(q))
       })
     } catch (err) {
       ctx.log.error('semantic search init failed — staying disabled:', err)
@@ -173,10 +196,11 @@ const plugin: MemorySQLPlugin = {
       return { enabled: true, available: true, model: s.model, dims: s.dims, rows: s.rows }
     })
     ctx.ipc.handle('reindex', async () => {
-      const res = await core.sync()
-      // a manual reindex backfills relay marks across ALL sessions — but only
-      // NULL slots: user-curated relays (sessions:setRelay) are never wiped.
-      // Stale auto-marks pointing at deleted sessions are inert in the UI.
+      // manual reindex is explicit: rebuild from every source row — and it
+      // backfills relay marks across ALL sessions (only NULL slots:
+      // user-curated relays via sessions:setRelay are never wiped; stale
+      // auto-marks pointing at deleted sessions are inert in the UI)
+      const res = await core.sync({ full: true })
       await markSimilarity(allSessionIds())
       return { ...res, ok: true }
     })

@@ -32,7 +32,9 @@ const plugin: MemorySQLPlugin = {
       const { sessionId } = (payload ?? {}) as { sessionId?: number }
       if (!sessionId) throw new Error('exportSession requires sessionId')
 
-      const data = (await ctx.ipc.call('core-schema:sessions:get', { sessionId })) as {
+      // `all: true` lifts the tail-page cap — an export must contain the
+      // whole session; `id` (not sessionId) is the handler's contract
+      const data = (await ctx.ipc.call('core-schema:sessions:get', { id: sessionId, all: true })) as {
         session: {
           title: string | null
           external_id: string

@@ -7,6 +7,29 @@
 
 ---
 
+## 2026-09-02 · 内存占用治理(7 项)+ 开机自启动
+
+用户反馈"运行内存随使用越来越大"并要求设置页加开机自启动。探索代理全量排查后按影响落地 7 项优化 + 1 个新插件:
+
+**内存优化(A1–A7):**
+- **A1 GraphView cytoscape 泄漏(确定性):**每次"重新布局"新建实例而旧实例永不销毁(destroy 闭包被丢弃)→ 改 cyRef 持有,重建前先 destroy
+- **A2 语义索引增量同步(启用语义时的主因):**旧 sync 在每次 30s 防抖后全量读所有记忆+会话文本重算 hash → 改 `semantic_meta` 水位(`wm_memory`/`wm_session`),只读 `updated_at ≥ 水位` 的候选;移除检测改 LEFT JOIN 源表( tombstone/retired/文本变空必删,与水位无关,顺带修了"状态改 retired 但文本没变漏删"的隐患);全量路径保留给 `--reindex`(hash 幂等,实测二次 embedded=0)。**旧库平滑升级:**无水位时 wm=0 全量候选 + hash 跳过,零迁移
+- **A3 embedder 空闲释放:**ONNX arena 峰值不归还 OS → 每 5min 检查,空闲 15min 释放 InferenceSession(带 busy 计数防使用中释放),下次懒重建
+- **A4 会话消息 tail 分页:**旧 sessions:get 无上限,大会话一次拉全部消息(单条上限 100KB)→ 默认尾页 200 条 + `hasMore/firstSeq/total`,`beforeSeq` 上翻;详情页加"加载更早的消息"按钮;**顺带修 P0 级存量 bug:privacy-export 传 `{sessionId}` 而 handler 读 `{id}`(会话导出一调即抛),且导出必须 `all:true` 全量**
+- **A5 记忆列表分页:**memories:list 加 limit/offset(默认 500),MemoriesView 加"加载更多"
+- **A6 memory_get_session O(n²)→线性:**循环内 join 判界改累计长度预算
+- **A7 单实例锁:**GUI 路径 requestSingleInstanceLock,二实例聚焦已有窗口;headless(--scan/--sync 等)不受锁,可与 GUI 并行
+
+**开机自启动(core-launcher 插件):**
+- `app.setLoginItemSettings` 即时生效,Windows 落注册表 Run 键;`--hidden` 启动参数 = 开机只驻留托盘(托盘点击/秒搜热键唤起,MCP 照常);设置页「通用 · 启动」双开关(乐观更新);开发模式 supported=false(注册的是 electron.exe);`launchItems` 匹配自身可执行文件读回已注册参数
+- 遵循"一切功能皆插件",BUILTIN_PLUGINS 注册,PLUGIN_DESC 补中文
+
+**验证:**typecheck 零错 / vitest 78:78(新增:增量只 embed 新行、retired 免时间戳移除、sessions:get 四分页用例、memories:list 分页)/ import:scan 真实库无错 / --reindex 全量路径真库验收(rows=83 幂等)
+**遗留(记录):**列表虚拟化(react-window)、capture-* watcher 全目录 watch 与全文件重读、sync-folder 旧 bundle 无限累积(裁剪超 2000 后还会重放)、索引水位毫秒边界依赖 updated_at 单调
+**下一步:**发 v0.4.2(验收自动更新链路)→ MCP 目录登记 → 推广首发帖(材料已备)
+
+---
+
 ## 2026-08-31 · 全局代码审查:P0×2/P1×5 修复 + P2 清扫 + UI 走查三轮落地
 
 **审查方法:**审查子代理全量过 src/plugins(44 文件)并交叉核对 main/core 调用链;主进程与渲染层由主 agent 结合当日全部 diff 自审;发现逐条在代码中验证后采信。

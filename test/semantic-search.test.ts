@@ -92,7 +92,9 @@ describe('semantic core', () => {
     ins.run('旧的内容关于缓存策略')
     const c = core()
     await c.sync()
-    db.prepare('UPDATE memories SET content = ?').run('全新的内容关于限流策略')
+    // real mutations always bump updated_at (iron rule 6) — the watermark
+    // relies on that; content-only edits with a stale timestamp are missed
+    db.prepare('UPDATE memories SET content = ?, updated_at = 100').run('全新的内容关于限流策略')
     const res2 = await c.sync()
     expect(res2.embedded).toBe(1)
     expect((await c.search('限流策略', 1))[0]?.kind).toBe('memory')
@@ -101,6 +103,37 @@ describe('semantic core', () => {
     const res3 = await c.sync()
     expect(res3.removed).toBeGreaterThanOrEqual(1)
     expect(core().stats().rows).toBe(0)
+  })
+
+  it('incremental sync embeds only the newly added row', async () => {
+    const ins = db.prepare(
+      `INSERT INTO memories (kind, content, source, status, updated_at) VALUES ('fact', ?, 't', 'active', ?)`
+    )
+    ins.run('第一条关于部署的内容', 10)
+    ins.run('第二条关于测试的内容', 11)
+    const c = core()
+    await c.sync() // full (empty refs) — watermark = 11
+    ins.run('第三条关于监控的内容', 20)
+    const res = await c.sync()
+    expect(res.embedded).toBe(1)
+    expect(c.stats().rows).toBe(3)
+    // a no-op sync embeds nothing
+    expect((await c.sync()).embedded).toBe(0)
+  })
+
+  it('drops rows whose status flips to retired even without a timestamp bump', async () => {
+    db.prepare(
+      `INSERT INTO memories (kind, content, source, status, updated_at) VALUES ('fact', '会被停用的内容', 't', 'active', 1)`
+    ).run()
+    const c = core()
+    await c.sync()
+    expect(c.stats().rows).toBe(1)
+    // retirement doesn't change content or updated_at — the removal sweep
+    // (watermark-independent) must still catch it
+    db.prepare(`UPDATE memories SET status = 'retired'`).run()
+    const res = await c.sync()
+    expect(res.removed).toBe(1)
+    expect(c.stats().rows).toBe(0)
   })
 })
 
