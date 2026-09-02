@@ -1,6 +1,6 @@
 {
   "name": "memorysql",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Local-first knowledge base for personal developers: agent sessions, memory, personas — connect and continue.",
   "main": "./out/main/index.js",
   "type": "module",
