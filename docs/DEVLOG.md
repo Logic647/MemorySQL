@@ -26,9 +26,11 @@
 
 **验证:**typecheck 零错 / vitest 78:78(新增:增量只 embed 新行、retired 免时间戳移除、sessions:get 四分页用例、memories:list 分页)/ import:scan 真实库无错 / --reindex 全量路径真库验收(rows=83 幂等)
 
-**同日补丁 · 检查更新报错修复:**设置页「检查更新」报 `Cannot read properties of undefined (reading 'checkForUpdates')`。根因:electron-updater 的 CJS 入口用 `Object.defineProperty(exports, name, {get})` 定义全部导出,Node cjs-module-lexer 识别不了 → ESM `import('electron-updater')` 命名空间**没有命名导出**,updater 只在 `.default`(= module.exports)上,`const { autoUpdater } = import(...)` 解构出 undefined(node 实验实锤)。**且启动时静默自动更新和 updateNow 同坑,即自动更新链路自始未真正工作过。**修复:`loadUpdater()` 兼容取值;`checkUpdate` 改走 api.github.com releases 比对 semver(更新日志同款通道,不依赖被墙的 github.com 下载域,本机可端到端可用);`updateNow` 补 checkForUpdates 再 download;启动检查同步修。遗留提醒:自动更新的 latest.yml/安装包走 github.com,本机网络可能仍失败——检查可用性已不受影响,下载失败时走浏览器手动下载。
-**遗留(记录):**列表虚拟化(react-window)、capture-* watcher 全目录 watch 与全文件重读、sync-folder 旧 bundle 无限累积(裁剪超 2000 后还会重放)、索引水位毫秒边界依赖 updated_at 单调
-**下一步:**发 v0.4.2(验收自动更新链路)→ MCP 目录登记 → 推广首发帖(材料已备)
+**同日补丁 · 检查更新报错修复:**设置页「检查更新」报 `Cannot read properties of undefined (reading 'checkForUpdates')`。根因:electron-updater 的 CJS 入口用 `Object.defineProperty(exports, name, {get})` 定义全部导出,Node cjs-module-lexer 识别不了 → ESM `import('electron-updater')` 命名空间**没有命名导出**,updater 只在 `.default`(= module.exports)上,`const { autoUpdater } = import(...)` 解构出 undefined(node 实验实锤)。**且启动时静默自动更新和 updateNow 同坑,即自动更新链路自始未真正工作过。**修复:`loadUpdater()` 兼容取值;`checkUpdate` 改走 api.github.com releases 比对 semver(更新日志同款通道);`updateNow` 补 checkForUpdates 再 download;启动检查同步修。
+
+**同日发版 · v0.4.2:**bump + 本地 dist 烟测(unpacked `--hidden` 后台起 → MCP 顺延 8643 响应正常 → **启动即见 `Checking for update` 拉到 latest.yml,证实互操作修复生效且下载域本机可达**)→ tag v0.4.2 bundle 推送 → CI 双 job 绿。**坑(与 0.4.1 同款):**electron-builder 在 CI 的 publish 只上传了 blockmap 就结束(job 仍绿)→ 从 artifact(run download,177MB 三件套)用 `gh release upload --clobber` 补齐 → 转正 + notes。**Release 三件套验证齐**(exe 177MB/blockmap/latest.yml→0.4.2),`releases/download/v0.4.2/latest.yml` 公网可达。装 0.4.0/0.4.1 的机器需手动装本版(旧版更新链路是坏的),本版之后可自动更新。
+**遗留(记录):**列表虚拟化(react-window)、capture-* watcher 全目录 watch 与全文件重读、sync-folder 旧 bundle 无限累积(裁剪超 2000 后还会重放)、索引水位毫秒边界依赖 updated_at 单调;winget 新版本 PR(每版一个,等 0.4.0 PR 版主)+ scoop bucket autoupdate 自动跟
+**下一步:**验收自动更新(0.4.2 手动装好后,下一版静默收)→ MCP 目录登记 → 推广首发帖(材料已备)
 
 ---
 
