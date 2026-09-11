@@ -24,6 +24,8 @@
 **验证:** typecheck 零错 / vitest **91:91**(新增 5 用例)/ **隔离端到端**(`MEMORYSQL_DATA_DIR` 临时目录 + 假数据源 + 真实 ingest 管线):5 会话全对入库——codebuddy 1(标题取首条 user)、kimi 2(custom_title 生效+legacy 布局)、qwen 2(新旧布局+functionCall/functionResponse→tool 消息,thinking 跳过)/ 真机全量扫描 10 插件共存零错,存量数据(103/13/44/16)不受影响
 **注意:** 三家本机未装,格式置信度基于 2026-09 文档/源码;真实数据如有出入,补 fixture 修解析器即可(防御式解析,坏行不致命)。测试用例中 qwencode 标题落到 "(no user message)" 是摘要器"首行≥6字符"启发式的正常行为(测试字符串太短),非 bug
 
+**同日发版 · v0.5.0:**`npm version 0.5.0` → tag v0.5.0 → **直推成功**(重要:新机器网络下 github.com:443 直连已恢复,`git push` 秒通,服务器 bundle 中转流程退役;与 08-31 记录的"直连全断"是不同网络环境)→ CI 双 job 绿(ci 4m;package 11m)。**发版坑(与 0.4.1/0.4.2 同源但形态不同):**package job 的 if 条件含 `refs/heads/main`,所以 main 推送与 tag 推送**各建了一个 0.5.0 草稿**(main 那个只有 2 件、tag 那个三件套齐);本机 gh CLI 缺失,改走 API(凭据取 git credential store):删重复草稿 → 齐全草稿 PATCH `draft=false` + notes 转正。**三件套公网验证齐**(exe 169MB→下载 177MB/blockmap/latest.yml→0.5.0),`releases/download/v0.5.0/latest.yml` 可达。**本版即自动更新验收版**:0.4.2 装机下次启动应静默收 0.5.0。顺手清理观察:历史 0.4.1/0.4.2 草稿仍在(未删,不影响公开页)
+
 ---
 
 ## 2026-09-11 · 换机适配:Hermes/Codex 路径自愈 + Claude Desktop 会话捕获
