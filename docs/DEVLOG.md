@@ -26,6 +26,8 @@
 
 **同日发版 · v0.5.0:**`npm version 0.5.0` → tag v0.5.0 → **直推成功**(重要:新机器网络下 github.com:443 直连已恢复,`git push` 秒通,服务器 bundle 中转流程退役;与 08-31 记录的"直连全断"是不同网络环境)→ CI 双 job 绿(ci 4m;package 11m)。**发版坑(与 0.4.1/0.4.2 同源但形态不同):**package job 的 if 条件含 `refs/heads/main`,所以 main 推送与 tag 推送**各建了一个 0.5.0 草稿**(main 那个只有 2 件、tag 那个三件套齐);本机 gh CLI 缺失,改走 API(凭据取 git credential store):删重复草稿 → 齐全草稿 PATCH `draft=false` + notes 转正。**三件套公网验证齐**(exe 169MB→下载 177MB/blockmap/latest.yml→0.5.0),`releases/download/v0.5.0/latest.yml` 可达。**本版即自动更新验收版**:0.4.2 装机下次启动应静默收 0.5.0。顺手清理观察:历史 0.4.1/0.4.2 草稿仍在(未删,不影响公开页)
 
+**自动更新验收实况(用户反馈"重启没收到提示"):**诊断反转——`%LOCALAPPDATA%\memorysql-updater\pending\` 里躺着 0.5.0 安装包(177MB,恰为用户重启时刻),**启动检查其实成功了**:checkForUpdatesAndNotify 静默下载完成,唯一通知是系统 toast(被错过);安装发生在**下次退出**(autoInstallOnAppQuit 默认开),即"退出一次应用=装上新版",手动检查走 api.github.com 所以显示正常。体验缺陷修掉:updaterState 跟踪(available/downloaded/error)+ 新通道 `memorysql:host:updateStatus` + 设置页「关于」15s 轮询常驻显示"已下载待安装/后台下载中/检查失败"——此修复随下个版本发出(0.5.0 的启动行为不变)
+
 ---
 
 ## 2026-09-11 · 换机适配:Hermes/Codex 路径自愈 + Claude Desktop 会话捕获

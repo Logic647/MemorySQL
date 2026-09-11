@@ -324,6 +324,13 @@ export const api = {
       version?: string
       reason?: string
     }>,
+  updateStatus: (): Promise<{ available?: boolean; version?: string; downloaded?: boolean; error?: string }> =>
+    window.memorysql.invoke('memorysql:host:updateStatus') as Promise<{
+      available?: boolean
+      version?: string
+      downloaded?: boolean
+      error?: string
+    }>,
   updateNow: (): Promise<{ ok: boolean; relaunching?: boolean }> =>
     window.memorysql.invoke('memorysql:host:updateNow') as Promise<{ ok: boolean; relaunching?: boolean }>,
   releases: (): Promise<{ releases: Array<{ tag: string; date: string | null; notes: string }>; error?: string }> =>

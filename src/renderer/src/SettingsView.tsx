@@ -559,6 +559,26 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
   const [update, setUpdate] = useState<{ available: boolean; version?: string; reason?: string } | null>(null)
   const [checking, setChecking] = useState(false)
   const [log, setLog] = useState<Array<{ tag: string; date: string | null; notes: string }>>([])
+  const [upStatus, setUpStatus] = useState<{
+    available?: boolean
+    version?: string
+    downloaded?: boolean
+    error?: string
+  } | null>(null)
+
+  useEffect(() => {
+    // startup auto-update happens silently in the main process; poll its state
+    // so "已下载待安装" is actually visible somewhere
+    const pull = (): void => {
+      void api
+        .updateStatus()
+        .then(setUpStatus)
+        .catch(() => {})
+    }
+    pull()
+    const t = setInterval(pull, 15000)
+    return () => clearInterval(t)
+  }, [])
 
   useEffect(() => {
     void api.appInfo().then(setInfo).catch(() => setInfo(null))
@@ -599,6 +619,17 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
           BUG 反馈
         </button>
       </div>
+      {upStatus?.downloaded && (
+        <p className="hint">
+          新版本 v{upStatus.version ?? ''} 已下载完毕——退出应用后会自动安装,重新打开即是新版。
+        </p>
+      )}
+      {upStatus?.available && !upStatus.downloaded && (
+        <p className="hint">新版本 v{upStatus.version ?? ''} 检测到,正在后台下载…(完成后退出应用即自动安装)</p>
+      )}
+      {upStatus?.error && upStatus.available === undefined && (
+        <p className="hint">自动检查更新失败({upStatus.error}),可点上方按钮手动检查。</p>
+      )}
       {update && (
         <p className="hint">
           {update.available ? `发现新版本 v${update.version}!` : update.reason ?? '已是最新版本'}

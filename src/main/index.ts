@@ -267,6 +267,17 @@ async function loadExternalPlugins(dataDir: string, host: PluginHost): Promise<v
 
 const hostChannels = new Map<string, (payload: Record<string, unknown>) => unknown>()
 
+/** live updater state, surfaced to the renderer via memorysql:host:updateStatus —
+ * the OS toast from checkForUpdatesAndNotify is easy to miss, so the Settings
+ * page renders this instead. */
+const updaterState: {
+  available?: boolean
+  version?: string
+  downloaded?: boolean
+  error?: string
+  checkedAt?: number
+} = {}
+
 type AppUpdater = (typeof import('electron-updater'))['autoUpdater']
 
 /**
@@ -423,6 +434,7 @@ function registerHostChannels(
     setImmediate(() => autoUpdater.quitAndInstall())
     return { ok: true, relaunching: true }
   })
+  hostChannels.set('memorysql:host:updateStatus', () => ({ ...updaterState }))
   hostChannels.set('memorysql:host:releases', async () => {
     try {
       const res = await fetch('https://api.github.com/repos/Logic647/MemorySQL/releases?per_page=10', {
@@ -576,6 +588,26 @@ app.whenReady().then(async () => {
       try {
         const autoUpdater = await loadUpdater()
         autoUpdater.autoDownload = true
+        autoUpdater.on('update-available', (info: { version?: string }) => {
+          updaterState.available = true
+          updaterState.version = info?.version
+          updaterState.error = undefined
+          updaterState.checkedAt = Date.now()
+        })
+        autoUpdater.on('update-not-available', (info: { version?: string }) => {
+          updaterState.available = false
+          updaterState.version = info?.version
+          updaterState.checkedAt = Date.now()
+        })
+        autoUpdater.on('update-downloaded', (info: { version?: string }) => {
+          updaterState.available = true
+          updaterState.downloaded = true
+          updaterState.version = info?.version
+          updaterState.checkedAt = Date.now()
+        })
+        autoUpdater.on('error', (err: Error) => {
+          updaterState.error = String(err?.message ?? err)
+        })
         void autoUpdater.checkForUpdatesAndNotify().catch(() => {})
       } catch {
         /* updater is optional */
