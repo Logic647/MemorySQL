@@ -1,4 +1,6 @@
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import type { CaptureStatus, RawMessage, RawSession } from '../../shared/types'
@@ -156,6 +158,49 @@ function importHermesMemories(
   return changed
 }
 
+/**
+ * Hermes installs register an uninstall entry (installer builds) or live at a
+ * drive root (portable layout "<install>\data\hermes-home"). A profilesRoot
+ * recorded on another machine must not wedge detection, so probe: configured →
+ * registry InstallLocation → every drive root → user home.
+ */
+export function resolveHermesHome(
+  configured: string | undefined,
+  exists: (p: string) => boolean = fs.existsSync,
+  registryInstallDir: () => string | null = readRegistryInstallDir
+): string | undefined {
+  if (configured && exists(configured)) return configured
+  const candidates: string[] = []
+  const regDir = registryInstallDir()
+  if (regDir) candidates.push(path.join(regDir, 'data', 'hermes-home'))
+  for (const drive of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+    candidates.push(`${drive}:\\Hermes Agent CN Desktop\\data\\hermes-home`)
+  }
+  candidates.push(path.join(os.homedir(), 'Hermes Agent CN Desktop', 'data', 'hermes-home'))
+  return candidates.find((c) => exists(c)) ?? configured
+}
+
+function readRegistryInstallDir(): string | null {
+  if (process.platform !== 'win32') return null
+  try {
+    const out = execFileSync(
+      'reg',
+      [
+        'query',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Hermes Agent CN Desktop',
+        '/v',
+        'InstallLocation'
+      ],
+      { encoding: 'utf-8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'] }
+    )
+    const m = out.match(/REG_SZ\s+(.+)/)
+    if (!m) return null
+    return m[1].trim().replace(/^"|"$/g, '') || null
+  } catch {
+    return null
+  }
+}
+
 let lastStatus: CaptureStatus = {
   pluginId: 'capture-hermes',
   agentType: 'hermes',
@@ -176,16 +221,19 @@ const plugin: MemorySQLPlugin = {
   },
 
   init(ctx) {
-    const profilesRoot = ctx.settings.get(
-      'profilesRoot',
-      'D:\\Hermes Agent CN Desktop\\data\\hermes-home'
-    )
-    lastStatus = { ...lastStatus, sourceRoot: profilesRoot, available: fs.existsSync(profilesRoot) }
+    const configured = ctx.settings.get<string | undefined>('profilesRoot', undefined)
+    const profilesRoot = resolveHermesHome(configured)
+    if (profilesRoot && profilesRoot !== configured) ctx.settings.set('profilesRoot', profilesRoot)
+    lastStatus = { ...lastStatus, sourceRoot: profilesRoot ?? configured ?? '', available: !!profilesRoot && fs.existsSync(profilesRoot) }
 
     const scan = async (): Promise<CaptureStatus> => {
       try {
         const ingest = ctx.services.use<IngestService>('ingest')
         const memories = ctx.services.use<MemoriesService>('memories')
+        if (!profilesRoot || !fs.existsSync(profilesRoot)) {
+          lastStatus = { ...lastStatus, available: false, lastError: '未找到 Hermes 数据目录' }
+          return lastStatus
+        }
         const sessions: RawSession[] = []
         for (const { dbPath, label } of findHermesDbs(profilesRoot)) {
           try {

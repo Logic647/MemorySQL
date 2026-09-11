@@ -45,7 +45,11 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
     },
 
     init(ctx: PluginContext) {
-      const sourceRoot = ctx.settings.get('sourceRoot', spec.defaultRoot)
+      // a configured root from another machine/install (or a since-moved dir)
+      // must not wedge the adapter into "未检测到" — fall back to the default
+      const configured = ctx.settings.get<string | undefined>('sourceRoot', undefined)
+      const sourceRoot = configured && fs.existsSync(configured) ? configured : spec.defaultRoot
+      if (sourceRoot !== configured) ctx.settings.set('sourceRoot', sourceRoot)
       const exists = spec.sourceExists
         ? spec.sourceExists(sourceRoot)
         : fs.existsSync(sourceRoot)

@@ -122,6 +122,11 @@ export function createIngestService(deps: IngestDeps): IngestService {
   const summarizeSession = async (
     s: RawSession
   ): Promise<{ title: string; summary: string }> => {
+    // adapter-supplied titles are authoritative, and zero-message sessions
+    // (e.g. Claude Desktop metadata) have nothing to summarize — no LLM spend
+    if (s.title || s.messages.length === 0) {
+      return { title: s.title ?? fallbackTitle(s), summary: '' }
+    }
     const provider = getSummarizer()
     if (provider) {
       try {

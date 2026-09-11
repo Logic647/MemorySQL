@@ -7,6 +7,21 @@
 
 ---
 
+## 2026-09-11 · 换机适配:Hermes/Codex 路径自愈 + Claude Desktop 会话捕获
+
+**背景:** 用户换机(项目 `F:\桌面` → `H:\桌面`,用户目录 `C:\Users\18144` → `C:\Users\Logic`)后反馈:Hermes desktop 无法识别;Claude desktop 无法识别且开启会话捕获后记忆界面也无显示。
+
+**根因与修复(4 项):**
+- **Hermes 路径失效:** settings 里 `capture-hermes:profilesRoot` 还是旧机 `D:\…`,新机装在 `G:\Hermes Agent CN Desktop`(注册表 InstallLocation 实锤;0.7.0 新布局 state.db/memories 直接在 hermes-home 根,代码本就兼容)。修复:`resolveHermesHome` 探测链 = 已配置(存在则用)→ 注册表 InstallLocation → 全盘符 `X:\Hermes Agent CN Desktop\data\hermes-home` → 用户主目录,命中后回写配置;探测失败时 scan 返回 available=false + 明确 lastError
+- **Claude Desktop 无对话正文(Anthropic 设计如此):** 桌面版(数据目录 `%LOCALAPPDATA%\Claude-3p`)通过 Agent SDK 驱动内置 claude.exe,**transcript 从不落盘**(`~/.claude/projects` 空、MSIX 包目录/IndexedDB/local-session 均无)。可捕获的只有两样:`claude-code-sessions/<acct>/<slot>/local_*.json` 会话元数据(sessionId/cliSessionId/cwd/title/createdAt/lastActivityAt)+ `~/.claude/history.jsonl` 每条交互提示(display/project/sessionId/timestamp)。修复:capture-claudecode 改三源合并——完整 transcript(存在时)> 桌面元数据(零消息会话,带标题,cwd 可归组项目)> history 按 sessionId 分组的提示会话;`cliSessionId` 命中 history 时合并去重,transcript 命中时跳过 history 行
+- **codex 未走 capture-factory:** capture-factory 加了"配置 sourceRoot 失效自动回退默认路径"(治所有走 factory 的适配器),但 capture-codex 是独立实现漏掉了——单独补上同款回退(旧机 `C:\Users\18144\.codex\sessions` → 本机 `~/.codex/sessions`)
+- **ingest LLM 浪费:** 自带标题或零消息的会话直接跳过 summarizer(否则本次 95 个 history 会话 = 95 次 LLM 调用)
+
+**验证:** typecheck 零错 / vitest **86:86**(新增 8 用例:桌面元数据解析与无 sessionId 拒绝 / local_*.json 文件发现 / history 分组与 skipSessionIds / resolveHermesHome 三分支)/ 真实库 `import:scan`:**claudecode 103 入库**(8 桌面元数据 + 95 history 分组)、**codex +2**(本机 9 月会话)、**hermes +1**(G: 新实例)、**记忆候选 +7**(distill:claudecode×6 + zcode:70——记忆界面恢复显示)
+**遗留:** 桌面版会话无对话正文是上游限制(元数据行点了进去是空的,标题/项目/搜索可用);history.jsonl 只有用户侧无回复;claudecode watcher 只盯 `~/.claude/projects`,桌面版新会话要等下次启动/手动扫描;`capture-codex` 后续可考虑并入 capture-factory 消除重复
+
+---
+
 ## 2026-09-02 · 内存占用治理(7 项)+ 开机自启动
 
 用户反馈"运行内存随使用越来越大"并要求设置页加开机自启动。探索代理全量排查后按影响落地 7 项优化 + 1 个新插件:

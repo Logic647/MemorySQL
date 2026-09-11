@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { parseClaudeJsonl } from '../src/plugins/capture-claudecode/claude-parser'
+import {
+  findDesktopMetaFiles,
+  parseClaudeJsonl,
+  parseDesktopMeta,
+  parseHistoryJsonl
+} from '../src/plugins/capture-claudecode/claude-parser'
+import { resolveHermesHome } from '../src/plugins/capture-hermes/index'
 import { parseGeminiHistory } from '../src/plugins/capture-gemini/gemini-parser'
 import { parseOpencodeStorage } from '../src/plugins/capture-opencode/opencode-parser'
 import fs from 'node:fs'
@@ -47,6 +53,95 @@ describe('parseClaudeJsonl', () => {
     expect(roles).toEqual(['user', 'assistant', 'tool'])
     expect(s!.messages[1].toolName).toBeUndefined()
     expect(s!.messages[2].toolName).toBe('edit')
+  })
+})
+
+describe('parseDesktopMeta', () => {
+  const meta = JSON.stringify({
+    sessionId: 'local_2577',
+    cliSessionId: '13ffe9d1',
+    cwd: 'H:\\temp',
+    title: '城乡融合论文',
+    createdAt: 1781088296262,
+    lastActivityAt: 1781088536468
+  })
+
+  it('turns a Claude Desktop metadata file into a titled zero-message session', () => {
+    const out = parseDesktopMeta('local_2577.json', meta)
+    expect(out).not.toBeNull()
+    expect(out!.session.externalId).toBe('desktop:local_2577')
+    expect(out!.session.agentType).toBe('claudecode')
+    expect(out!.session.title).toBe('城乡融合论文')
+    expect(out!.session.cwd).toBe('H:\\temp')
+    expect(out!.session.messages).toHaveLength(0)
+    expect(out!.session.startedAt).toBe(1781088296)
+    expect(out!.cliSessionId).toBe('13ffe9d1')
+  })
+
+  it('rejects files without a sessionId', () => {
+    expect(parseDesktopMeta('x.json', '{"cwd":"C:\\\\w"}')).toBeNull()
+    expect(parseDesktopMeta('x.json', 'not json')).toBeNull()
+  })
+})
+
+describe('findDesktopMetaFiles', () => {
+  it('collects only local_*.json files under nested dirs', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ccd-meta-'))
+    fs.mkdirSync(path.join(tmp, 'acct', 'slot'), { recursive: true })
+    fs.writeFileSync(path.join(tmp, 'acct', 'slot', 'local_a.json'), '{}')
+    fs.writeFileSync(path.join(tmp, 'acct', 'slot', 'other.json'), '{}')
+    fs.writeFileSync(path.join(tmp, 'acct', 'slot', 'local_b.jsonl'), '{}')
+    const files = findDesktopMetaFiles(tmp)
+    expect(files).toHaveLength(1)
+    expect(files[0].endsWith('local_a.json')).toBe(true)
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+})
+
+describe('parseHistoryJsonl', () => {
+  const history = [
+    JSON.stringify({ display: 'init', timestamp: 1778155168103, project: 'G:\\', sessionId: 's1' }),
+    JSON.stringify({ display: '修复bug', timestamp: 1778155637203, project: 'D:\\a1', sessionId: 's2' }),
+    JSON.stringify({ display: '再修一个', timestamp: 1778155640000, project: 'D:\\a1', sessionId: 's2' }),
+    JSON.stringify({ display: '已有完整记录', timestamp: 1778155999999, project: 'D:\\a1', sessionId: 's9' })
+  ].join('\n')
+
+  it('groups prompts by sessionId with cwd and time range', () => {
+    const out = parseHistoryJsonl(history, 'history.jsonl')
+    expect(out).toHaveLength(3)
+    const s2 = out.find((s) => s.externalId === 'history:s2')!
+    expect(s2.messages).toHaveLength(2)
+    expect(s2.cwd).toBe('D:\\a1')
+    expect(s2.startedAt).toBe(1778155637)
+    expect(s2.endedAt).toBe(1778155640)
+  })
+
+  it('skips session ids covered by real transcripts', () => {
+    const out = parseHistoryJsonl(history, 'history.jsonl', new Set(['s9']))
+    expect(out.find((s) => s.externalId === 'history:s9')).toBeUndefined()
+    expect(out).toHaveLength(2)
+  })
+})
+
+describe('resolveHermesHome', () => {
+  it('keeps a configured root that still exists', () => {
+    expect(resolveHermesHome('D:\\hermes-home', (p) => p === 'D:\\hermes-home', () => null)).toBe(
+      'D:\\hermes-home'
+    )
+  })
+
+  it('probes registry install dir and drive roots when the configured root vanished', () => {
+    expect(
+      resolveHermesHome('D:\\gone', (p) => p === 'G:\\Hermes Agent CN Desktop\\data\\hermes-home', () => 'G:\\Hermes Agent CN Desktop')
+    ).toBe('G:\\Hermes Agent CN Desktop\\data\\hermes-home')
+    expect(
+      resolveHermesHome('D:\\gone', (p) => p === 'C:\\Hermes Agent CN Desktop\\data\\hermes-home', () => null)
+    ).toBe('C:\\Hermes Agent CN Desktop\\data\\hermes-home')
+  })
+
+  it('falls back to the configured value when nothing is found', () => {
+    expect(resolveHermesHome('D:\\gone', () => false, () => null)).toBe('D:\\gone')
+    expect(resolveHermesHome(undefined, () => false, () => null)).toBeUndefined()
   })
 })
 

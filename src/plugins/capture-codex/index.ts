@@ -29,10 +29,11 @@ const plugin: MemorySQLPlugin = {
   },
 
   init(ctx) {
-    const sourceRoot = ctx.settings.get(
-      'sourceRoot',
-      path.join(os.homedir(), '.codex', 'sessions')
-    )
+    // a configured root recorded on another machine must not wedge detection
+    const configured = ctx.settings.get<string | undefined>('sourceRoot', undefined)
+    const defaultRoot = path.join(os.homedir(), '.codex', 'sessions')
+    const sourceRoot = configured && fs.existsSync(configured) ? configured : defaultRoot
+    if (sourceRoot !== configured) ctx.settings.set('sourceRoot', sourceRoot)
     lastStatus = { ...lastStatus, sourceRoot, available: fs.existsSync(sourceRoot) }
 
     const parseFile = (filePath: string): RawSession | null => {
