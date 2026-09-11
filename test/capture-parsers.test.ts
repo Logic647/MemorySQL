@@ -8,6 +8,12 @@ import {
 import { resolveHermesHome } from '../src/plugins/capture-hermes/index'
 import { parseGeminiHistory } from '../src/plugins/capture-gemini/gemini-parser'
 import { parseOpencodeStorage } from '../src/plugins/capture-opencode/opencode-parser'
+import { parseQwenJsonl } from '../src/plugins/capture-qwencode/qwencode-parser'
+import {
+  buildKimiSession,
+  findKimiSessions,
+  parseKimiContext
+} from '../src/plugins/capture-kimicli/kimicli-parser'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -189,6 +195,135 @@ describe('parseOpencodeStorage', () => {
     expect(s.messages).toHaveLength(2)
     expect(s.messages[1].content).toContain('日志显示超时')
     expect(s.messages[1].content).toContain('tool call')
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+})
+
+describe('parseClaudeJsonl (codebuddy reuse)', () => {
+  it('emits the requested agentType instead of claudecode', () => {
+    const s = parseClaudeJsonl(
+      'x.jsonl',
+      JSON.stringify({
+        type: 'user',
+        sessionId: 'cb-1',
+        cwd: 'C:\w',
+        timestamp: '2026-09-01T09:00:00Z',
+        message: { role: 'user', content: 'hi' }
+      }),
+      'codebuddy'
+    )
+    expect(s!.agentType).toBe('codebuddy')
+    expect(s!.externalId).toBe('cb-1')
+  })
+})
+
+describe('parseQwenJsonl', () => {
+  const sample = [
+    JSON.stringify({
+      uuid: 'u1',
+      parentUuid: null,
+      sessionId: 'qs-1',
+      timestamp: '2026-09-01T10:00:00Z',
+      cwd: 'D:\proj',
+      type: 'user',
+      message: { role: 'user', parts: [{ text: '帮我写个爬虫' }] }
+    }),
+    JSON.stringify({
+      uuid: 'u2',
+      parentUuid: 'u1',
+      timestamp: '2026-09-01T10:00:05Z',
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        parts: [{ text: '好的' }, { functionCall: { name: 'write_file', args: { path: 'a.py' } } }]
+      }
+    }),
+    JSON.stringify({
+      uuid: 'u3',
+      parentUuid: 'u2',
+      timestamp: '2026-09-01T10:00:09Z',
+      type: 'tool_result',
+      message: { role: 'user', parts: [{ functionResponse: { name: 'write_file', response: { output: 'ok' } } }] },
+      toolCallResult: { displayName: 'write_file' }
+    }),
+    JSON.stringify({
+      uuid: 'u4',
+      timestamp: '2026-09-01T10:00:10Z',
+      type: 'user',
+      isSidechain: true,
+      message: { role: 'user', parts: [{ text: 'sidechain 应跳过' }] }
+    }),
+    JSON.stringify({ uuid: 'u5', timestamp: '2026-09-01T10:00:11Z', type: 'system', subtype: 'chat_compression' }),
+    'not json at all'
+  ].join('\n')
+
+  it('maps parts, functionCalls and tool_results, skipping sidechains', () => {
+    const s = parseQwenJsonl('chats/qs-1.jsonl', sample)
+    expect(s).not.toBeNull()
+    expect(s!.externalId).toBe('qs-1')
+    expect(s!.agentType).toBe('qwencode')
+    expect(s!.cwd).toBe('D:\proj')
+    expect(s!.startedAt).toBe(Math.floor(Date.parse('2026-09-01T10:00:00Z') / 1000))
+    // system records carry timestamps too — they extend the session window
+    expect(s!.endedAt).toBe(Math.floor(Date.parse('2026-09-01T10:00:11Z') / 1000))
+    const roles = s!.messages.map((m) => m.role)
+    expect(roles).toEqual(['user', 'assistant', 'tool', 'tool'])
+    expect(s!.messages[1].content).toBe('好的')
+    expect(s!.messages[2].toolName).toBe('write_file')
+    expect(s!.messages[2].content).toContain('a.py')
+    expect(s!.messages[3].toolName).toBe('write_file')
+    expect(s!.messages[3].content).toContain('ok')
+  })
+
+  it('returns null for a transcript without parseable turns', () => {
+    expect(parseQwenJsonl('x.jsonl', 'garbage\nlines')).toBeNull()
+  })
+})
+
+describe('parseKimiContext', () => {
+  const sample = [
+    JSON.stringify({ role: '_system_prompt', content: '系统提示不算对话' }),
+    JSON.stringify({ role: 'user', content: '你好' }),
+    JSON.stringify({ role: 'assistant', content: [{ text: '你好!' }, { thinking: '内心独白' }] }),
+    JSON.stringify({ role: 'assistant', content: [], tool_calls: [{ id: 't1', name: 'run_cmd', arguments: { cmd: 'ls' } }] }),
+    'broken line'
+  ].join('\n')
+
+  it('extracts user/assistant text and tool calls, skipping metadata roles', () => {
+    const messages = parseKimiContext(sample)
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool'])
+    expect(messages[0].content).toBe('你好')
+    expect(messages[1].content).toBe('你好!')
+    expect(messages[2].toolName).toBe('run_cmd')
+    expect(messages[2].content).toContain('ls')
+  })
+})
+
+describe('kimi session discovery', () => {
+  it('finds current per-dir sessions and legacy flat files', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-test-'))
+    const sessions = path.join(tmp, 'sessions', 'hashabc')
+    fs.mkdirSync(path.join(sessions, 'uuid-1'), { recursive: true })
+    fs.writeFileSync(path.join(sessions, 'uuid-1', 'context.jsonl'), JSON.stringify({ role: 'user', content: 'hi' }))
+    fs.writeFileSync(path.join(sessions, 'uuid-1', 'state.json'), JSON.stringify({ custom_title: '调试会话' }))
+    fs.writeFileSync(path.join(sessions, 'uuid-2.jsonl'), JSON.stringify({ role: 'user', content: 'legacy' }))
+    fs.writeFileSync(path.join(sessions, 'notes.txt'), 'ignore')
+
+    const refs = findKimiSessions(path.join(tmp, 'sessions'))
+    expect(refs).toHaveLength(2)
+    const current = refs.find((r) => r.id === 'uuid-1')!
+    expect(current.legacy).toBe(false)
+    expect(current.stateFile).toBeDefined()
+    const legacy = refs.find((r) => r.id === 'uuid-2')!
+    expect(legacy.legacy).toBe(true)
+
+    const s = buildKimiSession(current, fs.readFileSync(current.contextFile, 'utf-8'), '调试会话')
+    expect(s).not.toBeNull()
+    expect(s!.agentType).toBe('kimicli')
+    expect(s!.title).toBe('调试会话')
+    expect(s!.externalId).toBe('uuid-1')
+    expect(s!.messages).toHaveLength(1)
+    expect(s!.endedAt).toBeDefined()
     fs.rmSync(tmp, { recursive: true, force: true })
   })
 })

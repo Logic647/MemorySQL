@@ -274,7 +274,8 @@ body {
 .badge-codex { color: var(--msql-agent-codex); border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.08); }
 .badge-zcode { color: #7fa8e0; border-color: rgba(79, 140, 255, 0.4); background: rgba(79, 140, 255, 0.08); }
 .badge-hermes { color: var(--msql-agent-hermes); border-color: rgba(167, 139, 250, 0.4); background: rgba(167, 139, 250, 0.08); }
-.badge-cursor, .badge-gemini, .badge-claudecode, .badge-opencode { color: var(--msql-fg-muted); border-color: var(--msql-glass-border-strong); background: rgba(255, 255, 255, 0.04); }
+.badge-cursor, .badge-gemini, .badge-claudecode, .badge-opencode,
+.badge-qwencode, .badge-kimicli, .badge-codebuddy { color: var(--msql-fg-muted); border-color: var(--msql-glass-border-strong); background: rgba(255, 255, 255, 0.04); }
 
 /* ---------- search hits ---------- */
 .hit {

@@ -7,6 +7,25 @@
 
 ---
 
+## 2026-09-12 · 国内 agent 适配:Qwen Code + Kimi CLI + CodeBuddy Code
+
+**调研先行**(本机三家均未安装,格式从官方文档/源码确认,2026-09 时点):
+- **Qwen Code**(QwenLM/qwen-code,Gemini CLI fork,读源码):`~/.qwen/projects/<proj>/chats/<sid>.jsonl`(旧版 `tmp/<id>/chats/`),JSONL 树,`type: user/assistant/tool_result/system`,`message.parts` 为 GenAI 线格式({text}/{functionCall}/{functionResponse}),`isSidechain` 子代理
+- **Kimi CLI**(MoonshotAI,官方文档+源码):`~/.kimi/sessions/<md5(cwd)>/<uuid>/context.jsonl`(旧版平铺 `<uuid>.jsonl`),kosong Message 行({role, content: string|parts, tool_calls?}),`_` 前缀角色=元数据,`state.json` 有 custom_title,**无逐条时间戳**(用文件 mtime);MCP 配置 `~/.kimi/mcp.json`
+- **CodeBuddy Code**(腾讯,官方文档):`~/.codebuddy/projects/**/*.jsonl`,**与 Claude Code 同构**;MCP 配置 `~/.codebuddy/mcp.json`
+- **不可行排除**:Trae CN(会话库 SQLCipher 加密,密钥只在进程内存)、通义灵码(会话云端不落盘);iFlow CLI 可行但版本差异大,留作后续
+
+**实现(3 插件全走 capture-factory):**
+- `capture-codebuddy`:`parseClaudeJsonl` 加可选 agentType 参数直接复用(含 CODEBUDDY_CONFIG_DIR 重定向)
+- `capture-qwencode`:新解析器(parts→文本、functionCall→tool 消息、tool_result 的 functionResponse→tool 消息、跳 sidechain/system);发现逻辑只认**父目录为 chats 的 .jsonl**(新旧布局通吃,排除 checkpoints/shell_history/debug/plans)
+- `capture-kimicli`:新解析器 + 新旧两版目录发现;state.json 的 custom_title 做 title;content 防御式(string/parts 兼容,ThinkPart 跳过)
+- 接线:AgentType 字面量 ×3、BUILTIN_PLUGINS、设置页(PLUGIN_DESC/CAPTURE_AGENTS)、连接向导(AGENT_CONNECTORS ×3:qwen=stdio、kimi={url}、codebuddy=http;已查文档确认各配置路径)、badge 样式;**顺手修 App.tsx 侧栏 CAPTURE_PLUGINS 残缺问题**(原来只有 codex/zcode/hermes 三个,claudecode/gemini 等从不在侧栏过滤里)补全为 10 个
+
+**验证:** typecheck 零错 / vitest **91:91**(新增 5 用例)/ **隔离端到端**(`MEMORYSQL_DATA_DIR` 临时目录 + 假数据源 + 真实 ingest 管线):5 会话全对入库——codebuddy 1(标题取首条 user)、kimi 2(custom_title 生效+legacy 布局)、qwen 2(新旧布局+functionCall/functionResponse→tool 消息,thinking 跳过)/ 真机全量扫描 10 插件共存零错,存量数据(103/13/44/16)不受影响
+**注意:** 三家本机未装,格式置信度基于 2026-09 文档/源码;真实数据如有出入,补 fixture 修解析器即可(防御式解析,坏行不致命)。测试用例中 qwencode 标题落到 "(no user message)" 是摘要器"首行≥6字符"启发式的正常行为(测试字符串太短),非 bug
+
+---
+
 ## 2026-09-11 · 换机适配:Hermes/Codex 路径自愈 + Claude Desktop 会话捕获
 
 **背景:** 用户换机(项目 `F:\桌面` → `H:\桌面`,用户目录 `C:\Users\18144` → `C:\Users\Logic`)后反馈:Hermes desktop 无法识别;Claude desktop 无法识别且开启会话捕获后记忆界面也无显示。

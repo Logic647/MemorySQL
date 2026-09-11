@@ -195,6 +195,45 @@ startup_timeout_sec = 30`,
       `// ~/.gemini/settings.json 的 mcpServers 中加:\n"memorysql": { "command": "node", "args": ["${bridge.replace(/\\/g, '\\\\')}"] }`
   },
   {
+    id: 'qwencode',
+    label: 'Qwen Code',
+    detect: (home) => fs.existsSync(path.join(home, '.qwen')),
+    configPath: (home) => path.join(home, '.qwen', 'settings.json'),
+    apply: (configPath, _url, bridge) =>
+      mergeJson(configPath, (root) => {
+        setNested(root, ['mcpServers', 'memorysql'], {
+          command: 'node',
+          args: [bridge]
+        })
+      }),
+    snippet: (_url, bridge) =>
+      `// ~/.qwen/settings.json 的 mcpServers 中加:\n"memorysql": { "command": "node", "args": ["${bridge.replace(/\\/g, '\\\\')}"] }`
+  },
+  {
+    id: 'kimicli',
+    label: 'Kimi CLI',
+    detect: (home) => fs.existsSync(path.join(home, '.kimi')),
+    configPath: (home) => path.join(home, '.kimi', 'mcp.json'),
+    apply: (configPath, url) =>
+      mergeJson(configPath, (root) => {
+        setNested(root, ['mcpServers', 'memorysql'], { url })
+      }),
+    snippet: (url) =>
+      `kimi mcp add --transport http memorysql ${url}\n// 或 ~/.kimi/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "url": "${url}" }\n  }\n}`
+  },
+  {
+    id: 'codebuddy',
+    label: 'CodeBuddy Code',
+    detect: (home) => fs.existsSync(path.join(home, '.codebuddy')),
+    configPath: (home) => path.join(home, '.codebuddy', 'mcp.json'),
+    apply: (configPath, url) =>
+      mergeJson(configPath, (root) => {
+        setNested(root, ['mcpServers', 'memorysql'], HTTP_ENTRY(url))
+      }),
+    snippet: (url) =>
+      `// ~/.codebuddy/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "type": "http", "url": "${url}" }\n  }\n}`
+  },
+  {
     id: 'cursor',
     label: 'Cursor',
     detect: (home, appData) =>

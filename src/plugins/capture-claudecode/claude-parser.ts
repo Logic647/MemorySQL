@@ -46,7 +46,11 @@ function contentToMessages(role: 'user' | 'assistant', content: unknown, ts?: nu
   return out
 }
 
-export function parseClaudeJsonl(filePath: string, text: string): RawSession | null {
+export function parseClaudeJsonl(
+  filePath: string,
+  text: string,
+  agentType: RawSession['agentType'] = 'claudecode'
+): RawSession | null {
   let externalId: string | undefined
   let cwd: string | undefined
   let startedAt: number | undefined
@@ -80,7 +84,7 @@ export function parseClaudeJsonl(filePath: string, text: string): RawSession | n
   if (messages.length === 0) return null
   return {
     externalId: externalId ?? path.basename(filePath, '.jsonl'),
-    agentType: 'claudecode',
+    agentType,
     cwd,
     startedAt: startedAt ?? endedAt,
     endedAt,

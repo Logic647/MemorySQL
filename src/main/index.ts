@@ -16,6 +16,9 @@ import captureCodex from '../plugins/capture-codex'
 import captureZcode from '../plugins/capture-zcode'
 import captureHermes from '../plugins/capture-hermes'
 import captureClaudecode from '../plugins/capture-claudecode'
+import captureQwencode from '../plugins/capture-qwencode'
+import captureKimicli from '../plugins/capture-kimicli'
+import captureCodebuddy from '../plugins/capture-codebuddy'
 import captureGemini from '../plugins/capture-gemini'
 import captureCursor from '../plugins/capture-cursor'
 import captureOpencode from '../plugins/capture-opencode'
@@ -50,6 +53,9 @@ const BUILTIN_PLUGINS = [
   captureZcode,
   captureHermes,
   captureClaudecode,
+  captureQwencode,
+  captureKimicli,
+  captureCodebuddy,
   captureGemini,
   captureCursor,
   captureOpencode,

@@ -10,6 +10,9 @@ export type AgentType =
   | 'gemini'
   | 'cursor'
   | 'opencode'
+  | 'qwencode'
+  | 'kimicli'
+  | 'codebuddy'
   | (string & {})
 export type MessageRole = 'user' | 'assistant' | 'tool' | 'system'
 

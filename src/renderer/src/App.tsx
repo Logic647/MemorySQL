@@ -27,7 +27,14 @@ const VIEW_ICON: Record<View, typeof History> = {
 const CAPTURE_PLUGINS: Array<{ id: string; label: string }> = [
   { id: 'capture-codex', label: 'Codex' },
   { id: 'capture-zcode', label: 'ZCode' },
-  { id: 'capture-hermes', label: 'Hermes' }
+  { id: 'capture-hermes', label: 'Hermes' },
+  { id: 'capture-claudecode', label: 'Claude Code' },
+  { id: 'capture-qwencode', label: 'Qwen Code' },
+  { id: 'capture-kimicli', label: 'Kimi CLI' },
+  { id: 'capture-codebuddy', label: 'CodeBuddy' },
+  { id: 'capture-gemini', label: 'Gemini CLI' },
+  { id: 'capture-cursor', label: 'Cursor' },
+  { id: 'capture-opencode', label: 'OpenCode' }
 ]
 
 function fmtTime(ts: number | null | undefined): string {
