@@ -28,6 +28,8 @@
 
 **自动更新验收实况(用户反馈"重启没收到提示"):**诊断反转——`%LOCALAPPDATA%\memorysql-updater\pending\` 里躺着 0.5.0 安装包(177MB,恰为用户重启时刻),**启动检查其实成功了**:checkForUpdatesAndNotify 静默下载完成,唯一通知是系统 toast(被错过);安装发生在**下次退出**(autoInstallOnAppQuit 默认开),即"退出一次应用=装上新版",手动检查走 api.github.com 所以显示正常。体验缺陷修掉:updaterState 跟踪(available/downloaded/error)+ 新通道 `memorysql:host:updateStatus` + 设置页「关于」15s 轮询常驻显示"已下载待安装/后台下载中/检查失败"——此修复随下个版本发出(0.5.0 的启动行为不变)
 
+**对话导入插件(import-chat,加密/云端 agent 的通用正门):**讨论定调:加密存储(Trae SQLCipher)不走"撬锁"(内存抓密钥/TLS 中间人/UIA 抓屏——脆弱+杀软误报+ToS 风险),走正门 = 人能看到的就能进库。实现:`parseConversation` 启发式解析(角色行识别:中英文 token/Markdown 加粗/标题/方括号,**冒号后同行内容并入消息体**——首轮实现丢同行内容被单测当场抓掉;内容里的"注意:xxx"不会被误判,token 白名单过滤),支持平铺 `[{role,content}]` JSON、无标记文本整体作为用户侧单条;externalId = `imported:<sha256 前 16 位>`(同内容重复导入幂等);agentType `imported`,标题用户可填/缺省走摘要器。UI:顶栏「导入对话」按钮 + 弹窗(粘贴 textarea / 文件选择 md·txt·json·log / 标题),复用现有 modal 样式。**覆盖面:一切"人能看到的对话"——Trae、通义灵码、网页版聊天、ChatGPT 桌面版全部可用,代价是不自动(手动一次性导入)。**验证:typecheck 零错 / vitest 97:97(新增 6 用例)/ 三 bundle 构建绿 / 插件加载零错
+
 ---
 
 ## 2026-09-11 · 换机适配:Hermes/Codex 路径自愈 + Claude Desktop 会话捕获

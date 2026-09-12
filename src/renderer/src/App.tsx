@@ -59,6 +59,12 @@ export default function App() {
   const [devlogNote, setDevlogNote] = useState<string | null>(null)
   const [mcp, setMcp] = useState<{ port: number; running: boolean; toolCount: number } | null>(null)
   const [kbMsg, setKbMsg] = useState('')
+  const [importOpen, setImportOpen] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importTitle, setImportTitle] = useState('')
+  const [importSource, setImportSource] = useState('')
+  const [importBusy, setImportBusy] = useState(false)
+  const [importErr, setImportErr] = useState<string | null>(null)
   const [view, setView] = useState<View>('sessions')
   const [enabledCaptures, setEnabledCaptures] = useState<Record<string, boolean>>({})
   const [showArchived, setShowArchived] = useState(false)
@@ -192,6 +198,33 @@ export default function App() {
       setTimeout(() => setDevlogNote(null), 4000)
     }
   }, [refresh])
+
+  const doImport = useCallback(async () => {
+    if (!importText.trim()) return
+    setImportBusy(true)
+    setImportErr(null)
+    try {
+      const res = await api.importChat({
+        text: importText,
+        title: importTitle.trim() || undefined,
+        source: importSource.trim() || undefined
+      })
+      setImportOpen(false)
+      setImportText('')
+      setImportTitle('')
+      setImportSource('')
+      setKbMsg(
+        res.imported === 0 && res.skipped > 0
+          ? '同样的内容已经导入过,无需重复'
+          : `已导入为会话 #${res.sessionId}(${res.messages} 条消息)`
+      )
+      await refresh()
+    } catch (err) {
+      setImportErr(String(err instanceof Error ? err.message : err))
+    } finally {
+      setImportBusy(false)
+    }
+  }, [importText, importTitle, importSource, refresh])
 
   const commitRename = useCallback(async () => {
     if (!rename) return
@@ -395,6 +428,9 @@ export default function App() {
             清除
           </button>
         )}
+        <button className="btn" onClick={() => { setImportOpen(true); setImportErr(null) }}>
+          导入对话
+        </button>
         <button className="btn btn-accent" disabled={scanning} onClick={() => void scanAll()}>
           {scanning ? '扫描中…' : '立即扫描'}
         </button>
@@ -772,6 +808,59 @@ export default function App() {
               <button className="btn btn-small" onClick={() => setRelayPick(null)}>
                 取消
               </button>
+            </div>
+          </div>
+        )}
+
+        {importOpen && (
+          <div className="modal-overlay" onClick={() => setImportOpen(false)}>
+            <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-title">导入对话</div>
+              <p className="hint">
+                粘贴聊天记录(识别「用户 / Assistant:」等角色标记,支持中英文与 Markdown 加粗/标题)或导入
+                agent 导出的 md / txt / json 文件。同一内容重复导入会自动去重。
+              </p>
+              <input
+                className="import-input"
+                placeholder="标题(可选,默认取首条消息开头)"
+                value={importTitle}
+                onChange={(e) => setImportTitle(e.target.value)}
+              />
+              <textarea
+                className="import-textarea"
+                placeholder={'粘贴对话内容,例如:\n\n用户:帮我看看这个报错\n助手:这是因为…\n\n或拖入/选择导出的对话文件'}
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+              />
+              <div className="field-row">
+                <label className="btn btn-small">
+                  选择文件…
+                  <input
+                    type="file"
+                    accept=".md,.txt,.json,.log"
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0]
+                      if (!f) return
+                      setImportText(await f.text())
+                      setImportSource(f.name)
+                    }}
+                  />
+                </label>
+                {importSource && <span className="hint">{importSource}</span>}
+                <span style={{ flex: 1 }} />
+                <button className="btn btn-small" onClick={() => setImportOpen(false)}>
+                  取消
+                </button>
+                <button
+                  className="btn btn-accent btn-small"
+                  disabled={importBusy || !importText.trim()}
+                  onClick={() => void doImport()}
+                >
+                  {importBusy ? '导入中…' : '导入'}
+                </button>
+              </div>
+              {importErr && <p className="hint">导入失败:{importErr}</p>}
             </div>
           </div>
         )}

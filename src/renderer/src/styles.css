@@ -422,6 +422,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   transition: all var(--msql-t-fast) var(--msql-ease);
 }
 .modal-item:hover { background: var(--msql-accent-soft); border-color: var(--msql-glass-border); }
+.modal-wide { width: min(680px, 92vw); max-height: 82vh; }
+.import-input {
+  padding: 6px 10px; border-radius: var(--msql-radius-sm); border: 1px solid var(--msql-glass-border-strong);
+  background: rgba(255, 255, 255, 0.05); color: var(--msql-fg); font-size: var(--msql-fs-md);
+}
+.import-textarea {
+  flex: 1; min-height: 240px; resize: vertical; padding: 10px 12px;
+  border-radius: var(--msql-radius-sm); border: 1px solid var(--msql-glass-border-strong);
+  background: rgba(255, 255, 255, 0.05); color: var(--msql-fg);
+  font-family: var(--msql-font-mono); font-size: var(--msql-fs-sm); line-height: 1.5;
+}
+.import-input:focus, .import-textarea:focus { outline: none; border-color: var(--msql-accent); }
 
 /* ---------- 明显选中特效 + 拖拽插入线 ---------- */
 .session.selected {

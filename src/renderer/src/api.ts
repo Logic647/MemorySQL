@@ -331,6 +331,17 @@ export const api = {
       downloaded?: boolean
       error?: string
     }>,
+  importChat: (input: {
+    text: string
+    title?: string
+    source?: string
+  }): Promise<{ sessionId: number | null; messages: number; imported: number; skipped: number }> =>
+    window.memorysql.invoke('import-chat:import', input as unknown as Record<string, unknown>) as Promise<{
+      sessionId: number | null
+      messages: number
+      imported: number
+      skipped: number
+    }>,
   updateNow: (): Promise<{ ok: boolean; relaunching?: boolean }> =>
     window.memorysql.invoke('memorysql:host:updateNow') as Promise<{ ok: boolean; relaunching?: boolean }>,
   releases: (): Promise<{ releases: Array<{ tag: string; date: string | null; notes: string }>; error?: string }> =>

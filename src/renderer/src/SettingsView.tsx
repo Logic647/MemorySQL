@@ -28,6 +28,7 @@ const PLUGIN_DESC: Record<string, string> = {
   'capture-cursor': 'Cursor 会话捕获(实验性)',
   'capture-opencode': 'OpenCode / Copilot CLI 会话捕获',
   'capture-watcher': '项目文件监听(AGENTS.md 等只读导入)',
+  'import-chat': '对话导入 —— 粘贴/导入对话文本,覆盖加密与云端 agent',
   'mcp-server': 'MCP 服务端 —— 所有 agent 的连接入口',
   'privacy-export': '出口脱敏 —— 导出分享前自动遮蔽密钥',
   'sync-archive': '归档备份 —— .msqlv 一键导出/导入',

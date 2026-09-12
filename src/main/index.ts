@@ -32,6 +32,7 @@ import projectDevlog from '../plugins/project-devlog'
 import semanticSearch from '../plugins/semantic-search'
 import coreVault from '../plugins/core-vault'
 import captureWatcher from '../plugins/capture-watcher'
+import importChat from '../plugins/import-chat'
 import type { MemorySQLPlugin } from './core/plugin-host'
 import { setupSpotlight, type SpotlightController } from './spotlight'
 
@@ -60,6 +61,7 @@ const BUILTIN_PLUGINS = [
   captureCursor,
   captureOpencode,
   captureWatcher,
+  importChat,
   mcpServer,
   privacyExport,
   syncArchive,
