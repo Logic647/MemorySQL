@@ -39,9 +39,9 @@ Codex CLI / ZCode / Claude Code / Gemini CLI / Cursor / OpenCode / Hermes Agent 
 
 ## 目录提交状态与表单(2026-09-13 核对)
 
-### ① mcp.so —— ✅ 可立即提交
+### ① mcp.so —— ✅ 已提交(2026-09-13)
 
-提交方式:在 [chatmcp/mcpso](https://github.com/chatmcp/mcpso) 仓库的 [Issue #1「Submit Your MCP Servers here」](https://github.com/chatmcp/mcpso/issues/1) 下评论(或新建 issue)。即贴模板:
+已按下方模板在 [chatmcp/mcpso Issue #1](https://github.com/chatmcp/mcpso/issues/1) 提交收录申请:[评论链接](https://github.com/chatmcp/mcpso/issues/1#issuecomment-5653232123)。mcp.so 爬到 GitHub repo 后自动建页,几天内没见收录再催一次。模板留档:
 
 ```markdown
 **Name**: MemorySQL
