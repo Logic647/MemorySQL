@@ -7,6 +7,17 @@
 
 ---
 
+## 2026-09-13 · 中文宣传物料包(docs/promo/)
+
+- **新增 docs/promo/**:`v2ex.md`(分享创造首发帖,作者自述口吻,标题候选×3)/ `juejin.md`(技术向,含"各家会话存哪"干货表)/ `shaoshupai.md`(产品体验向)/ `jike.md`(短帖×2)/ `checklist.md`(发布顺序、渠道注意事项、评论区 Q&A 预案、winget 跟进)/ `screenshots.md`(8 张必截图清单,命名与 README 嵌图绑定,放 `design/screenshots/`)
+- **README**:新增「界面一览」嵌图段(01/02 两张,图未截时挂链,截图放入即生效);特性「7 家 agent」更正为 10 家(v0.5.0 实际)
+- **MCP_LISTING.md**:数据核对至 v0.5.0(`memory_log_progress` 补 `agent?` 参数,其余 6 工具签名与 `core-schema/mcp-tools.ts` 一致);新增目录提交状态与表单:**mcp.so 立即可提**(chatmcp/mcpso Issue,英文模板已备)/ **PulseMCP 暂停收录**(官网公告重构流程,盯重开)/ **Smithery 形态不匹配**(面向可分发 server,本地桌面应用暂缓)
+- **口径注意**:宣传稿只写 v0.5.0 已发布内容;import-chat、updater 状态栏是 tag 之后提交、尚未发版,首发物料一律不提(screenshots.md 里 10 号图已标注)
+- **截图实况(同日晚些)**:CDP(`--remote-debugging-port=9222` + `Page.captureScreenshot`)自动截取 01/02/03/04/06/07 共 6 张入 `design/screenshots/`;**01 用演示库**(`MEMORYSQL_DATA_DIR` 临时目录 + 合成 codex rollout×2 + MCP memory_write 种画像/记忆,项目 caffeine-tracker 全虚构,可公开);真实库续接包含学校/服务器 IP 等隐私,终端图严禁用真实库。**05 图谱放弃**(13 节点/1 链接 + 标题是 auto-devlog HTML 注释);08 待用户手动截。真实库 5 张 UI 图顶栏可见未发版的「导入对话」按钮(import-chat),发布前知悉。05 放弃后各渠道分配未受影响。待办:发布前用户过目真实库截图 → commit/push → 按 checklist 发布;细节与复现步骤(点击横幅/MoveWindow 取景)见 `docs/promo/screenshots.md` 顶部状态注记
+- 下一步:**用户过目截图 → 提交推送 → 按 checklist.md 发布(V2EX → 掘金/即刻 → 少数派 → MCP 目录)**;英文版物料(HN/Reddit)待需要时再做
+
+---
+
 ## 2026-09-12 · 国内 agent 适配:Qwen Code + Kimi CLI + CodeBuddy Code
 
 **调研先行**(本机三家均未安装,格式从官方文档/源码确认,2026-09 时点):

@@ -23,9 +23,19 @@
 
 > **数据 100% 存本机**(SQLite + Markdown,除 LLM API 外零服务器依赖);任何导出/分享路径强制过脱敏模块;语义检索用本地 ONNX 模型,全程离线。
 
+## 📸 界面一览
+
+![Agent 终端里的 MCP 续接包](design/screenshots/01-context-handoff.png)
+
+*新会话一句「续接 <项目名>」——画像、记忆、项目状态、最近会话、上一棒交接摘要,一次调用全部拉回*
+
+![会话库](design/screenshots/02-sessions.png)
+
+*10 家 agent 的会话自动捕获入库,全文本地可搜*
+
 ## ✨ 特性
 
-- **会话自动捕获** —— 7 家 agent 开箱支持(Codex / ZCode / Hermes / Claude Code / Gemini / Cursor / OpenCode),增量监听零手动操作
+- **会话自动捕获** —— 10 家 agent 开箱支持(Codex / ZCode / Claude Code / Hermes / Gemini / Cursor / OpenCode / Qwen Code / Kimi CLI / CodeBuddy Code),增量监听零手动操作
 - **MCP 续接包** —— 画像 + 长期记忆 + 项目状态 + 最近会话 + **上一棒交接摘要**,一次调用恢复全部上下文
 - **交接简报** —— `memory_get_project_brief` 自动汇编项目当前进展/决策/待办,换 agent 接手零成本
 - **语义检索** —— sqlite-vec + 本地 embedding(bge-small-zh),字面搜不到的概念性提问也能召回
