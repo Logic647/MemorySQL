@@ -7,6 +7,19 @@
 
 ---
 
+## 2026-09-17 · v0.5.1 发版:Linux 跨平台双矩阵发布 + 对话导入插件
+
+- **v0.5.1 已正式发布**: https://github.com/Logic647/MemorySQL/releases/tag/v0.5.1
+- **CI 双平台全绿**: GitHub Actions 矩阵构建 (`windows-latest` + `ubuntu-latest`) 并行成功，一次性自动产出并上传 7 项发布资产：
+  - Windows: `MemorySQL-Setup-0.5.1.exe` (169.1MB) + `.blockmap` + `latest.yml`
+  - Linux: `MemorySQL-0.5.1.AppImage` (385.6MB) + `memorysql_0.5.1_amd64.deb` (274.5MB) + `memorysql-0.5.1.tar.gz` (377.1MB) + `latest-linux.yml`
+- **核心更新包含**:
+  1. Linux 原生版本支持（AppImage / deb / tar.gz 及原生 C++ 模块隔离编译）
+  2. `import-chat` 插件（主界面粘贴/文件导入会话，覆盖 SQLCipher 加密的 Trae CN、云端不落盘的通义灵码及网页端聊天）
+  3. 设置页应用内自动更新状态透出（已下载待装 / 下载中 / 错误提示，解决静默下载被漏掉问题）
+
+---
+
 ## 2026-09-17 · Linux 跨平台构建与发布支持 (AppImage / deb / tar.gz)
 
 - **electron-builder.yml**: 增加 `linux` 配置，发布目标涵盖 `AppImage`、`deb`、`tar.gz`，设置 `category: Development`、`icon: build/icon.png`
