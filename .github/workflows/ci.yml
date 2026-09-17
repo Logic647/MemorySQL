@@ -8,10 +8,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  # typecheck + tests + renderer/main build. Tests run against the
-  # node-ABI better-sqlite3 that npm ci installs — before electron-rebuild.
+  # typecheck + tests + renderer/main build on both Windows and Linux.
   ci:
-    runs-on: windows-latest
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,7 +26,7 @@ jobs:
       - run: npm run build
 
   # package on main pushes (build artifact) and on v* tags (auto-publish the
-  # GitHub Release with exe/blockmap/latest.yml via electron-builder publish)
+  # GitHub Release with exe/AppImage/deb/tar.gz via electron-builder publish)
   package:
     needs: ci
     permissions:
@@ -32,7 +34,10 @@ jobs:
     if: >-
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    runs-on: windows-latest
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,14 +47,37 @@ jobs:
       - run: npm ci --no-audit --no-fund
       # the packaged app runs under Electron's ABI, not node's
       - run: npx electron-rebuild
-      - run: npm run dist
+      - name: Build and package (Windows)
+        if: matrix.os == 'windows-latest'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/upload-artifact@v4
+        run: npx electron-vite build && npx electron-builder --win
+
+      - name: Build and package (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-vite build && npx electron-builder --linux
+
+      - name: Upload installer artifact (Windows)
+        uses: actions/upload-artifact@v4
+        if: matrix.os == 'windows-latest'
         with:
-          name: MemorySQL-${{ github.sha }}
+          name: MemorySQL-Windows-${{ github.sha }}
           path: |
             dist/MemorySQL-Setup-*.exe
             dist/MemorySQL-Setup-*.exe.blockmap
             dist/latest.yml
           if-no-files-found: error
+
+      - name: Upload installer artifact (Linux)
+        uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: MemorySQL-Linux-${{ github.sha }}
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.tar.gz
+            dist/latest-linux.yml
+          if-no-files-found: warn

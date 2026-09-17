@@ -7,6 +7,19 @@
 
 ---
 
+## 2026-09-17 · Linux 跨平台构建与发布支持 (AppImage / deb / tar.gz)
+
+- **electron-builder.yml**: 增加 `linux` 配置，发布目标涵盖 `AppImage`、`deb`、`tar.gz`，设置 `category: Development`、`icon: build/icon.png`
+- **src/main/index.ts 窗口适配**: Linux 桌面环境（GNOME / KDE / XFCE）的窗口管理器普遍不支持 Windows/macOS 的 `titleBarOverlay`（WCO），若直接隐藏原生标题栏会导致窗口无边框、无最小化/最大化/关闭按钮且无法拖动。通过 `process.platform === 'linux'` 环境分支，在 Linux 下保留默认系统窗口装饰，仅在 Windows/macOS 启用隐藏标题栏及 `titleBarOverlay`
+- **.github/workflows/ci.yml 矩阵构建**:
+  - `ci` 与 `package` job 均引入 `matrix: [windows-latest, ubuntu-latest]` 矩阵
+  - 原生 C++ 模块（`better-sqlite3` 等）在打包前通过 `npx electron-rebuild` 在各原生操作系统环境（Windows / Ubuntu glibc）下自动编译
+  - 分平台构建命令与产物隔离：Windows 生成 `MemorySQL-Setup-*.exe`，Linux 生成 `*.AppImage` / `*.deb` / `*.tar.gz`
+- **package.json**: 增加本地/WSL 快捷脚本 `"dist:linux": "electron-vite build && electron-builder --linux"`
+- **验证**: `npm run typecheck` 零报错；`vitest` 97/97 单元测试全绿；main/preload/renderer 三 bundle 构建成功
+
+---
+
 ## 2026-09-13 · 中文宣传物料包(docs/promo/)
 
 - **新增 docs/promo/**:`v2ex.md`(分享创造首发帖,作者自述口吻,标题候选×3)/ `juejin.md`(技术向,含"各家会话存哪"干货表)/ `shaoshupai.md`(产品体验向)/ `jike.md`(短帖×2)/ `checklist.md`(发布顺序、渠道注意事项、评论区 Q&A 预案、winget 跟进)/ `screenshots.md`(8 张必截图清单,命名与 README 嵌图绑定,放 `design/screenshots/`)

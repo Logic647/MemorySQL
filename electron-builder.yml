@@ -46,3 +46,12 @@ nsis:
   createDesktopShortcut: true
   artifactName: MemorySQL-Setup-${version}.${ext}
   shortcutName: MemorySQL
+
+linux:
+  icon: build/icon.png
+  category: Development
+  maintainer: Logic647
+  target:
+    - target: AppImage
+    - target: deb
+    - target: tar.gz
