@@ -7,6 +7,12 @@
 
 ---
 
+## 2026-09-17 · 交接快照 docs/HANDOFF.md
+
+v0.5.1 发版收尾后写 `docs/HANDOFF.md`:发布渠道现状(Release 7 资产/CI 双矩阵/winget #426778 人工审查队列/mcp.so 待催)、0.4.2→0.5.1 工作回顾、待办清单(用户:过目截图→发布宣传;agent:winget 跟进、iFlow、PTY tee)、遗留技术债、发版流程与网络工具知识、Antigravity MCP 接入结论(`~/.gemini/config/mcp_config.json`,stdio 桥优先)。AGENTS.md 必读文档表已挂链接。
+
+---
+
 ## 2026-09-17 · v0.5.1 发版:Linux 跨平台双矩阵发布 + 对话导入插件
 
 - **v0.5.1 已正式发布**: https://github.com/Logic647/MemorySQL/releases/tag/v0.5.1
