@@ -7,6 +7,15 @@
 
 ---
 
+## 2026-09-21 · v0.5.2 发版:SQLite 权威存储适配上线 + 发版脚本化
+
+- **v0.5.2 已正式发布**: https://github.com/Logic647/MemorySQL/releases/tag/v0.5.2 —— CI 双矩阵 4 job 全绿,7 项资产(Windows 三件套 + Linux 四件套)本次由 electron-builder **合并在同一份草稿**内(0.5.1 时是 main/tag 各建一份),`scripts/publish-release.mjs` 校验后转正 + notes
+- **内容**:ZCode/OpenCode SQLite 权威存储适配(项目识别修复)+ GUI 启动自动扫描;详见上一条 DEVLOG
+- **发版流程沉淀**:`scripts/publish-release.mjs <tag> <title> <notes-file>` —— 找 tag 草稿 → 保留资产最多的一份、删重复 → 转正 + notes;token 取 git credential store,repo 从 origin 自动解析。此后发版收尾一条命令,替代此前每次手搓 API 调用
+- **自动更新链路**:latest.yml / latest-linux.yml 均指向 0.5.2;0.5.1 装机启动即静默收取(Windows),Linux updater 走 latest-linux.yml
+
+---
+
 ## 2026-09-20 · ZCode/OpenCode 权威存储迁移适配(SQLite)+ 启动自动扫描
 
 **用户反馈两个问题:**①ZCode 新建 money 项目未被识别;②opencode 连接向导能检测到、会话捕获却"未检测到"且扫不出会话。
