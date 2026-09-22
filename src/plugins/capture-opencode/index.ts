@@ -18,6 +18,20 @@ function findOpencodeDb(): string | null {
   return candidates.find((c) => fs.existsSync(c)) ?? null
 }
 
+/** db file and its -wal/-shm sidecars (WAL writes may not touch the main file) */
+const OPENCODE_DB_WATCH = /opencode\.db(-wal|-shm)?$/i
+
+function watchPaths(): string[] {
+  const db = findOpencodeDb()
+  if (db) return [path.dirname(db)]
+  // db not created yet — watch existing candidate parents so a later create fires
+  const dirs = [
+    path.join(os.homedir(), '.local', 'share', 'opencode'),
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'opencode') : ''
+  ].filter(Boolean)
+  return dirs.filter((d) => fs.existsSync(d))
+}
+
 export default createCapturePlugin({
   id: 'capture-opencode',
   name: 'Capture: OpenCode / Copilot CLI',
@@ -30,5 +44,10 @@ export default createCapturePlugin({
     if (dbPath) return parseAgentSqliteSessions(dbPath, 'opencode')
     const storage = findOpencodeStorage(home, process.env.LOCALAPPDATA)
     return storage ? parseOpencodeStorage(storage) : []
-  }
+  },
+  // db-backed: any write to opencode.db(-wal) re-reads the whole (small) store —
+  // title/cwd renames show up without waiting for the next app launch.
+  // watchPaths is a function so a db created after plugin load is still watched.
+  watchPaths,
+  watch: { match: OPENCODE_DB_WATCH, rescan: true }
 })

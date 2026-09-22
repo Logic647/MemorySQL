@@ -565,11 +565,12 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
     version?: string
     downloaded?: boolean
     error?: string
+    checkedAt?: number
   } | null>(null)
 
   useEffect(() => {
-    // startup auto-update happens silently in the main process; poll its state
-    // so "已下载待安装" is actually visible somewhere
+    // startup auto-update runs in the main process; poll + subscribe so
+    // "已下载待装" / check failures are visible without reopening Settings
     const pull = (): void => {
       void api
         .updateStatus()
@@ -577,8 +578,12 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
         .catch(() => {})
     }
     pull()
+    const off = api.onUpdateStatus(setUpStatus)
     const t = setInterval(pull, 15000)
-    return () => clearInterval(t)
+    return () => {
+      off()
+      clearInterval(t)
+    }
   }, [])
 
   useEffect(() => {
@@ -625,11 +630,18 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
           新版本 v{upStatus.version ?? ''} 已下载完毕——退出应用后会自动安装,重新打开即是新版。
         </p>
       )}
-      {upStatus?.available && !upStatus.downloaded && (
+      {upStatus?.available && !upStatus.downloaded && !upStatus.error && (
         <p className="hint">新版本 v{upStatus.version ?? ''} 检测到,正在后台下载…(完成后退出应用即自动安装)</p>
       )}
-      {upStatus?.error && upStatus.available === undefined && (
-        <p className="hint">自动检查更新失败({upStatus.error}),可点上方按钮手动检查。</p>
+      {upStatus?.available && !upStatus.downloaded && upStatus.error && (
+        <p className="hint">
+          发现新版本 v{upStatus.version ?? ''},但下载失败({upStatus.error})——可点上方按钮手动检查,或到 GitHub Releases 下载。
+        </p>
+      )}
+      {upStatus?.error && !upStatus?.available && (
+        <p className="hint">
+          自动检查/下载更新失败({upStatus.error}),可点上方按钮手动检查。
+        </p>
       )}
       {update && (
         <p className="hint">

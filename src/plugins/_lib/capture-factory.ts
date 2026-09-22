@@ -19,8 +19,15 @@ export interface CaptureSpec {
   collect: (sourceRoot: string) => RawSession[]
   /** whether the source exists at all (drives "未检测到" in the UI) */
   sourceExists?: (sourceRoot: string) => boolean
-  /** incremental watcher config; omit for db-backed adapters */
-  watch?: { match: RegExp; parseFile: (file: string) => RawSession[] }
+  /** dirs to watch; defaults to [sourceRoot] (db-backed adapters watch the db folder).
+   * A function is resolved at watcher start so late-created stores are picked up. */
+  watchPaths?: string[] | (() => string[])
+  /**
+   * incremental watcher config; omit for file-less adapters.
+   * `rescan: true` re-runs collect() on any matching change (SQLite stores)
+   * instead of parsing a single file.
+   */
+  watch?: { match: RegExp; parseFile?: (file: string) => RawSession[]; rescan?: boolean }
 }
 
 export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
@@ -95,13 +102,29 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
           ctx.log.info(`source not detected, watcher disabled: ${sourceRoot}`)
           return
         }
-        if (spec.watch) {
+        const watchSpec = spec.watch
+        if (watchSpec) {
+          const resolved = typeof spec.watchPaths === 'function' ? spec.watchPaths() : spec.watchPaths
+          // explicit empty list = "nothing to watch yet" (don't fall back to home)
+          if (resolved && resolved.length === 0) {
+            ctx.log.info('watchPaths empty, watcher deferred until source appears')
+            return
+          }
+          const dirs = resolved && resolved.length > 0 ? resolved : [sourceRoot]
+          const rescan = watchSpec.rescan === true
           ctx.watcher.watch(
-            [sourceRoot],
+            dirs,
             (changed) => {
               void (async () => {
                 try {
-                  const sessions = spec.watch!.parseFile(changed).filter(Boolean)
+                  let sessions: RawSession[]
+                  if (rescan) {
+                    sessions = spec.collect(sourceRoot)
+                  } else if (watchSpec.parseFile) {
+                    sessions = watchSpec.parseFile(changed).filter(Boolean)
+                  } else {
+                    return
+                  }
                   if (sessions.length === 0) return
                   const res = await ctx.services.use<IngestService>('ingest').ingestSessions(sessions)
                   if (res.imported + res.updated > 0) {
@@ -112,10 +135,10 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
                 }
               })()
             },
-            { match: spec.watch.match, debounceMs: 1000 }
+            { match: watchSpec.match, debounceMs: 1000 }
           )
+          ctx.log.info(`watching ${dirs.join(', ')}`)
         }
-        ctx.log.info(`watching ${sourceRoot}`)
       }
     },
 

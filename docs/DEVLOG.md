@@ -3,7 +3,47 @@
 > 规则:每完成一个里程碑/重要变更,在文件**顶部**新增一条(新在上);不删改历史条目。接手 agent:读最新一条即知当前进度与下一步。
 
 ---
-> 规则:每完成一个里程碑/重要变更,在文件**顶部**新增一条(新在上);不删改历史条目。接手 agent:读最新一条即知当前进度与下一步。
+
+## 2026-09-22 · Bug 修复:启动自动检测更新 + 项目/会话重命名不同步
+
+**用户报两个 bug:**①启动时自动检测更新没有正确实现;②项目文件夹及会话重命名后会话内不同步。
+
+### ① 启动自动更新链路修复
+
+**根因(三层):**
+- 启动检查走 `checkForUpdatesAndNotify()`(github.com/…/latest.yml,代码自注"常被墙"),失败被 `.catch(() => {})` 静默吞掉;`loadUpdater` 抛错的外层 `catch` 也不写 `updaterState.error` → UI 完全无感
+- 手动「检查更新」走 `api.github.com`(另一条通路,能通)→ 体感"启动没在检测"
+- 错误状态机遮蔽:UI 条件 `error && available === undefined`,一旦同进程内先收到过 `update-available`,后续 error 永不显示;`update-not-available` 也不重置 `downloaded`
+
+**修复:**
+- 新纯函数模块 `src/main/core/update-check.ts`:`verParts`/`isNewer`/`probeGitHubRelease`(api.github.com 可用性探测)+ `applyUpdaterEvent` 状态机 reducer(probe/error/downloaded/not-available 事件,错误不吞已确认的可用性、冷检查失败必露出)
+- 启动改为 `startupUpdateCheck()`:先 probe api.github.com → 写状态 + `push:update-status` 推 renderer;确认有新版再 `wireAutoUpdater` + `checkForUpdates()` 拉下载;probe 失败时以 electron-updater 兜底。全程失败进 `updaterState.error`,不再静默
+- 手动 checkUpdate/updateNow 同样写状态机并推送
+- Renderer:`api.onUpdateStatus` 订阅 `push:update-status`;**应用壳新增更新横幅**(有新版/已下载待装,顶栏下方);Settings 错误提示改为只要 `error` 就显示(去掉 `available === undefined` 遮蔽)
+- 抽测:`test/update-check.test.ts` 14 用例(版本比较、状态机遮蔽回归、probe 成功/失败、probeConfirmed 权威性 2 例)
+
+### ② 项目/会话重命名不同步
+
+**根因(两层):**
+- `ingest.ts` `content_hash` 只哈希消息、**不含 cwd/title**;hash 相同 → L155 直接 `skipped` → 外部 agent 改了 title 或文件夹改名后 cwd 变了,解析器读到的新值被闸门丢掉,UPDATE 永远执行不到
+- `projects` 以 path 为自然键、**无 rename 路径**:文件夹改名 = path 变 → `ensureProject` 查不到就 INSERT 新行,旧行旧 name 永久残留 → UI 一半旧名一半新名
+
+**修复:**
+- **轻量元数据更新**:hash 相同但 title/cwd/project_id 有变 → 只 UPDATE 这三列(+ title 变时重建 `sessions_fts`),不重写消息;`title_locked` 本地改名保护保留
+- **cwd 信任规则**:adapter 报的 cwd 仅在磁盘上真实存在时采纳(或本行尚无 cwd),防止改名后的陈旧路径把刚 re-home 的会话打回去
+- **`ensureProject` 收养**:path 查不到时,扫同父目录下 path 已不存在的孤儿项目行——同 basename 优先,否则同父目录下唯一孤儿(文件夹改名典型形态)→ UPDATE 该行 path/name 并 **bulk re-point 仍挂旧 path 的会话**;同名但旧 path 仍活着(不同父目录的同名文件夹)则正常 INSERT 不收养
+- `capture-opencode` 补 watcher:`CaptureSpec` 新增 `watchPaths` + `watch.rescan`,db 变更即全量重读权威库(此前只靠启动/手动扫描)
+- 抽测:`test/ingest-sync.test.ts` 6 用例(不变跳过、外部改名同步、title_locked 保护、文件夹改名收养不叉分组、兄弟会话 re-home、同名活项目不误收养)
+
+### ③ 审查修复(review-agent,3 findings)
+
+- **P1 探测遮蔽回归**:`UpdaterState.probeConfirmed?: boolean`——`probe-available` 置 true、`probe-not-available` 与非探测 `not-available` 置 false;`not-available` 仅在 `probeConfirmed && available` 时只刷 `checkedAt`,不清已确认的可用性(electron-updater 滞后的 latest.yml 不再把已知新版盖掉)
+- **P2 UI 状态互斥**:应用壳横幅三分支(downloaded → error → 下载中,`App.tsx`);Settings `upStatus` 四段互斥(downloaded / 下载中无 error / available+error 下载失败 / 无 available 的 error),不再出现横幅与设置页矛盾
+- **P3 watcher 延迟解析**:`CaptureSpec.watchPaths` 支持 `string[] | (() => string[])`,start 时 resolve,空数组=显式 defer 不回落 sourceRoot;`capture-opencode` 删模块级 `opencodeDb`,db 路径改函数解析,match 放宽到 `opencode.db(-wal|-shm)?$/i`
+
+**验收:** typecheck 零错 / vitest **120:120**(新增 20:update-check 14 + ingest-sync 6)。
+
+**注意:** 本机 GUI 若为安装版,需等下版发布后吃到修复;开发库已验证。外部 agent 若自身不更新 session.directory(多数 opencode 系在创建时写死),旧会话要等 agent 侧改路径或新会话带新 cwd 才会触发收养。
 
 ---
 

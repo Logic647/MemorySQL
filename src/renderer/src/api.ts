@@ -324,13 +324,20 @@ export const api = {
       version?: string
       reason?: string
     }>,
-  updateStatus: (): Promise<{ available?: boolean; version?: string; downloaded?: boolean; error?: string }> =>
+  updateStatus: (): Promise<{ available?: boolean; version?: string; downloaded?: boolean; error?: string; checkedAt?: number }> =>
     window.memorysql.invoke('memorysql:host:updateStatus') as Promise<{
       available?: boolean
       version?: string
       downloaded?: boolean
       error?: string
+      checkedAt?: number
     }>,
+  onUpdateStatus: (
+    cb: (s: { available?: boolean; version?: string; downloaded?: boolean; error?: string; checkedAt?: number }) => void
+  ): (() => void) =>
+    window.memorysql.on('push:update-status', (...args: unknown[]) => {
+      cb((args[0] ?? {}) as Parameters<typeof cb>[0])
+    }),
   importChat: (input: {
     text: string
     title?: string

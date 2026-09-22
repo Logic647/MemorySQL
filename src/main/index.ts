@@ -35,6 +35,11 @@ import captureWatcher from '../plugins/capture-watcher'
 import importChat from '../plugins/import-chat'
 import type { MemorySQLPlugin } from './core/plugin-host'
 import { setupSpotlight, type SpotlightController } from './spotlight'
+import {
+  applyUpdaterEvent,
+  probeGitHubRelease,
+  type UpdaterState
+} from './core/update-check'
 
 type PluginLike = {
   manifest?: { id?: string; name?: string; version?: string }
@@ -269,16 +274,17 @@ async function loadExternalPlugins(dataDir: string, host: PluginHost): Promise<v
 
 const hostChannels = new Map<string, (payload: Record<string, unknown>) => unknown>()
 
-/** live updater state, surfaced to the renderer via memorysql:host:updateStatus —
- * the OS toast from checkForUpdatesAndNotify is easy to miss, so the Settings
- * page renders this instead. */
-const updaterState: {
-  available?: boolean
-  version?: string
-  downloaded?: boolean
-  error?: string
-  checkedAt?: number
-} = {}
+/** live updater state, surfaced to the renderer via memorysql:host:updateStatus
+ * and the push:update-status event — the OS toast from electron-updater is
+ * easy to miss, so the app shell + Settings page render this instead. */
+let updaterState: UpdaterState = {}
+
+function setUpdater(ev: Parameters<typeof applyUpdaterEvent>[1]): void {
+  updaterState = applyUpdaterEvent(updaterState, ev)
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send('push:update-status', { ...updaterState })
+  }
+}
 
 type AppUpdater = (typeof import('electron-updater'))['autoUpdater']
 
@@ -299,14 +305,55 @@ async function loadUpdater(): Promise<AppUpdater> {
   return au
 }
 
-/** compare "v0.4.2" style tags numerically; non-semver tags return null */
-function verParts(tag: string): number[] | null {
-  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(tag.trim())
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
+let autoUpdaterWired: AppUpdater | null = null
+
+function wireAutoUpdater(au: AppUpdater): void {
+  if (autoUpdaterWired) return
+  autoUpdaterWired = au
+  au.autoDownload = true
+  au.on('update-available', (info: { version?: string }) => {
+    setUpdater({ type: 'available', version: info?.version })
+  })
+  au.on('update-not-available', (info: { version?: string }) => {
+    setUpdater({ type: 'not-available', version: info?.version })
+  })
+  au.on('update-downloaded', (info: { version?: string }) => {
+    setUpdater({ type: 'downloaded', version: info?.version })
+  })
+  au.on('error', (err: Error) => {
+    setUpdater({ type: 'error', message: String(err?.message ?? err) })
+  })
 }
 
-function isNewer(a: number[], b: number[]): boolean {
-  return a[0] !== b[0] ? a[0] > b[0] : a[1] !== b[1] ? a[1] > b[1] : a[2] > b[2]
+/**
+ * Startup check: availability through api.github.com (reliable route),
+ * download through electron-updater once a newer release is confirmed.
+ * Every failure lands in updaterState instead of a swallowed promise.
+ */
+async function startupUpdateCheck(): Promise<void> {
+  let probeOk = false
+  try {
+    const r = await probeGitHubRelease(app.getVersion())
+    if (r.available) setUpdater({ type: 'probe-available', version: r.version ?? '' })
+    else setUpdater({ type: 'probe-not-available' })
+    probeOk = true
+  } catch (err) {
+    setUpdater({ type: 'probe-error', message: String(err instanceof Error ? err.message : err) })
+  }
+  try {
+    const au = await loadUpdater()
+    wireAutoUpdater(au)
+    // only pay the github.com/downloads route when there is something to fetch;
+    // a probe failure still tries it as the fallback availability source
+    if (!probeOk || updaterState.available) {
+      await au.checkForUpdates()
+    }
+  } catch (err) {
+    const msg = String(err instanceof Error ? err.message : err)
+    // probe-confirmed availability is kept by the reducer; this only surfaces
+    // the download-path failure (or a cold check failure when probe also failed)
+    setUpdater({ type: 'error', message: msg })
+  }
 }
 
 function registerHostChannels(
@@ -408,33 +455,41 @@ function registerHostChannels(
     // feed the changelog uses) — the updater's own check fetches latest.yml
     // from github.com/downloads, a different, frequently blocked route
     try {
-      const res = await fetch('https://api.github.com/repos/Logic647/MemorySQL/releases?per_page=5', {
-        headers: { 'User-Agent': 'memorysql-app' },
-        signal: AbortSignal.timeout(8000)
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const list = (await res.json()) as Array<{ tag_name: string }>
-      const cur = verParts(app.getVersion())
-      if (cur) {
-        for (const r of list) {
-          const next = verParts(r.tag_name)
-          if (next && isNewer(next, cur)) {
-            return { available: true, version: r.tag_name.replace(/^v/, '') }
-          }
+      const r = await probeGitHubRelease(app.getVersion())
+      if (r.available) {
+        setUpdater({ type: 'probe-available', version: r.version ?? '' })
+        // kick the download path so 立即更新 has something to install
+        try {
+          const au = await loadUpdater()
+          wireAutoUpdater(au)
+          void au.checkForUpdates().catch(() => {})
+        } catch {
+          /* availability already reported; download path is best-effort */
         }
+        return { available: true, version: r.version }
       }
+      setUpdater({ type: 'probe-not-available' })
       return { available: false, reason: '已是最新版本' }
     } catch (err) {
-      return { available: false, reason: `检查失败: ${String(err instanceof Error ? err.message : err)}` }
+      const message = String(err instanceof Error ? err.message : err)
+      setUpdater({ type: 'probe-error', message })
+      return { available: false, reason: `检查失败: ${message}` }
     }
   })
   hostChannels.set('memorysql:host:updateNow', async () => {
     if (!app.isPackaged) throw new Error('开发模式不支持')
-    const autoUpdater = await loadUpdater()
-    await autoUpdater.checkForUpdates()
-    await autoUpdater.downloadUpdate()
-    setImmediate(() => autoUpdater.quitAndInstall())
-    return { ok: true, relaunching: true }
+    try {
+      const autoUpdater = await loadUpdater()
+      wireAutoUpdater(autoUpdater)
+      await autoUpdater.checkForUpdates()
+      await autoUpdater.downloadUpdate()
+      setImmediate(() => autoUpdater.quitAndInstall())
+      return { ok: true, relaunching: true }
+    } catch (err) {
+      const message = String(err instanceof Error ? err.message : err)
+      setUpdater({ type: 'error', message })
+      throw err
+    }
   })
   hostChannels.set('memorysql:host:updateStatus', () => ({ ...updaterState }))
   hostChannels.set('memorysql:host:releases', async () => {
@@ -610,34 +665,12 @@ app.whenReady().then(async () => {
     })()
     app.once('will-quit', () => spotlight.dispose())
     if (app.isPackaged) {
-      // update feed = GitHub Releases latest.yml; silent offline failure is fine
-      try {
-        const autoUpdater = await loadUpdater()
-        autoUpdater.autoDownload = true
-        autoUpdater.on('update-available', (info: { version?: string }) => {
-          updaterState.available = true
-          updaterState.version = info?.version
-          updaterState.error = undefined
-          updaterState.checkedAt = Date.now()
+      void startupUpdateCheck().catch((err) => {
+        setUpdater({
+          type: 'probe-error',
+          message: String(err instanceof Error ? err.message : err)
         })
-        autoUpdater.on('update-not-available', (info: { version?: string }) => {
-          updaterState.available = false
-          updaterState.version = info?.version
-          updaterState.checkedAt = Date.now()
-        })
-        autoUpdater.on('update-downloaded', (info: { version?: string }) => {
-          updaterState.available = true
-          updaterState.downloaded = true
-          updaterState.version = info?.version
-          updaterState.checkedAt = Date.now()
-        })
-        autoUpdater.on('error', (err: Error) => {
-          updaterState.error = String(err?.message ?? err)
-        })
-        void autoUpdater.checkForUpdatesAndNotify().catch(() => {})
-      } catch {
-        /* updater is optional */
-      }
+      })
     }
   } catch (err) {
     console.error('Fatal bootstrap error:', err)

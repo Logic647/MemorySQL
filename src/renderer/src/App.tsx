@@ -73,6 +73,12 @@ export default function App() {
   const [expandedChains, setExpandedChains] = useState<Set<number>>(new Set())
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [dropLine, setDropLine] = useState<{ afterId: number; below: boolean } | null>(null)
+  const [upBanner, setUpBanner] = useState<{
+    available?: boolean
+    version?: string
+    downloaded?: boolean
+    error?: string
+  } | null>(null)
 
   const [relayPick, setRelayPick] = useState<{ id: number; project: string } | null>(null)
 
@@ -109,6 +115,20 @@ export default function App() {
 
   useEffect(() => {
     void api.mcpStatus().then(setMcp).catch(() => setMcp(null))
+  }, [])
+
+  // startup auto-check pushes state here — show a non-blocking banner outside Settings
+  useEffect(() => {
+    const show = (s: {
+      available?: boolean
+      version?: string
+      downloaded?: boolean
+      error?: string
+    }): void => {
+      setUpBanner(s.available || s.downloaded ? s : null)
+    }
+    void api.updateStatus().then(show).catch(() => {})
+    return api.onUpdateStatus(show)
   }, [])
 
   const openSession = useCallback(async (id: number) => {
@@ -439,6 +459,26 @@ export default function App() {
         </button>
         {devlogNote && <span className="devlog-note">{devlogNote}</span>}
       </header>
+
+      {upBanner && (upBanner.downloaded || upBanner.available) && (
+        <div className="update-banner" role="status">
+          {upBanner.downloaded
+            ? `新版本 v${upBanner.version ?? ''} 已下载,退出应用后自动安装`
+            : upBanner.error
+              ? `发现新版本 v${upBanner.version ?? ''},下载失败——${upBanner.error}`
+              : `发现新版本 v${upBanner.version ?? ''},正在后台下载…`}
+          <button
+            className="btn btn-small"
+            style={{ marginLeft: 10 }}
+            onClick={() => setView('settings')}
+          >
+            查看
+          </button>
+          <button className="btn btn-ghost btn-small" onClick={() => setUpBanner(null)}>
+            稍后
+          </button>
+        </div>
+      )}
 
       <div className="body">
         {view === 'sessions' && (

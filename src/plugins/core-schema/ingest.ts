@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import fs from 'node:fs'
 import path from 'node:path'
 import type Database from 'better-sqlite3'
 import type { RawSession } from '../../shared/types'
@@ -78,8 +79,18 @@ export function createIngestService(deps: IngestDeps): IngestService {
   const stmtProjectIns = sqlite.prepare(
     'INSERT INTO projects (path, name, updated_at, device_id) VALUES (?, ?, ?, ?)'
   )
+  const stmtProjectAdopt = sqlite.prepare(
+    'UPDATE projects SET path = ?, name = ?, updated_at = ? WHERE id = ?'
+  )
+  const stmtProjectCandidates = sqlite.prepare(
+    'SELECT id, path, name FROM projects WHERE deleted = 0 AND path IS NOT NULL AND path != ?'
+  )
+  const stmtSessionsRecwd = sqlite.prepare(
+    'UPDATE sessions SET cwd = ?, project_id = ?, updated_at = ? WHERE cwd = ? AND deleted = 0'
+  )
   const stmtSessionFind = sqlite.prepare(
-    'SELECT id, content_hash, title_locked, title FROM sessions WHERE agent_type = ? AND external_id = ?'
+    `SELECT id, content_hash, title_locked, title, cwd, project_id, summary
+     FROM sessions WHERE agent_type = ? AND external_id = ?`
   )
   const stmtSessionIns = sqlite.prepare(`
     INSERT INTO sessions (agent_type, external_id, project_id, cwd, started_at, ended_at,
@@ -92,7 +103,13 @@ export function createIngestService(deps: IngestDeps): IngestService {
   const stmtSessionUpdate = sqlite.prepare(`
     UPDATE sessions SET project_id = @project_id, cwd = @cwd, started_at = @started_at,
       ended_at = @ended_at, title = @title, summary = @summary, content_hash = @content_hash,
-      message_count = @message_count, tool_call_count = @tool_call_count, updated_at = @updated_at
+      message_count = @message_count, tool_call_count = @tool_call_count, updated_at = @updated_at,
+      raw_path = COALESCE(@raw_path, raw_path)
+    WHERE id = @id
+  `)
+  // hash unchanged: only project/cwd/title may still need a refresh
+  const stmtSessionMeta = sqlite.prepare(`
+    UPDATE sessions SET project_id = @project_id, cwd = @cwd, title = @title, updated_at = @updated_at
     WHERE id = @id
   `)
   const stmtMsgIds = sqlite.prepare('SELECT id FROM session_messages WHERE session_id = ?')
@@ -108,11 +125,46 @@ export function createIngestService(deps: IngestDeps): IngestService {
   const stmtFtsMsgDel = sqlite.prepare('DELETE FROM messages_fts WHERE rowid = ?')
   const stmtFtsMsgIns = sqlite.prepare('INSERT INTO messages_fts (rowid, content) VALUES (?, ?)')
 
+  const pathExists = (p: string): boolean => {
+    try {
+      return fs.existsSync(p)
+    } catch {
+      return false
+    }
+  }
+  const sameDir = (a: string, b: string): boolean => {
+    const norm = (p: string): string => {
+      const s = p.replace(/[\\/]+$/, '')
+      return process.platform === 'win32' ? s.replace(/\//g, '\\').toLowerCase() : s
+    }
+    try {
+      return norm(path.dirname(a)) === norm(path.dirname(b))
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Resolve cwd → project row. A folder rename/move leaves the old row with a
+   * path that no longer exists; when exactly one such orphan shares the new
+   * path's parent (or its display name), adopt that row instead of forking a
+   * duplicate project group, and re-point every session still on the old path.
+   */
   const ensureProject = (cwd?: string): number | null => {
     if (!cwd) return null
     const existing = stmtProjectFind.get(cwd) as { id: number } | undefined
     if (existing) return existing.id
     const name = path.basename(cwd) || cwd
+    const candidates = (stmtProjectCandidates.all(cwd) as Array<{ id: number; path: string; name: string }>).filter(
+      (p) => sameDir(p.path, cwd)
+    )
+    const orphans = candidates.filter((p) => !pathExists(p.path))
+    const adopt = orphans.find((p) => p.name === name) ?? (orphans.length === 1 ? orphans[0] : undefined)
+    if (adopt) {
+      stmtProjectAdopt.run(cwd, name, now(), adopt.id)
+      stmtSessionsRecwd.run(cwd, adopt.id, now(), adopt.path)
+      return adopt.id
+    }
     return Number(
       (stmtProjectIns.run(cwd, name, now(), 'local') as { lastInsertRowid: number | bigint })
         .lastInsertRowid
@@ -150,15 +202,53 @@ export function createIngestService(deps: IngestDeps): IngestService {
   ): { outcome: 'imported' | 'updated' | 'skipped'; id?: number } => {
     const contentHash = hashSession(s)
     const existing = stmtSessionFind.get(s.agentType, s.externalId) as
-      | { id: number; content_hash: string; title_locked: number; title: string | null }
+      | {
+          id: number
+          content_hash: string
+          title_locked: number
+          title: string | null
+          cwd: string | null
+          project_id: number | null
+          summary: string | null
+        }
       | undefined
-    if (existing && existing.content_hash === contentHash) return { outcome: 'skipped' }
 
     // a user-renamed title survives re-ingest (auto summaries never clobber it)
-    if (existing?.title_locked && existing.title) summary.title = existing.title
+    const lockedTitle =
+      existing?.title_locked && existing.title ? existing.title : undefined
+    const nextTitle = lockedTitle ?? summary.title
 
-    const projectId = ensureProject(s.cwd)
-    const { title, summary: summaryText } = summary
+    // trust the adapter's cwd only when it points at something real — a
+    // renamed-away folder must not clobber a project we just re-homed
+    const incomingCwd = s.cwd ?? null
+    const effectiveCwd =
+      incomingCwd != null && (pathExists(incomingCwd) || !existing?.cwd)
+        ? incomingCwd
+        : (existing?.cwd ?? incomingCwd)
+
+    if (existing && existing.content_hash === contentHash) {
+      // messages unchanged — title/cwd/project may still have moved
+      const nextProjectId = ensureProject(effectiveCwd ?? undefined)
+      const needTitle = nextTitle !== existing.title
+      const needCwd = effectiveCwd !== existing.cwd
+      const needProject = nextProjectId !== existing.project_id
+      if (!needTitle && !needCwd && !needProject) return { outcome: 'skipped' }
+      stmtSessionMeta.run({
+        id: existing.id,
+        project_id: nextProjectId,
+        cwd: effectiveCwd,
+        title: nextTitle,
+        updated_at: now()
+      })
+      if (needTitle) {
+        stmtFtsSessionDel.run(existing.id)
+        stmtFtsSessionIns.run(existing.id, nextTitle, existing.summary ?? '')
+      }
+      return { outcome: 'updated', id: existing.id }
+    }
+
+    const projectId = ensureProject(effectiveCwd ?? undefined)
+    const { title, summary: summaryText } = { title: nextTitle, summary: summary.summary }
     const toolCalls = s.messages.filter((m) => m.role === 'tool').length
     const counts = {
       message_count: s.messages.length,
@@ -175,12 +265,13 @@ export function createIngestService(deps: IngestDeps): IngestService {
         stmtSessionUpdate.run({
           id: sessionId,
           project_id: projectId,
-          cwd: s.cwd ?? null,
+          cwd: effectiveCwd,
           started_at: s.startedAt ?? null,
           ended_at: s.endedAt ?? null,
           title,
           summary: summaryText,
           content_hash: contentHash,
+          raw_path: s.rawPath ?? null,
           ...counts,
           updated_at: now()
         })
@@ -199,7 +290,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
           agent_type: s.agentType,
           external_id: s.externalId,
           project_id: projectId,
-          cwd: s.cwd ?? null,
+          cwd: effectiveCwd,
           started_at: s.startedAt ?? null,
           ended_at: s.endedAt ?? null,
           title,

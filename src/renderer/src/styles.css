@@ -333,6 +333,19 @@ section h3 { font-size: var(--msql-fs-lg); margin: 0 0 4px; font-weight: 600; }
 .release-notes { margin: 6px 0 0; white-space: pre-wrap; font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); font-family: inherit; max-height: 200px; overflow-y: auto; line-height: 1.6; }
 .devlog-note { font-size: var(--msql-fs-sm); color: var(--msql-accent); white-space: nowrap; }
 
+/* startup update banner (push:update-status) */
+.update-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: var(--msql-fs-sm);
+  color: var(--msql-accent);
+  background: color-mix(in srgb, var(--msql-accent) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--msql-accent) 28%, transparent);
+}
+
 /* agent capture rows */
 .agent-capture { display: flex; flex-direction: column; }
 .agent-row { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.04); align-items: flex-start; }
