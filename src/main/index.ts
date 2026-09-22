@@ -590,6 +590,24 @@ app.whenReady().then(async () => {
     const win = createWindow(boot.host, boot.events)
     const spotlight = setupSpotlight({ win, settings: boot.settings })
     registerHostChannels(boot.host, boot.settings, boot.env, boot.db, spotlight)
+    // startup capture scan: sessions written while the app was off should show
+    // up on launch, not only after a manual 立即扫描 (best-effort, non-blocking)
+    void (async () => {
+      try {
+        const channels = new Set(boot.host.listChannels())
+        for (const p of BUILTIN_PLUGINS.filter((x) => x.manifest.id.startsWith('capture-'))) {
+          const channel = `${p.manifest.id}:scanNow`
+          if (!channels.has(channel)) continue
+          try {
+            await boot.host.invoke(channel)
+          } catch {
+            /* per-plugin failure is non-fatal */
+          }
+        }
+      } catch {
+        /* scan is best-effort */
+      }
+    })()
     app.once('will-quit', () => spotlight.dispose())
     if (app.isPackaged) {
       // update feed = GitHub Releases latest.yml; silent offline failure is fine

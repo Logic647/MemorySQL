@@ -7,6 +7,25 @@
 
 ---
 
+## 2026-09-20 · ZCode/OpenCode 权威存储迁移适配(SQLite)+ 启动自动扫描
+
+**用户反馈两个问题:**①ZCode 新建 money 项目未被识别;②opencode 连接向导能检测到、会话捕获却"未检测到"且扫不出会话。
+
+**根因(同源):**两家都是 opencode 系(ZCode 是 opencode 的 fork),已把权威会话存储迁到 **SQLite 三表结构**(`session[id,directory,title,time_*]` + `message[data JSON{role,time}]` + `part[data JSON{type:text|tool|reasoning|…}]`):
+- ZCode:`~/.zcode/cli/db/db.sqlite` —— money 项目就躺在里面(`directory: H:\桌面\temp\money`);rollout 里的 model-io 只是 API 调用日志,**多数不带 cwd** → 项目分组失败;且应用没开时的会话只能等手动扫描
+- OpenCode:`~/.local/share/opencode/opencode.db` —— 旧适配器找的 `storage/` JSON 三目录树已不存在 → "未检测到"实锤;本机实库 6 会话 44 消息(含"检查 MCP 状态"等真实对话)
+
+**修复:**
+- 新共享解析器 `_lib/agent-db-parser.ts`:`parseAgentSqliteSessions(dbPath, agentType, onlySessionId?)` —— openForeignDb 快照读锁库,text part 聚合为正文、tool part 转工具消息(toolName+input)、reasoning/step-finish 跳过、system 角色跳过;cwd/标题/时间全量携带;**externalId 用会话原生 id(sess_*/ses_*),与旧 model-io 导入同键 → 旧数据自动升级**(补上 cwd 与完整消息)
+- capture-zcode v2:db.sqlite 存在则 db 为主;rollout watcher 保留作活动信号——事件文件名带会话 id,按 `onlySessionId` 从权威库增量重读单会话(不做全库重扫);db 缺失(旧版 ZCode)回落 rollout 直读
+- capture-opencode:db 优先(`~/.local/share/opencode/opencode.db`、`%LOCALAPPDATA%\opencode\opencode.db` 双候选),旧 JSON 树兜底;sourceExists 同步
+- **GUI 启动自动扫描**:main 启动后后台跑全部 capture-* 的 scanNow(此前只有 watcher 增量 + 手动扫描,应用离线期间的会话永远进不来)
+
+**验证:**typecheck 零错 / vitest **100:100**(新增 3 用例:含 sequence 与不含两种 fixture、cwd/标题/时间戳/文本聚合/工具映射/空会话跳过/按 id 过滤/db 不存在返回空)/ 真机扫描:zcode 14 found(7 新 + 7 旧数据升级)、**opencode 6 会话入库**、**money 项目出现**(#41,4 会话:含 zcode 与 codex)
+**注意:**用户 GUI 若为安装版,其库在 `%APPDATA%\MemorySQL\data` —— 需等下个版本发布更新后才能吃到本次修复;开发库(H:\...\data)已验证全通
+
+---
+
 ## 2026-09-17 · 交接快照 docs/HANDOFF.md
 
 v0.5.1 发版收尾后写 `docs/HANDOFF.md`:发布渠道现状(Release 7 资产/CI 双矩阵/winget #426778 人工审查队列/mcp.so 待催)、0.4.2→0.5.1 工作回顾、待办清单(用户:过目截图→发布宣传;agent:winget 跟进、iFlow、PTY tee)、遗留技术债、发版流程与网络工具知识、Antigravity MCP 接入结论(`~/.gemini/config/mcp_config.json`,stdio 桥优先)。AGENTS.md 必读文档表已挂链接。
