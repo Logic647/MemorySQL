@@ -13,6 +13,8 @@ export type AgentType =
   | 'qwencode'
   | 'kimicli'
   | 'codebuddy'
+  | 'workbuddy'
+  | 'qoder'
   | (string & {})
 export type MessageRole = 'user' | 'assistant' | 'tool' | 'system'
 

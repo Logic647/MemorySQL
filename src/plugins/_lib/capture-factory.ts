@@ -20,8 +20,9 @@ export interface CaptureSpec {
   /** whether the source exists at all (drives "未检测到" in the UI) */
   sourceExists?: (sourceRoot: string) => boolean
   /** dirs to watch; defaults to [sourceRoot] (db-backed adapters watch the db folder).
-   * A function is resolved at watcher start so late-created stores are picked up. */
-  watchPaths?: string[] | (() => string[])
+   * A function is resolved at watcher start (with the effective sourceRoot) so
+   * late-created stores and twin roots are picked up. */
+  watchPaths?: string[] | ((sourceRoot: string) => string[])
   /**
    * incremental watcher config; omit for file-less adapters.
    * `rescan: true` re-runs collect() on any matching change (SQLite stores)
@@ -104,7 +105,8 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
         }
         const watchSpec = spec.watch
         if (watchSpec) {
-          const resolved = typeof spec.watchPaths === 'function' ? spec.watchPaths() : spec.watchPaths
+          const resolved =
+            typeof spec.watchPaths === 'function' ? spec.watchPaths(sourceRoot) : spec.watchPaths
           // explicit empty list = "nothing to watch yet" (don't fall back to home)
           if (resolved && resolved.length === 0) {
             ctx.log.info('watchPaths empty, watcher deferred until source appears')

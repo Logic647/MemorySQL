@@ -14,6 +14,7 @@ import {
   findKimiSessions,
   parseKimiContext
 } from '../src/plugins/capture-kimicli/kimicli-parser'
+import { isQoderSessionFile, parseQoderSession } from '../src/plugins/capture-qoder'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -324,6 +325,40 @@ describe('kimi session discovery', () => {
     expect(s!.externalId).toBe('uuid-1')
     expect(s!.messages).toHaveLength(1)
     expect(s!.endedAt).toBeDefined()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+})
+
+describe('parseClaudeJsonl (qoder reuse) + state.json', () => {
+  it('emits agentType qoder and merges title/cwd from sibling state.json', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qoder-test-'))
+    const projects = path.join(tmp, 'projects', 'H--desk-MemorySQL')
+    fs.mkdirSync(path.join(projects, 'sess-1'), { recursive: true })
+    const file = path.join(projects, 'sess-1.jsonl')
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        type: 'user',
+        sessionId: 'sess-1',
+        timestamp: '2026-09-23T08:00:00Z',
+        message: { role: 'user', content: '重构登录' }
+      })
+    )
+    fs.writeFileSync(
+      path.join(projects, 'sess-1', 'state.json'),
+      JSON.stringify({ title: '登录重构', cwd: 'H:\\desk\\MemorySQL' })
+    )
+
+    const s = parseQoderSession(file)
+    expect(s).not.toBeNull()
+    expect(s!.agentType).toBe('qoder')
+    expect(s!.externalId).toBe('sess-1')
+    expect(s!.title).toBe('登录重构')
+    expect(s!.cwd).toBe('H:\\desk\\MemorySQL')
+    expect(s!.messages).toHaveLength(1)
+    expect(isQoderSessionFile(file)).toBe(true)
+    expect(isQoderSessionFile(path.join(tmp, 'projects', 'loose.jsonl'))).toBe(false)
+    expect(isQoderSessionFile(path.join(tmp, 'notes.jsonl'))).toBe(false)
     fs.rmSync(tmp, { recursive: true, force: true })
   })
 })

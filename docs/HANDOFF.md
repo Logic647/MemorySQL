@@ -45,7 +45,7 @@
 **接手 agent 可推进的:**
 3. winget:盯 #426778 合并,合并后用 wingetcreate/API 提 0.5.1 版 PR(Version-Update,大概率 bot 自动合)
 4. mcp.so 催收录;PulseMCP 重开后提交
-5. iFlow CLI 适配(可行,中置信度,格式 Gemini 系但版本差异大)
+5. ~~iFlow CLI 适配~~ **已作废**(2026-09-23:iFlow 于 2026-04-17 停服并迁 Qoder;Qoder/Qoder CN 适配已完成见 DEVLOG 顶部,未发版)
 6. PTY tee 包装器(加密方案②,`msql-wrap`,node-pty;仅在用户高频使用加密 CLI agent 时值得)
 
 ## 六、遗留技术债(记录在案,非阻塞)

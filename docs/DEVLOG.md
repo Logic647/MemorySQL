@@ -4,6 +4,52 @@
 
 ---
 
+## 2026-09-23 · 新适配:Qoder CLI / Qoder CN 会话捕获 + MCP 连接(未发版)
+
+**本机未装** → 按官方文档(Claude 兼容 JSONL)实现,合成样本单测覆盖。
+
+**存储(国际版 `~/.qoder/`、中国版 `~/.qoder-cn/`,env `QODER_CONFIG_DIR` / `QODERCN_CONFIG_DIR` 可覆盖):**
+- `projects/<flattened-path>/<session-id>.jsonl` — 会话日志(Claude Code 同构:type user/assistant、message.content string|parts)
+- `projects/<flattened-path>/<session-id>/state.json` — 会话状态(title/name/custom_title、cwd)
+- MCP:`settings.json` 的 `mcpServers.memorysql = { type:'http', url }`(或 `qoder mcp add`)
+
+**调研结论(国内缺口清单):**
+- **Qoder/Qoder CN**:高优先,已做本条
+- **Comate Zulu CLI**(`@comate/zulu`,历史在 `~/.comate-engine/store/chat_session_*`):高优先,后续
+- **iFlow CLI**:2026-04-17 已停服并迁 Qoder → **HANDOFF 待办 5 作废,不再适配**
+- CodeGeeX / 商汤小浣熊:IDE/云端为主,未见本地会话格式,低优先
+
+**实现:**
+- `capture-qoder` 插件:复用 `parseClaudeJsonl(..., 'qoder')` + `readQoderState` 补 title/cwd;`qoderRoots()` 默认布局同时扫 `.qoder` 与 `.qoder-cn`(去重 externalId);`isQoderSessionFile` 只收 `projects/<slug>/*.jsonl`;watcher 增量 `.jsonl`
+- **capture-factory 微调**:`watchPaths` 函数签名改为 `(sourceRoot) => string[]`(自定义根与孪生目录都能正确 watch,已有适配器零参数兼容)
+- 注册:`types.AgentType 'qoder'`、BUILTIN_PLUGINS、App 侧栏、Settings(PLUGIN_DESC/CAPTURE_AGENTS/CONNECT_AGENTS)、badge
+- MCP 连接器 `qoder`:detect `.qoder`/`.qoder-cn`,写 `settings.json` 的 `mcpServers.memorysql`
+
+**验收:** typecheck 零错 / vitest **126:126**(新增 qoder state 合并与路径过滤 1 用例)。真机验收待装 Qoder 后隔离扫一次。
+
+**下一步:** ①同版/随 WorkBuddy 一起发版 ②评估 Comate Zulu 适配 ③iFlow 待办关闭
+
+---
+
+## 2026-09-22 · 新适配:腾讯 WorkBuddy 会话捕获 + MCP 连接
+
+**本机未装** → 按官方/社区公开存储架构调研实现,合成样本单测覆盖(格式来源:workbuddy-conversation-exporter、workbuddy-workspace-migration SKILL、mcp.json 文档)。
+
+**存储(`~/.workbuddy/`):**
+- `workbuddy.db` — SQLite `sessions(id,title,cwd,created_at ms,…)` + `workspaces`,元数据权威
+- `projects/{slug}/{conversationId}.jsonl` — 消息日志:`{type:'message', role:'user'|'assistant', content:string|[{text}], timestamp:ms, cwd}`,用户侧常包 `<system-reminder>…<user_query>…</user_query>`
+- MCP:`mcpServers.memorysql = { url, disabled:false }` → `~/.workbuddy/mcp.json`
+
+**实现:**
+- `capture-workbuddy` 插件(工厂模板):`collectWorkbuddy` 扫全部 JSONL + `openForeignDb` 快照读 db 补 title/cwd/created_at;watcher 同时匹配 `.jsonl` 与 `workbuddy.db(-wal|-shm)`(单文件变化:jsonl 增量解析、db 变更全量重读);`watchPaths` 函数化
+- `parseWorkbuddyJsonl`:只收 `type=message` 的 user/assistant 文本轮,剥 system-reminder 取 `user_query`;tool/非 message 跳过
+- 注册:`types.AgentType`、BUILTIN_PLUGINS、App 侧栏、Settings(PLUGIN_DESC/CAPTURE_AGENTS/CONNECT_AGENTS)、badge
+- MCP 连接器:`detect ~/.workbuddy`、`mcp.json` mergeJson 写 `mcpServers.memorysql`
+
+**验收:** typecheck 零错 / vitest **125:125**(新增 `workbuddy-parser` 5 用例)。真机验收待装 WorkBuddy 后 `MEMORYSQL_DATA_DIR` 隔离扫一次。
+
+---
+
 ## 2026-09-22 · Bug 修复 + **v0.5.3 已发版**:启动自动检测更新 + 项目/会话重命名不同步
 
 **用户报两个 bug:**①启动时自动检测更新没有正确实现;②项目文件夹及会话重命名后会话内不同步。**v0.5.3** 含本条全部修复与审查项;7 资产 https://github.com/Logic647/MemorySQL/releases/tag/v0.5.3

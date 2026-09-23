@@ -32,6 +32,8 @@ const CAPTURE_PLUGINS: Array<{ id: string; label: string }> = [
   { id: 'capture-qwencode', label: 'Qwen Code' },
   { id: 'capture-kimicli', label: 'Kimi CLI' },
   { id: 'capture-codebuddy', label: 'CodeBuddy' },
+  { id: 'capture-workbuddy', label: 'WorkBuddy' },
+  { id: 'capture-qoder', label: 'Qoder CLI' },
   { id: 'capture-gemini', label: 'Gemini CLI' },
   { id: 'capture-cursor', label: 'Cursor' },
   { id: 'capture-opencode', label: 'OpenCode' }

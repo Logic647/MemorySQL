@@ -234,6 +234,35 @@ startup_timeout_sec = 30`,
       `// ~/.codebuddy/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "type": "http", "url": "${url}" }\n  }\n}`
   },
   {
+    id: 'workbuddy',
+    label: 'WorkBuddy',
+    detect: (home) => fs.existsSync(path.join(home, '.workbuddy')),
+    configPath: (home) => path.join(home, '.workbuddy', 'mcp.json'),
+    apply: (configPath, url) =>
+      mergeJson(configPath, (root) => {
+        setNested(root, ['mcpServers', 'memorysql'], { url, disabled: false })
+      }),
+    snippet: (url) =>
+      `// ~/.workbuddy/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "url": "${url}", "disabled": false }\n  }\n}`
+  },
+  {
+    id: 'qoder',
+    label: 'Qoder CLI / CN',
+    detect: (home) =>
+      fs.existsSync(path.join(home, '.qoder')) || fs.existsSync(path.join(home, '.qoder-cn')),
+    configPath: (home) => {
+      const g = path.join(home, '.qoder')
+      const base = fs.existsSync(g) ? g : path.join(home, '.qoder-cn')
+      return path.join(base, 'settings.json')
+    },
+    apply: (configPath, url) =>
+      mergeJson(configPath, (root) => {
+        setNested(root, ['mcpServers', 'memorysql'], HTTP_ENTRY(url))
+      }),
+    snippet: (url) =>
+      `qoder mcp add --transport http memorysql ${url}\n// 或 settings.json 的 mcpServers 中加:\n{\n  "mcpServers": {\n    "memorysql": { "type": "http", "url": "${url}" }\n  }\n}`
+  },
+  {
     id: 'cursor',
     label: 'Cursor',
     detect: (home, appData) =>
