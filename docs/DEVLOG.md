@@ -4,9 +4,13 @@
 
 ---
 
-## 2026-09-23 · 新适配:Qoder CLI / Qoder CN 会话捕获 + MCP 连接(未发版)
+## 2026-09-23 · 新适配 + **v0.5.4 已发版**:WorkBuddy + Qoder CLI/CN 会话捕获与 MCP 连接
 
-**本机未装** → 按官方文档(Claude 兼容 JSONL)实现,合成样本单测覆盖。
+**v0.5.4** 含 WorkBuddy 与 Qoder 两条适配 + capture-factory `watchPaths(sourceRoot)` 微调;CI 双矩阵全绿,7 资产 https://github.com/Logic647/MemorySQL/releases/tag/v0.5.4(typecheck 0 / vitest **126:126**)。两家本机未装,合成样本单测覆盖,装机后 `MEMORYSQL_DATA_DIR` 隔离真机扫一次。
+
+### Qoder CLI / Qoder CN(本条实现细节)
+
+**本机未装** → 按官方文档(Claude 兼容 JSONL)实现。
 
 **存储(国际版 `~/.qoder/`、中国版 `~/.qoder-cn/`,env `QODER_CONFIG_DIR` / `QODERCN_CONFIG_DIR` 可覆盖):**
 - `projects/<flattened-path>/<session-id>.jsonl` — 会话日志(Claude Code 同构:type user/assistant、message.content string|parts)
@@ -25,9 +29,13 @@
 - 注册:`types.AgentType 'qoder'`、BUILTIN_PLUGINS、App 侧栏、Settings(PLUGIN_DESC/CAPTURE_AGENTS/CONNECT_AGENTS)、badge
 - MCP 连接器 `qoder`:detect `.qoder`/`.qoder-cn`,写 `settings.json` 的 `mcpServers.memorysql`
 
-**验收:** typecheck 零错 / vitest **126:126**(新增 qoder state 合并与路径过滤 1 用例)。真机验收待装 Qoder 后隔离扫一次。
+**验收:** typecheck 零错 / vitest **126:126**(新增 qoder state 合并与路径过滤 1 用例)。
 
-**下一步:** ①同版/随 WorkBuddy 一起发版 ②评估 Comate Zulu 适配 ③iFlow 待办关闭
+### WorkBuddy(同版,见上一日实现记录)
+
+`capture-workbuddy` 扫 `~/.workbuddy/projects/**/*.jsonl` + `workbuddy.db` 元数据;MCP 写 `mcp.json`。合成样本 5 用例。
+
+**下一步:** ①装机后真机验收 WorkBuddy/Qoder 与 0.5.3→0.5.4 自动更新 ②评估 Comate Zulu 适配 ③用户过目截图 → 宣传发帖 ④winget 0.5.x 版 PR 跟进
 
 ---
 
