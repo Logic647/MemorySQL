@@ -1,11 +1,20 @@
 /** Pure update-check helpers — no Electron imports, unit-testable. */
 
+export interface UpdaterProgress {
+  percent: number
+  transferred: number
+  total: number
+}
+
 export interface UpdaterState {
   available?: boolean
   version?: string
   downloaded?: boolean
   error?: string
   checkedAt?: number
+  /** live download progress (download-progress events); cleared on completion
+   * and on failure so a stale bar never sticks around */
+  progress?: UpdaterProgress
   /** availability confirmed by the api.github.com probe (authoritative for
    * "is there a newer release" — electron-updater's latest.yml feed can lag) */
   probeConfirmed?: boolean
@@ -19,6 +28,7 @@ export type UpdaterEvent =
   | { type: 'probe-available'; version: string }
   | { type: 'probe-not-available' }
   | { type: 'probe-error'; message: string }
+  | { type: 'progress'; percent: number; transferred: number; total: number }
 
 /** compare "v0.4.2" style tags numerically; non-semver tags return null */
 export function verParts(tag: string): number[] | null {
@@ -56,6 +66,7 @@ export function applyUpdaterEvent(state: UpdaterState, ev: UpdaterEvent): Update
       next.version = ev.version
       next.downloaded = false
       next.error = undefined
+      next.progress = undefined
       next.probeConfirmed = false
       next.checkedAt = Date.now()
       break
@@ -64,6 +75,7 @@ export function applyUpdaterEvent(state: UpdaterState, ev: UpdaterEvent): Update
       next.downloaded = true
       next.version = ev.version ?? next.version
       next.error = undefined
+      next.progress = undefined
       next.checkedAt = Date.now()
       break
     case 'error':
@@ -71,6 +83,7 @@ export function applyUpdaterEvent(state: UpdaterState, ev: UpdaterEvent): Update
       // surface the error; a cold check failure leaves available undefined
       next.error = ev.message
       next.checkedAt = Date.now()
+      next.progress = undefined
       if (next.available === undefined) next.downloaded = false
       break
     case 'probe-available':
@@ -85,12 +98,20 @@ export function applyUpdaterEvent(state: UpdaterState, ev: UpdaterEvent): Update
       next.version = undefined
       next.downloaded = false
       next.error = undefined
+      next.progress = undefined
       next.probeConfirmed = false
       next.checkedAt = Date.now()
       break
     case 'probe-error':
       next.error = ev.message
       next.checkedAt = Date.now()
+      break
+    case 'progress':
+      next.progress = {
+        percent: Math.max(0, Math.min(100, ev.percent)),
+        transferred: ev.transferred,
+        total: ev.total
+      }
       break
   }
   return next

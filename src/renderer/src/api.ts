@@ -324,16 +324,31 @@ export const api = {
       version?: string
       reason?: string
     }>,
-  updateStatus: (): Promise<{ available?: boolean; version?: string; downloaded?: boolean; error?: string; checkedAt?: number }> =>
+  updateStatus: (): Promise<{
+    available?: boolean
+    version?: string
+    downloaded?: boolean
+    error?: string
+    checkedAt?: number
+    progress?: { percent: number; transferred: number; total: number }
+  }> =>
     window.memorysql.invoke('memorysql:host:updateStatus') as Promise<{
       available?: boolean
       version?: string
       downloaded?: boolean
       error?: string
       checkedAt?: number
+      progress?: { percent: number; transferred: number; total: number }
     }>,
   onUpdateStatus: (
-    cb: (s: { available?: boolean; version?: string; downloaded?: boolean; error?: string; checkedAt?: number }) => void
+    cb: (s: {
+      available?: boolean
+      version?: string
+      downloaded?: boolean
+      error?: string
+      checkedAt?: number
+      progress?: { percent: number; transferred: number; total: number }
+    }) => void
   ): (() => void) =>
     window.memorysql.on('push:update-status', (...args: unknown[]) => {
       cb((args[0] ?? {}) as Parameters<typeof cb>[0])
@@ -349,8 +364,14 @@ export const api = {
       imported: number
       skipped: number
     }>,
-  updateNow: (): Promise<{ ok: boolean; relaunching?: boolean }> =>
-    window.memorysql.invoke('memorysql:host:updateNow') as Promise<{ ok: boolean; relaunching?: boolean }>,
+  updateNow: (): Promise<{ ok: boolean; downloading?: boolean }> =>
+    window.memorysql.invoke('memorysql:host:updateNow') as Promise<{ ok: boolean; downloading?: boolean }>,
+  /** quit the app and run the downloaded installer (asks first in the UI) */
+  updateInstallNow: (): Promise<{ ok: boolean; installing?: boolean }> =>
+    window.memorysql.invoke('memorysql:host:updateInstallNow') as Promise<{
+      ok: boolean
+      installing?: boolean
+    }>,
   releases: (): Promise<{ releases: Array<{ tag: string; date: string | null; notes: string }>; error?: string }> =>
     window.memorysql.invoke('memorysql:host:releases') as Promise<{
       releases: Array<{ tag: string; date: string | null; notes: string }>

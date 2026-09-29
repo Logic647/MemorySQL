@@ -76,6 +76,26 @@ describe('applyUpdaterEvent state machine', () => {
     const s = applyUpdaterEvent({ error: 'old' }, { type: 'downloaded', version: '0.6.0' })
     expect(s).toMatchObject({ available: true, downloaded: true, version: '0.6.0', error: undefined })
   })
+
+  it('progress events set live progress; downloaded clears the bar', () => {
+    let s: UpdaterState = applyUpdaterEvent({}, { type: 'available', version: '0.6.0' })
+    s = applyUpdaterEvent(s, { type: 'progress', percent: 42.7, transferred: 74, total: 177 })
+    expect(s.progress).toEqual({ percent: 42.7, transferred: 74, total: 177 })
+    s = applyUpdaterEvent(s, { type: 'progress', percent: 120, transferred: 177, total: 177 })
+    expect(s.progress?.percent).toBe(100) // clamped
+    s = applyUpdaterEvent(s, { type: 'downloaded', version: '0.6.0' })
+    expect(s.progress).toBeUndefined()
+    expect(s.downloaded).toBe(true)
+  })
+
+  it('a download failure clears progress so no stale bar remains', () => {
+    let s: UpdaterState = applyUpdaterEvent({}, { type: 'available', version: '0.6.0' })
+    s = applyUpdaterEvent(s, { type: 'progress', percent: 30, transferred: 53, total: 177 })
+    s = applyUpdaterEvent(s, { type: 'error', message: 'connection reset' })
+    expect(s.progress).toBeUndefined()
+    expect(s.available).toBe(true) // availability survives, error is surfaced
+    expect(s.error).toBe('connection reset')
+  })
 })
 
 describe('probeGitHubRelease', () => {

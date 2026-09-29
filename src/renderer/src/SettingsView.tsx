@@ -557,6 +557,9 @@ function BackupPathsSection({ onMsg }: { onMsg: (s: string) => void }) {
   )
 }
 
+/** bytes → compact MB display for the download progress line */
+const fmtMB = (n: number): string => `${(n / 1024 / 1024).toFixed(1)}MB`
+
 function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
   const [info, setInfo] = useState<{ version: string; electron: string; packaged: boolean } | null>(null)
   const [update, setUpdate] = useState<{ available: boolean; version?: string; reason?: string } | null>(null)
@@ -568,6 +571,7 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
     downloaded?: boolean
     error?: string
     checkedAt?: number
+    progress?: { percent: number; transferred: number; total: number }
   } | null>(null)
 
   useEffect(() => {
@@ -628,12 +632,35 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
         </button>
       </div>
       {upStatus?.downloaded && (
-        <p className="hint">
-          新版本 v{upStatus.version ?? ''} 已下载完毕——退出应用后会自动安装,重新打开即是新版。
-        </p>
+        <>
+          <p className="hint">
+            新版本 v{upStatus.version ?? ''} 已下载完毕——退出应用后会自动安装,重新打开即是新版。
+          </p>
+          <button
+            className="btn btn-accent btn-small"
+            onClick={() => void api.updateInstallNow().catch((e) => onMsg(`安装失败: ${String(e)}`))}
+          >
+            立即重启安装 v{upStatus.version ?? ''}
+          </button>
+        </>
       )}
       {upStatus?.available && !upStatus.downloaded && !upStatus.error && (
-        <p className="hint">新版本 v{upStatus.version ?? ''} 检测到,正在后台下载…(完成后退出应用即自动安装)</p>
+        <>
+          {upStatus.progress && (
+            <div className="update-progress" style={{ margin: '8px 0' }}>
+              <div
+                className="update-progress-fill"
+                style={{ width: `${Math.min(100, Math.max(0, upStatus.progress.percent))}%` }}
+              />
+            </div>
+          )}
+          <p className="hint">
+            新版本 v{upStatus.version ?? ''} 检测到,正在后台下载
+            {upStatus.progress
+              ? ` ${Math.round(upStatus.progress.percent)}%(${fmtMB(upStatus.progress.transferred)} / ${fmtMB(upStatus.progress.total)})`
+              : ''}…(完成后会询问是否立即重启安装)
+          </p>
+        </>
       )}
       {upStatus?.available && !upStatus.downloaded && upStatus.error && (
         <p className="hint">
@@ -656,11 +683,11 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
           onClick={() =>
             void api
               .updateNow()
-              .then(() => onMsg('更新包已下载,应用即将重启安装…'))
-              .catch((e) => onMsg(`更新失败: ${String(e)}`))
+              .then(() => onMsg('更新包开始后台下载,完成后会询问是否立即重启安装'))
+              .catch((e) => onMsg(`下载失败: ${String(e)}`))
           }
         >
-          下载并安装 v{update.version}
+          下载更新包 v{update.version}
         </button>
       )}
 

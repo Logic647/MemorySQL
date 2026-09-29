@@ -333,6 +333,10 @@ section h3 { font-size: var(--msql-fs-lg); margin: 0 0 4px; font-weight: 600; }
 .release-notes { margin: 6px 0 0; white-space: pre-wrap; font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); font-family: inherit; max-height: 200px; overflow-y: auto; line-height: 1.6; }
 .devlog-note { font-size: var(--msql-fs-sm); color: var(--msql-accent); white-space: nowrap; }
 
+/* updater download progress (banner + settings page) */
+.update-progress { position: relative; height: 6px; min-width: 160px; flex: 1; max-width: 280px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.update-progress-fill { position: absolute; top: 0; bottom: 0; left: 0; background: var(--msql-accent); border-radius: 3px; transition: width 240ms var(--msql-ease); }
+
 /* startup update banner (push:update-status) */
 .update-banner {
   flex-shrink: 0;

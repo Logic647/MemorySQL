@@ -321,6 +321,14 @@ function wireAutoUpdater(au: AppUpdater): void {
   au.on('update-not-available', (info: { version?: string }) => {
     setUpdater({ type: 'not-available', version: info?.version })
   })
+  au.on('download-progress', (p: { percent?: number; transferred?: number; total?: number }) => {
+    setUpdater({
+      type: 'progress',
+      percent: Number(p?.percent ?? 0),
+      transferred: Number(p?.transferred ?? 0),
+      total: Number(p?.total ?? 0)
+    })
+  })
   au.on('update-downloaded', (info: { version?: string }) => {
     setUpdater({ type: 'downloaded', version: info?.version })
   })
@@ -485,15 +493,23 @@ function registerHostChannels(
     try {
       const autoUpdater = await loadUpdater()
       wireAutoUpdater(autoUpdater)
+      // autoDownload=true: checkForUpdates kicks the download itself; progress
+      // and completion stream out as push:update-status events and the app
+      // asks "restart now or later" — no silent quitAndInstall here
       await autoUpdater.checkForUpdates()
-      await autoUpdater.downloadUpdate()
-      setImmediate(() => autoUpdater.quitAndInstall())
-      return { ok: true, relaunching: true }
+      return { ok: true, downloading: true }
     } catch (err) {
       const message = String(err instanceof Error ? err.message : err)
       setUpdater({ type: 'error', message })
       throw err
     }
+  })
+  hostChannels.set('memorysql:host:updateInstallNow', async () => {
+    if (!app.isPackaged) throw new Error('开发模式不支持')
+    const autoUpdater = await loadUpdater()
+    // quitAndInstall tears down the app synchronously — answer the IPC first
+    setImmediate(() => autoUpdater.quitAndInstall())
+    return { ok: true, installing: true }
   })
   hostChannels.set('memorysql:host:updateStatus', () => ({ ...updaterState }))
   hostChannels.set('memorysql:host:releases', async () => {

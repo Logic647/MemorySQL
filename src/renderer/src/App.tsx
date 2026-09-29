@@ -80,7 +80,11 @@ export default function App() {
     version?: string
     downloaded?: boolean
     error?: string
+    progress?: { percent: number; transferred: number; total: number }
   } | null>(null)
+  // "later" dismissal of the ready-to-install dialog, keyed by version so a
+  // NEWLY downloaded version re-asks instead of staying silenced
+  const [updateAskDismissed, setUpdateAskDismissed] = useState<string | null>(null)
 
   const [relayPick, setRelayPick] = useState<{ id: number; project: string } | null>(null)
 
@@ -468,7 +472,26 @@ export default function App() {
             ? `新版本 v${upBanner.version ?? ''} 已下载,退出应用后自动安装`
             : upBanner.error
               ? `发现新版本 v${upBanner.version ?? ''},下载失败——${upBanner.error}`
-              : `发现新版本 v${upBanner.version ?? ''},正在后台下载…`}
+              : upBanner.progress
+                ? `正在下载 v${upBanner.version ?? ''}… ${Math.round(upBanner.progress.percent)}%`
+                : `发现新版本 v${upBanner.version ?? ''},正在后台下载…`}
+          {upBanner.progress && !upBanner.downloaded && (
+            <div className="update-progress" style={{ marginLeft: 10 }}>
+              <div
+                className="update-progress-fill"
+                style={{ width: `${Math.min(100, Math.max(0, upBanner.progress.percent))}%` }}
+              />
+            </div>
+          )}
+          {upBanner.downloaded && (
+            <button
+              className="btn btn-accent btn-small"
+              style={{ marginLeft: 10 }}
+              onClick={() => void api.updateInstallNow()}
+            >
+              立即重启安装
+            </button>
+          )}
           <button
             className="btn btn-small"
             style={{ marginLeft: 10 }}
@@ -818,6 +841,24 @@ export default function App() {
         </main>
         )}
       </div>
+        {upBanner?.downloaded && upBanner.version !== updateAskDismissed && (
+          <div className="modal-overlay" onClick={() => setUpdateAskDismissed(upBanner.version ?? '')}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-title">更新已就绪 — v{upBanner.version ?? ''}</div>
+              <p className="hint">
+                安装包已下载完成。立即重启并安装,或稍后手动重启——退出应用时也会自动安装。
+              </p>
+              <div className="field-row" style={{ justifyContent: 'flex-end' }}>
+                <button className="btn btn-small" onClick={() => setUpdateAskDismissed(upBanner.version ?? '')}>
+                  稍后手动重启
+                </button>
+                <button className="btn btn-accent btn-small" onClick={() => void api.updateInstallNow()}>
+                  立即重启安装
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {relayPick && (
           <div className="modal-overlay" onClick={() => setRelayPick(null)}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>

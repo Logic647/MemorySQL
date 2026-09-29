@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-09-29 · 更新体验:下载进度条 + 完成后询问是否重启安装
+
+用户需求:更新(自动+手动)加进度条;安装包下载完成后弹窗询问「立即重启安装 / 稍后手动重启」,替代静默处理。
+
+**状态机(`update-check.ts`):**新增 `progress` 事件(percent/transferred/total,percent 截到 0-100)与 `UpdaterState.progress`;`downloaded`/`error`/`not-available`/`probe-not-available` 都清掉 progress(失败不留陈旧进度条)。
+
+**main(`index.ts`):**`wireAutoUpdater` 挂 `download-progress` → setUpdater 广播(自动/手动两条路共用);`updateNow` 去掉 `downloadUpdate()+quitAndInstall()` 静默直装,只 checkForUpdates(autoDownload=true 自动开下),完成后由 `update-downloaded` 事件驱动 UI 询问;新通道 `updateInstallNow` = quitAndInstall(setImmediate 先答 IPC 再退出)。
+
+**渲染层:**应用壳横幅——下载中显示进度条+百分比,"已下载"加「立即重启安装」按钮;新增**更新就绪弹窗**(modal,按版本号记「稍后」,新版本会重新询问;稍后 = 关闭弹窗,退出时 autoInstallOnAppQuit 仍自动安装);设置页关于区——进度条+MB 进度行、「立即重启安装 vX」按钮、手动按钮改为「下载更新包 vX」(语义不再是一键直装)。
+
+**验证:**typecheck 0 / vitest **130:130**(progress 设置/截断、downloaded 清条、失败清条+保住 availability)/ build 通过。
+
+---
+
 ## 2026-09-29 · OpenCode 2.x SQLite 新 schema 适配(修复 "no such table: session")
 
 用户报:opencode 更新后 MCP 检测到但无法连接,报 `SqliteError: no such table: session`。真库(本机,更新后 13MB+8MB WAL)核实:opencode ≥2.0 把权威库从三表 **session/message/part** 迁到 **session_v2 + session_message**——parts 不再独立成表,内嵌进消息 JSON(assistant = `content[]` 数组,元素 `{type:'text'|'reasoning'|'tool'}`,tool 部分字段名从 `tool` 改为 `name`,输入在 `state.input`;user = 顶层 `.text`;`idle`/`synthetic` 行非真实轮次要跳过;另有 `project` 表 worktree 作项目根)。
