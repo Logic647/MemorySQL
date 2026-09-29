@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-09-29 · **v0.5.5 已发版**:OpenCode 2.x 适配 + 更新进度条/安装询问
+
+内容 = 本日两条:OpenCode 2.x schema 适配 + 更新下载进度条/完成后询问安装。流程:bump → 本地 dist 烟测(unpacked `--hidden` 起活)→ tag 直连推送一次成功 → 双矩阵 CI 全绿(4 job)→ **本次 electron-builder 把 7 资产一次传齐**(0.4.x 时代只传上 blockmap 的坑未复发),latest.yml 声明 size 与 exe 实际一致(177318979 字节)→ `publish-release.mjs` 转正(单草稿无需删重)。https://github.com/Logic647/MemorySQL/releases/tag/v0.5.5 `latest.yml` 公网已指向 0.5.5。
+
+**装机后的验收点(下一步):**①本版装好后,后续新版的「进度条 + 立即重启安装/稍后」全链路首验(即自动更新真实验收);②OpenCode 2.x 捕获在装机版确认;③WorkBuddy/Qoder 适配(0.5.4 遗留)。
+
+---
+
 ## 2026-09-29 · 更新体验:下载进度条 + 完成后询问是否重启安装
 
 用户需求:更新(自动+手动)加进度条;安装包下载完成后弹窗询问「立即重启安装 / 稍后手动重启」,替代静默处理。
