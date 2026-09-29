@@ -54,6 +54,42 @@ function buildFixture(withSequence: boolean): string {
   return file
 }
 
+/** build an opencode ≥2.0 v2 store: session_v2 + session_message with embedded content */
+function buildV2Fixture(): string {
+  const file = path.join(os.tmpdir(), `agent-db-v2-${Math.random().toString(36).slice(2)}.db`)
+  const db = new Database(file)
+  db.exec(`
+    CREATE TABLE session_v2 (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT,
+      time_created INTEGER, time_updated INTEGER, model TEXT, agent TEXT);
+    CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER,
+      time_created INTEGER, time_updated INTEGER, data TEXT);
+  `)
+  db.prepare('INSERT INTO session_v2 (id,project_id,directory,title,time_created,time_updated) VALUES (?,?,?,?,?,?)').run(
+    'ses_svg1', 'proj1', 'F:/桌面/temp', '鹈鹕骑自行车的 SVG', 1790311305000, 1790316900000
+  )
+  const ins = db.prepare('INSERT INTO session_message (id,session_id,type,seq,time_created,data) VALUES (?,?,?,?,?,?)')
+  ins.run(
+    'msg_u1', 'ses_svg1', 'user', 4, 1790311305133,
+    JSON.stringify({ metadata: { displayText: '生成一张鹈鹕' }, time: { created: 1790311305133 }, text: '生成一张鹈鹕骑自行车的 SVG' })
+  )
+  ins.run(
+    'msg_a1', 'ses_svg1', 'assistant', 5, 1790311305276,
+    JSON.stringify({
+      time: { created: 1790311305276 },
+      agent: 'build',
+      content: [
+        { type: 'reasoning', text: '内心独白不应出现' },
+        { type: 'text', text: '已生成 SVG 文件。' },
+        { type: 'tool', id: 'call_1', name: 'write', executed: true, state: { status: 'completed', input: { path: 'pelican.svg' } } }
+      ]
+    })
+  )
+  ins.run('msg_i1', 'ses_svg1', 'idle', 6, 1790311305400, JSON.stringify({ time: { created: 1790311305400 } }))
+  ins.run('msg_s1', 'ses_svg1', 'synthetic', 7, 1790311305500, JSON.stringify({ time: { created: 1790311305500 }, text: '系统注入' }))
+  db.close()
+  return file
+}
+
 describe('parseAgentSqliteSessions (opencode-lineage stores)', () => {
   it('builds sessions with cwd/title/timestamps and text+tool messages', () => {
     for (const file of [buildFixture(true), buildFixture(false)]) {
@@ -88,5 +124,36 @@ describe('parseAgentSqliteSessions (opencode-lineage stores)', () => {
 
   it('returns an empty list when the db does not exist', () => {
     expect(parseAgentSqliteSessions(path.join(os.tmpdir(), 'no-such-db-x9.db'), 'opencode')).toEqual([])
+  })
+
+  it('parses the opencode v2 layout (session_v2 + session_message with embedded content)', () => {
+    const file = buildV2Fixture()
+    const sessions = parseAgentSqliteSessions(file, 'opencode')
+    expect(sessions).toHaveLength(1)
+    const s = sessions[0]
+    expect(s.externalId).toBe('ses_svg1')
+    expect(s.cwd).toBe('F:/桌面/temp')
+    expect(s.title).toBe('鹈鹕骑自行车的 SVG')
+    expect(s.startedAt).toBe(1790311305)
+    expect(s.endedAt).toBe(1790316900)
+    // idle/synthetic rows are not turns; reasoning is not content
+    expect(s.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool'])
+    expect(s.messages[0].content).toBe('生成一张鹈鹕骑自行车的 SVG')
+    expect(s.messages[1].content).toBe('已生成 SVG 文件。')
+    expect(s.messages[1].ts).toBe(1790311305)
+    expect(s.messages[2].toolName).toBe('write')
+    expect(s.messages[2].content).toContain('pelican.svg')
+    const one = parseAgentSqliteSessions(file, 'opencode', 'ses_svg1')
+    expect(one).toHaveLength(1)
+    fs.rmSync(file, { force: true })
+  })
+
+  it('returns [] (not a throw) for a store with neither session nor session_v2', () => {
+    const file = path.join(os.tmpdir(), `agent-db-future-${Math.random().toString(36).slice(2)}.db`)
+    const db = new Database(file)
+    db.exec(`CREATE TABLE something_else (id TEXT)`)
+    db.close()
+    expect(parseAgentSqliteSessions(file, 'opencode')).toEqual([])
+    fs.rmSync(file, { force: true })
   })
 })

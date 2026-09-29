@@ -6,9 +6,10 @@ import { parseAgentSqliteSessions } from '../_lib/agent-db-parser'
 import { findOpencodeStorage, parseOpencodeStorage } from './opencode-parser'
 
 /**
- * OpenCode >= 2026 keeps sessions in a SQLite store (session/message/part
- * tables — same layout as its fork ZCode). Older builds used the JSON tree
- * under storage/; both are supported, db first.
+ * OpenCode keeps sessions in a SQLite store. Layouts, detected per open:
+ * ≥2.0 → session_v2 + session_message (parts embedded in the message JSON);
+ * ≤1.x → session/message/part (same layout as its fork ZCode). Older builds
+ * used the JSON tree under storage/; all three are supported, db first.
  */
 function findOpencodeDb(): string | null {
   const candidates = [

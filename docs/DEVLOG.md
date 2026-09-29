@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-09-29 · OpenCode 2.x SQLite 新 schema 适配(修复 "no such table: session")
+
+用户报:opencode 更新后 MCP 检测到但无法连接,报 `SqliteError: no such table: session`。真库(本机,更新后 13MB+8MB WAL)核实:opencode ≥2.0 把权威库从三表 **session/message/part** 迁到 **session_v2 + session_message**——parts 不再独立成表,内嵌进消息 JSON(assistant = `content[]` 数组,元素 `{type:'text'|'reasoning'|'tool'}`,tool 部分字段名从 `tool` 改为 `name`,输入在 `state.input`;user = 顶层 `.text`;`idle`/`synthetic` 行非真实轮次要跳过;另有 `project` 表 worktree 作项目根)。
+
+**修复(`_lib/agent-db-parser.ts`,共享解析器):**打开库后按 `sqlite_master` 探测布局——legacy `session` 优先 → `session_v2` → 都没有返回 `[]`(未来再改 schema 也不再抛);v2 路径:session_v2 列名与旧 session 相同(id/directory/title/time_*)直接复用 SessionRow,角色取 `type` 列,消息按 `seq` 排序;`part` 预编译语句只在 legacy 分支创建(v2 无此表)。兼容矩阵:**zcode(旧三表)零影响**、opencode 新旧两代、storage/ JSON 树回退保留。
+
+**验证:**typecheck 0 / vitest **128:128**(新增:v2 夹具全字段断言含 onlySessionId、未知 schema 返回 [] 不抛)/ 真库端到端:解析 3 会话(cwd= F:/桌面/temp、标题、user/assistant/tool 角色齐全)→ `npm run import:scan` capture-opencode `sessionsImported: 3, lastError: null`。
+
+**下一步:**不变(见 AGENTS.md 2026-09-29 对账条:真机验收 v0.5.4 → 宣传发布 → winget 0.5.x → Comate Zulu)。
+
+---
+
 ## 2026-09-23 · 新适配 + **v0.5.4 已发版**:WorkBuddy + Qoder CLI/CN 会话捕获与 MCP 连接
 
 **v0.5.4** 含 WorkBuddy 与 Qoder 两条适配 + capture-factory `watchPaths(sourceRoot)` 微调;CI 双矩阵全绿,7 资产 https://github.com/Logic647/MemorySQL/releases/tag/v0.5.4(typecheck 0 / vitest **126:126**)。两家本机未装,合成样本单测覆盖,装机后 `MEMORYSQL_DATA_DIR` 隔离真机扫一次。
