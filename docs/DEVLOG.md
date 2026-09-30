@@ -4,6 +4,43 @@
 
 ---
 
+## 2026-09-30 · 看板可用了,但 403 排查暴露了「四种病因被压成一种」
+
+配 `GITHUB_TOKEN` 成功后,一轮抓取却仍然 12 家全部 `限流 (HTTP 403)`。查下来 token 完全正常(`remaining=4987`、内容读取 200),**那次 403 是 IP 级滥用检测**——匿名 60/小时刚被烧穿,换成 token 不会立刻解除 IP 级标记,约一分钟后自愈。重跑即恢复,分布回到基线 `{low:1, medium:4, none:3, unknown:4}`,且 **MiMo 真实应答 4 家、零错误**(hermes 判 HIT,另 3 家 clear)。
+
+### 真问题:403 的四种病因被压成一种
+
+GitHub 用 `403`/`429` 至少表示四种**处置方式互斥**的情况:
+
+| 情形 | 判据 | 该怎么办 |
+|---|---|---|
+| 主限流 | `x-ratelimit-remaining: 0` | 等 reset |
+| 二级限流/滥用 | body 含 `secondary rate limit` | 退避,通常 1 分钟自愈 |
+| **授权不足** | body 含 `Resource not accessible` | **token 配错,等多久都没用** |
+| IP 级封禁 | 以上都不是 | 等一分钟自己好 |
+
+旧代码 `return { ok: false, error: '限流 (HTTP 403)' }` —— **把响应体丢了**,四种情况长得一模一样。本次只能靠在外面一遍遍试(先怀疑 token、再怀疑代码、最后靠"等一分钟"猜出是 IP 封禁)。
+
+现在按上表分类,并把 **GitHub 原话**拼进错误串。另加显式布尔 `rateLimited`:只有它为 `true` 才值得按 `retry-after` 重试,**授权问题重试多少次都没用**。`fetch.d.mts` 里刻意声明成字段而非从文案推断。
+
+新增 `test/watch-fetch.test.ts` **10 个用例**,每条锁一种区分;含一个防退化断言:`/commits?per_page=` 只能出现一次。
+
+### 顺带修掉一个哑雷
+
+`fetchCommits` 的 URL 是 `?per_page=15&per_page=1` —— 重复键。GitHub 取第一个(15)所以**一直没暴露**,但代码下面明确是把整个 list map 成多行 changelog,一旦服务端改成取末值就会静默只剩 1 行。已改为单一 `per_page=15`。
+
+### 服务器运维:`setup-watch.sh`
+
+`tools/upstream-watch/setup-watch.sh`,把三个**手工才能记住**的运维坑固化成脚本(已实测跑通):
+
+- **先验证 token 再动手** —— 打 `rate_limit`,`core.limit < 100` 直接中止。实测用假 token 在这一步退出,**不碰 pm2、不写 env 文件**(`qa-server` 的 restarts 计数全程不变)
+- **从活进程 env 快照再叠加新变量** —— 原来只在 pm2 命令行给的 `LLM_*` 不会因这次配置而丢失
+- **落盘 `~/.msql-watch-env`(600)+ `pm2 save`** —— 修掉一个此前没人发现的隐患:`LLM_API_KEY` 原本**零持久化**,服务器一重启就没了,而页面只显示「LLM 未启用」,**全程无任何报错**
+- 每次写入前自动备份;verify 必须**同时**通过 401 与 200;只动 `msql-upstream-watch`,不碰 `qa-server`
+- 脚本是**纯 ASCII**:它要经 PowerShell 管道送到 Linux 执行,中文/多字节字符会让远端 `sed` 引号失配(本次踩过)
+
+---
+
 ## 2026-09-30 · 看板 LLM 判定可视化 + 一个自引入的渲染崩溃
 
 把 LLM 判定提升为**一等公民**:卡片头部**白盒 / 黑盒 / LLM 三信号并列**,配色刻意做轻(暖橙而非红)——LLM 是语义判断,权威性低于黑盒的 schema 探测,不该看起来比它更可信。

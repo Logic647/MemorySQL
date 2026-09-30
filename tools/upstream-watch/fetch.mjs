@@ -31,13 +31,45 @@ export async function httpJson(url, opts = {}) {
       const res = await fetch(url, { headers, signal: ctl.signal })
       clearTimeout(timer)
       if (res.status === 403 || res.status === 429) {
-        // 限流:等 Retry-After 再试,超过就放弃并上报
-        const wait = Number(res.headers.get('retry-after') ?? 0) * 1000
-        if (attempt < 2 && wait > 0 && wait < 30000) {
-          await new Promise((r) => setTimeout(r, wait))
+        // **不要把所有 403/429 都当成「限流」。** GitHub 至少用这两个状态码表示四种
+        // 完全不同的情况,而它们的处置方式互斥:
+        //   1) 主限流      x-ratelimit-remaining: 0        -> 等到 reset
+        //   2) 二级/滥用   body 含 "secondary rate limit"   -> 退避,通常 1 分钟自愈
+        //   3) 授权不足    body 含 "Resource not accessible" -> **token 配错了**
+        //   4) IP 级封禁   以上都不是                      -> 等一分钟自己好
+        // 旧代码把响应体丢了,四种情况长得一模一样,只能靠猜(2026-09-30 就因此
+        // 把一次「IP 级滥用检测」当成 token 没配好,白排查了一轮)。
+        const retryAfter = Number(res.headers.get('retry-after') ?? 0)
+        const remaining = res.headers.get('x-ratelimit-remaining')
+        const resetAt = Number(res.headers.get('x-ratelimit-reset') ?? 0)
+        let body = ''
+        try { body = (await res.text()).slice(0, 400) } catch { /* 读不到就算了 */ }
+        const flat = body.replace(/\s+/g, ' ').trim()
+        const low = flat.toLowerCase()
+
+        let kind
+        if (remaining === '0') {
+          kind = `GitHub 主限流,配额约 ${Math.max(0, Math.round((resetAt * 1000 - Date.now()) / 60000))} 分钟后重置`
+        } else if (low.includes('secondary rate limit') || low.includes('abuse detection')) {
+          kind = 'GitHub 二级限流(触发滥用检测,通常一分钟内自行恢复)'
+        } else if (low.includes('resource not accessible') || low.includes('bad credentials')) {
+          kind = 'GitHub 拒绝授权 —— token 无效/已撤销/权限不足(这不是限流)'
+        } else {
+          kind = `GitHub 返回 ${res.status},但不是限流`
+        }
+        // 只有真限流才值得按 retry-after 等;授权问题等多久都没用
+        const isRate =
+          remaining === '0' || low.includes('secondary rate limit') || low.includes('abuse detection')
+        if (isRate && attempt < 2 && retryAfter > 0 && retryAfter < 30) {
+          await new Promise((r) => setTimeout(r, retryAfter * 1000))
           continue
         }
-        return { ok: false, error: `限流 (HTTP ${res.status})`, status: res.status }
+        return {
+          ok: false,
+          error: flat ? `${kind} —— GitHub 原话: ${flat.slice(0, 160)}` : kind,
+          status: res.status,
+          rateLimited: isRate
+        }
       }
       if (res.status === 404) return { ok: false, error: '不存在 (404)', status: 404 }
       if (!res.ok) return { ok: false, error: `HTTP ${res.status}`, status: res.status }
@@ -119,8 +151,11 @@ async function fetchGithub(agent, repo, kind) {
 }
 
 async function fetchCommits(repo) {
+  // 只写一个 per_page。原来是 `?per_page=15&per_page=1` —— 重复键,GitHub 恰好取
+  // 第一个(15)所以一直没暴露,但它是一颗雷:哪天服务端改成取末值,changelog
+  // 就会静默只剩 1 行,而代码下面明确是把整个 list map 成多行的。
   const res = await httpJson(
-    `https://api.github.com/repos/${repo}/commits?per_page=15&per_page=1`
+    `https://api.github.com/repos/${repo}/commits?per_page=15`
   )
   if (!res.ok) return { notes: '', version: null, publishedAt: null }
   const list = Array.isArray(res.data) ? res.data : []
