@@ -23,7 +23,7 @@
 
 ## 我做了个「外置大脑」
 
-**MemorySQL** 是我做的一个 Windows 桌面应用(开源、免费),它在你电脑后台安静地做三件事:
+**MemorySQL** 是我做的一个桌面应用(开源、免费,Windows / macOS / Linux 都有),它在你电脑后台安静地做三件事:
 
 **第一,把所有 AI 助手的对话收进一个地方。** 支持 10 家主流编码 agent(Codex、ZCode、Claude Code、Gemini、Cursor、OpenCode、Hermes、Qwen Code、Kimi CLI、CodeBuddy Code),自动监听、自动入库,不需要你手动导出导入。装完它,过去几个月散落的对话历史一夜之间全变得可搜索。
 
@@ -52,6 +52,8 @@
 
 GitHub 开源(MIT 协议):https://github.com/Logic647/MemorySQL
 
-安装包和免安装版都在 Releases 页面;`winget install Logic647.MemorySQL` 也在审核中。macOS / Linux 目前可以源码运行,官方安装包还在路上。
+安装包和免安装版都在 Releases 页面,Windows / macOS / Linux 三个平台都有(Windows 还能 `winget install Logic647.MemorySQL`)。macOS 分 Apple Silicon 和 Intel 两个包,文件名里带 `arm64` / `x64` 认准即可。
+
+macOS 的包**未签名**,首次启动 Gatekeeper 会拦一下,右键点「打开」确认一次就好 —— 没有 Apple 开发者证书签不了,这是已知取舍。
 
 如果你也同时用好几个 AI 助手,欢迎试试,评论区或 GitHub issue 都欢迎反馈。

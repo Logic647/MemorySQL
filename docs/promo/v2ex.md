@@ -43,6 +43,6 @@
 
 GitHub(MIT,求 issue 拍砖):https://github.com/Logic647/MemorySQL
 
-安装:Releases 下安装包/便携版;`winget install Logic647.MemorySQL`(审核中);scoop bucket 也有,README 里有命令。Windows 优先,macOS/Linux 暂时源码可跑。
+安装:Releases 下安装包/便携版,Windows / macOS / Linux 三平台都有(macOS 分 arm64 / x64,文件名里认准);`winget install Logic647.MemorySQL`(审核中);scoop bucket 也有,README 里有命令。macOS 包未签名,首次启动需右键「打开」确认一次。
 
 欢迎提需求:最想接哪家 agent、想要什么 MCP 工具,评论区聊。

@@ -22,7 +22,7 @@ GitHub 搜 Logic647/MemorySQL,MIT 开源,求反馈 🙏
 
 AI 记忆的真相:你换了 agent,它连你姓什么都不记得。
 
-做了个本地优先的小工具,让所有 agent 共享一份"关于你的记忆"——会话自动捕获、一句话续接、数据 100% 本机不联网。开源,Windows 先行:
+做了个本地优先的小工具,让所有 agent 共享一份"关于你的记忆"——会话自动捕获、一句话续接、数据 100% 本机不联网。开源,Windows / macOS / Linux 都有安装包:
 
 https://github.com/Logic647/MemorySQL
 
