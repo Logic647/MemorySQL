@@ -19,9 +19,22 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import Database from 'better-sqlite3'
-import { AGENTS, type AgentContract } from '../src/shared/upstream-agents'
+import { AGENTS, type AgentContract } from '../src/shared/upstream-agents.ts'
 
-export type Verdict = 'ok' | 'drift' | 'absent' | 'blackbox_only'
+/**
+ * 注意 import 带 `.ts` 扩展名:这是为了同时满足两边 ——
+ *   - vitest / vite:接受
+ *   - node --experimental-strip-types(Node 22+):**要求**显式扩展名
+ * 探针脚本(upstream-probe)要用 node 直接跑本模块,不能走 vitest。
+ */
+
+export type Verdict =
+  | 'ok' /** schema 匹配 */
+  | 'drift' /** 上游漂移 —— 需要适配发版 */
+  /** 检查器自身故障(模块加载失败等)—— **不是**上游问题,别照着去适配 */
+  | 'checker_error'
+  | 'absent' /** 本机没装该 agent */
+  | 'blackbox_only' /** 闭源,只能靠这里 */
 
 export interface CheckResult {
   id: string
@@ -193,46 +206,62 @@ async function checkJsonl(c: AgentContract, root: string): Promise<CheckResult> 
   if (!file) return { ...b, detail: '源目录存在但没找到 .jsonl 文件' }
 
   // 动态载入生产 parser —— 不做二次实现,避免检查器与适配器行为分叉
+  // import 一律带 .ts:node --experimental-strip-types 要求,vitest 也接受
   const parsers: Record<string, (fp: string, text: string) => Promise<unknown>> = {
     claude: async (fp, text) => {
-      const m = await import('../src/plugins/capture-claudecode/claude-parser')
+      const m = await import('../src/plugins/capture-claudecode/claude-parser.ts')
       return m.parseClaudeJsonl(fp, text, c.agentType as never)
     },
     codex: async (fp, text) => {
-      const m = await import('../src/plugins/capture-codex/codex-parser')
+      const m = await import('../src/plugins/capture-codex/codex-parser.ts')
       return m.parseCodexRollout(fp, text)
     },
     qwen: async (fp, text) => {
-      const m = await import('../src/plugins/capture-qwencode/qwencode-parser')
+      const m = await import('../src/plugins/capture-qwencode/qwencode-parser.ts')
       return m.parseQwenJsonl(fp, text)
     },
     kimi: async (_fp, text) => {
-      const m = await import('../src/plugins/capture-kimicli/kimicli-parser')
+      const m = await import('../src/plugins/capture-kimicli/kimicli-parser.ts')
       return m.parseKimiContext(text)
     },
     workbuddy: async (fp, text) => {
-      const m = await import('../src/plugins/capture-workbuddy/workbuddy-parser')
+      const m = await import('../src/plugins/capture-workbuddy/workbuddy-parser.ts')
       return m.parseWorkbuddyJsonl(fp, text)
     },
     qoder: async (fp) => {
-      const m = await import('../src/plugins/capture-qoder/index')
+      const m = await import('../src/plugins/capture-qoder/index.ts')
       return m.parseQoderSession(fp)
     }
   }
 
   const load = parsers[exp.parser]
-  if (!load) return { ...b, verdict: 'drift', detail: `未注册的 parser: ${exp.parser}` }
+  if (!load) return { ...b, verdict: 'checker_error', detail: `未注册的 parser: ${exp.parser}` }
 
   try {
     const text = fs.readFileSync(file, 'utf-8')
     const parsed = await load(file, text)
     const got = Array.isArray(parsed) ? parsed.length : parsed ? 1 : 0
     if (got === 0) {
-      return { ...b, verdict: 'drift', detail: `parser 解析 ${path.basename(file)} 得到 0 条 —— 格式可能已变` }
+      return {
+        ...b,
+        verdict: 'drift',
+        detail: `parser 解析 ${path.basename(file)} 得到 0 条 —— 格式可能已变`
+      }
     }
     return { ...b, verdict: 'ok', detail: `解析 ${path.basename(file)} → ${got} 条` }
   } catch (e) {
-    return { ...b, verdict: 'drift', detail: `parser 抛错: ${String(e).slice(0, 160)}` }
+    // 关键区分:**加载 parser 失败是「检查器自己坏了」,不是「上游漂移」**。
+    // 两者混为一谈会产生危险的假阳性 —— 检查器的 bug 会伪装成上游问题,
+    // 白白触发一次适配发版。
+    const msg = e instanceof Error ? e.message : String(e)
+    if (/Cannot find module|ERR_MODULE_NOT_FOUND|is not exported|SyntaxError/.test(msg)) {
+      return {
+        ...b,
+        verdict: 'checker_error',
+        detail: `检查器自身故障(非上游问题):${msg.slice(0, 140)}`
+      }
+    }
+    return { ...b, verdict: 'drift', detail: `parser 抛错: ${msg.slice(0, 160)}` }
   }
 }
 
@@ -270,7 +299,13 @@ export async function runChecks(only?: string[]): Promise<CheckResult[]> {
   return out
 }
 
-const ICON: Record<Verdict, string> = { ok: '🟢', drift: '🔴', absent: '🟡', blackbox_only: '⚪' }
+const ICON: Record<Verdict, string> = {
+  ok: '🟢',
+  drift: '🔴',
+  checker_error: '🟣',
+  absent: '🟡',
+  blackbox_only: '⚪'
+}
 
 export function render(results: CheckResult[]): string {
   const L: string[] = []
@@ -287,13 +322,40 @@ export function render(results: CheckResult[]): string {
     L.push('')
   }
   const drift = results.filter((r) => r.verdict === 'drift')
+  const broken = results.filter((r) => r.verdict === 'checker_error')
   const ok = results.filter((r) => r.verdict === 'ok')
   const skip = results.filter((r) => r.verdict === 'absent' || r.verdict === 'blackbox_only')
-  L.push(`汇总: 🟢 ${ok.length} 正常 · 🔴 ${drift.length} 漂移 · 🟡⚪ ${skip.length} 未验证`)
+  L.push(
+    `汇总: 🟢 ${ok.length} 正常 · 🔴 ${drift.length} 漂移 · 🟣 ${broken.length} 检查器故障 · 🟡⚪ ${skip.length} 未验证`
+  )
   if (drift.length) {
     L.push('', `⚠ ${drift.length} 家疑似格式漂移,需适配后发版:`)
     for (const r of drift) L.push(`   - ${r.id}: ${r.detail}`)
   }
+  if (broken.length) {
+    L.push('', `🟣 检查器自身有 ${broken.length} 处故障(**这不是上游问题**,先修检查器):`)
+    for (const r of broken) L.push(`   - ${r.id}: ${r.detail}`)
+  }
   L.push('')
   return L.join('\n')
+}
+
+/**
+ * CLI 入口(Node ≥22):`node --experimental-strip-types upstream/check.ts [agentId...]`
+ * 加 --json 输出机器可读,供本机探针消费。
+ * 保留这个入口而不是让探针走 vitest —— 探针是日常工具,不该依赖测试运行器。
+ */
+const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop() ?? '')
+if (isMain) {
+  const argv = process.argv.slice(2)
+  const asJson = argv.includes('--json')
+  const only = argv.filter((a) => !a.startsWith('--'))
+  const results = await runChecks(only.length ? only : undefined)
+  if (asJson) {
+    console.log(JSON.stringify({ checkedAt: new Date().toISOString(), results }))
+  } else {
+    console.log(render(results))
+  }
+  // 退出码:drift=1 需处理;checker_error=2 是工具自身问题,要在 CI 里区分对待
+  process.exit(results.some((r) => r.verdict === 'drift') ? 1 : results.some((r) => r.verdict === 'checker_error') ? 2 : 0)
 }

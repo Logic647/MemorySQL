@@ -28,7 +28,7 @@ const PORT = Number(process.env.PORT ?? 8788)
 const REFRESH_HOURS = Number(process.env.REFRESH_HOURS ?? 24)
 const TOKEN = process.env.AUTH_TOKEN ?? ''
 
-let state = { results: [], lastRunAt: null, running: false, error: null }
+let state = { results: [], probe: null, lastRunAt: null, running: false, error: null }
 
 function loadLedger() {
   const raw = JSON.parse(fs.readFileSync(LEDGER, 'utf-8'))
@@ -94,6 +94,31 @@ const server = http.createServer((req, res) => {
 
   if (url.pathname === '/api/state') return json(res, 200, state)
 
+  /**
+   * 本机黑盒探针上报。云端只有白盒(关键词粗筛,必然有误报),黑盒探测真实
+   * 数据才是确定答案 —— 但它只能在有 agent 数据的机器上跑,所以由探针送上来。
+   * 合并进 state.probe,看板据此显示双栏(白盒 / 黑盒)。
+   */
+  if (url.pathname === '/api/probe' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body || '{}')
+        if (!Array.isArray(data.results)) return json(res, 400, { error: 'bad payload' })
+        state.probe = {
+          checkedAt: data.checkedAt ?? new Date().toISOString(),
+          results: data.results.slice(0, 64) // 防御:别让人往 state 里灌垃圾
+        }
+        saveState()
+        json(res, 200, { ok: true, accepted: state.probe.results.length })
+      } catch (e) {
+        json(res, 400, { error: String(e?.message ?? e) })
+      }
+    })
+    return
+  }
+
   if (url.pathname === '/api/refresh' && req.method === 'POST') {
     void runOnce().then(() => json(res, 200, state))
     return
@@ -120,7 +145,9 @@ const server = http.createServer((req, res) => {
     return
   }
 
-  if (url.pathname === '/' || url.pathname === '/index.html') {
+  // 只允许 GET —— 曾因不检查 method,探针误 POST 到根路径时被当作正常请求
+  // 返回 index.html + 200,探针据此误判「上报成功」。假成功比直接失败更糟。
+  if ((url.pathname === '/' || url.pathname === '/index.html') && req.method === 'GET') {
     const html = fs.readFileSync(path.join(HERE, 'web', 'index.html'), 'utf-8')
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
     return res.end(html)

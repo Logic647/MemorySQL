@@ -3,117 +3,310 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>MemorySQL 上游监控</title>
+<title>MemorySQL 上游监控看板</title>
 <style>
-  :root{--bg:#070b12;--fg:#eef3f9;--dim:#64748b;--muted:#94a3b8;--accent:#4f8cff;
-        --danger:#ef4444;--warn:#f59e0b;--ok:#22c55e;--border:rgba(255,255,255,.08)}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);
-       font:14px/1.6 'IBM Plex Sans','Segoe UI','Microsoft YaHei',sans-serif;padding:28px}
-  h1{font-size:20px;margin:0 0 4px}
-  .sub{color:var(--dim);font-size:13px;margin-bottom:20px}
-  .bar{display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
-  button{background:var(--accent);color:#fff;border:0;padding:8px 16px;border-radius:8px;
-         cursor:pointer;font-size:13px}
-  button:disabled{opacity:.5;cursor:not-allowed}
-  .card{background:rgba(30,41,59,.4);border:1px solid var(--border);border-radius:12px;
-        padding:14px 16px;margin-bottom:10px}
-  .hd{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
-  .name{font-weight:600}
-  .meta{color:var(--dim);font-size:12px;margin-top:2px}
-  .badge{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border)}
-  .high{color:var(--danger);border-color:var(--danger)}
-  .medium{color:var(--warn);border-color:var(--warn)}
-  .low{color:var(--muted)}
-  .none{color:var(--dim)}
-  .unknown{color:var(--muted);border-style:dashed}
-  .notes{margin-top:10px;font-size:13px;white-space:pre-wrap;word-break:break-word;
-         max-height:180px;overflow:auto;color:var(--muted)}
-  .act{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
-  .act button{background:transparent;border:1px solid var(--border);color:var(--muted);
-              padding:4px 10px;font-size:12px}
-  .act button:hover{border-color:var(--accent);color:var(--fg)}
-  textarea{width:100%;min-height:80px;background:var(--bg);color:var(--fg);
-           border:1px solid var(--border);border-radius:8px;padding:8px;font:12px/1.5 monospace}
-  a{color:var(--accent);text-decoration:none}
-  .hint{color:var(--dim);font-size:12px;margin-top:6px}
+/* ============================================================
+   浅色主题 —— 独立于产品(Electron 应用是深色液态玻璃)。
+   看板是长时间盯的工具:浅底降低眩光,高对比强调「有问题」的行。
+   ============================================================ */
+:root{
+  --bg:#f7f8fa; --surface:#fff; --surface-2:#fafbfc;
+  --border:#e4e7ec; --border-strong:#d0d5dd;
+  --fg:#1a202c; --fg-2:#475467; --fg-3:#8a94a6;
+  --accent:#2563eb; --accent-soft:#eff4ff;
+  --high:#d92d20; --high-soft:#fef3f2;
+  --med:#b54708; --med-soft:#fffaeb;
+  --low:#475467; --ok:#067647; --ok-soft:#ecfdf3;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.06);
+  --radius:10px;
+  --mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-font-smoothing:antialiased}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font:14px/1.55 -apple-system,'Segoe UI','Microsoft YaHei',sans-serif;
+  padding:28px 32px 60px;max-width:1400px;margin-inline:auto;
+}
+h1{font-size:19px;font-weight:650;margin:0 0 3px;letter-spacing:-.01em}
+.sub{color:var(--fg-3);font-size:13px;margin-bottom:20px}
+.sub b{color:var(--fg-2);font-weight:600}
+
+/* 顶部:概览 + 操作 */
+.top{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;
+     flex-wrap:wrap;margin-bottom:18px}
+.stats{display:flex;gap:8px;flex-wrap:wrap}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+      padding:9px 14px;box-shadow:var(--shadow);min-width:88px}
+.stat .n{font-size:20px;font-weight:650;line-height:1.15;font-variant-numeric:tabular-nums}
+.stat .l{font-size:11px;color:var(--fg-3);margin-top:1px}
+.stat.high .n{color:var(--high)} .stat.med .n{color:var(--med)}
+.stat.ok .n{color:var(--ok)} .stat.broken .n{color:#6941c6}
+
+button{
+  font:inherit;font-size:13px;font-weight:550;cursor:pointer;
+  border:1px solid var(--border-strong);background:var(--surface);color:var(--fg-2);
+  padding:8px 15px;border-radius:8px;transition:.14s;
+}
+button:hover:not(:disabled){border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+button:disabled{opacity:.55;cursor:not-allowed}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.primary:hover:not(:disabled){background:#1d4ed8;color:#fff}
+
+/* 筛选 */
+.filters{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.chip{
+  font-size:12px;font-weight:550;padding:5px 11px;border-radius:999px;cursor:pointer;
+  border:1px solid var(--border);background:var(--surface);color:var(--fg-2);transition:.14s;
+  user-select:none;
+}
+.chip:hover{border-color:var(--border-strong)}
+.chip[aria-pressed="true"]{background:var(--fg);border-color:var(--fg);color:#fff}
+.filters .spacer{flex:1}
+
+/* 卡片 */
+.card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--shadow);margin-bottom:10px;overflow:hidden;
+}
+.card.attention{border-left:3px solid var(--high)}
+.card.warnish{border-left:3px solid var(--med)}
+.card.dimmed{opacity:.72}
+.rw{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:13px 16px}
+.name{font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.meta{color:var(--fg-3);font-size:12px;margin-top:2px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.meta .dot{opacity:.4}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+
+.badge{
+  font-size:11px;font-weight:600;padding:2px 8px;border-radius:5px;letter-spacing:.01em;
+  border:1px solid transparent;white-space:nowrap;
+}
+.b-high{color:var(--high);background:var(--high-soft);border-color:#fecdca}
+.b-medium{color:var(--med);background:var(--med-soft);border-color:#fedf89}
+.b-low{color:var(--fg-2);background:var(--surface-2);border-color:var(--border)}
+.b-none{color:var(--fg-3);background:var(--surface-2);border-color:var(--border)}
+.b-unknown{color:var(--fg-3);background:transparent;border-color:var(--border-strong);border-style:dashed}
+.b-ok{color:var(--ok);background:var(--ok-soft);border-color:#abefc6}
+.b-checker{color:#6941c6;background:#f4f3ff;border-color:#d9d6fe}
+.b-bb{color:#667085;background:var(--surface-2);border-color:var(--border-strong)}
+
+/* 黑盒条 */
+.probe{
+  margin:0 16px 12px;padding:9px 12px;background:var(--surface-2);
+  border:1px solid var(--border);border-radius:8px;font-size:12.5px;
+  display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;
+}
+.probe .tag{font-weight:650;font-size:11px;color:var(--fg-2);letter-spacing:.02em}
+.probe .txt{color:var(--fg-2);font-family:var(--mono);font-size:11.5px;word-break:break-all}
+
+.notes{
+  margin:0 16px 14px;padding:10px 12px;background:var(--surface-2);
+  border:1px solid var(--border);border-radius:8px;
+  font-family:var(--mono);font-size:11.5px;line-height:1.5;color:var(--fg-2);
+  white-space:pre-wrap;word-break:break-word;max-height:170px;overflow:auto;
+}
+.hits{padding:0 16px 12px;font-size:12px;color:var(--fg-2)}
+.hits code{font-family:var(--mono);font-size:11px;background:var(--surface-2);
+           padding:1px 5px;border-radius:4px;border:1px solid var(--border);margin-right:4px}
+.act{padding:0 16px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.act .hint{color:var(--fg-3);font-size:12px;flex:1;min-width:200px}
+textarea{
+  width:100%;min-height:78px;margin:0 16px 8px;padding:9px 11px;
+  border:1px solid var(--border-strong);border-radius:8px;background:var(--surface-2);
+  color:var(--fg);font:12px/1.5 var(--mono);resize:vertical;
+}
+textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+.empty{text-align:center;padding:60px 20px;color:var(--fg-3)}
+@media (max-width:720px){
+  body{padding:20px 16px 48px}
+  .stat{min-width:72px;padding:8px 11px}
+  .stat .n{font-size:18px}
+}
 </style>
 </head>
 <body>
-<h1>MemorySQL 上游监控看板</h1>
+
+<h1>MemorySQL 上游监控</h1>
 <div class="sub" id="sub">加载中…</div>
-<div class="bar">
-  <button id="refresh">立即刷新</button>
-  <span class="meta" id="stat"></span>
+
+<div class="top">
+  <div class="stats" id="stats"></div>
+  <button class="primary" id="refresh">立即刷新</button>
 </div>
+
+<div class="filters" id="filters">
+  <span class="chip" data-f="all" aria-pressed="true">全部</span>
+  <span class="chip" data-f="attention" aria-pressed="false">只看需处理</span>
+  <span class="chip" data-f="drift" aria-pressed="false">黑盒漂移</span>
+  <span class="chip" data-f="bb" aria-pressed="false">闭源</span>
+  <span class="chip" data-f="absent" aria-pressed="false">本机未装</span>
+  <span class="spacer"></span>
+  <span id="probetime" style="font-size:12px;color:var(--fg-3)"></span>
+</div>
+
 <div id="list"></div>
 
 <script>
 const $ = (s) => document.querySelector(s);
 const tok = new URLSearchParams(location.search).get('token') ?? localStorage.getItem('msql_token') ?? '';
 const H = tok ? { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+const U = (p) => p + (tok ? '?token=' + encodeURIComponent(tok) : '');
 
-const RISK = { high:'high', medium:'medium', low:'low', none:'none', unknown:'unknown' };
+let STATE = { results: [], probe: null };
+let FILTER = 'all';
+
+const RISK_LABEL = { high:'高', medium:'中', low:'低', none:'无信号', unknown:'无法评估' };
+const VERDICT = {
+  ok:            ['b-ok','匹配'],
+  drift:         ['b-high','漂移'],
+  checker_error: ['b-checker','检查器故障'],
+  absent:        ['b-none','本机未装'],
+  blackbox_only: ['b-bb','仅黑盒']
+};
+const esc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 async function load() {
-  const s = await (await fetch('/api/state' + (tok ? '?token=' + encodeURIComponent(tok) : ''), { headers: H })).json();
-  const now = new Date().toLocaleString('zh-CN');
-  $('#sub').textContent = s.lastRunAt ? '最近抓取: ' + s.lastRunAt : '尚未抓取';
-  $('#stat').textContent = (s.results || []).length + ' 家 agent' + (s.error ? ' · 错误: ' + s.error : '');
-  $('#list').innerHTML = (s.results || []).map(card).join('\n');
+  try {
+    const r = await fetch(U('/api/state'), { headers: H });
+    if (r.status === 401) { $('#sub').innerHTML = '鉴权失败 —— 若经 nginx 访问应无需 token;直连请带 <code>?token=</code>'; return; }
+    STATE = await r.json();
+  } catch (e) { $('#sub').textContent = '加载失败:' + e.message; return; }
+  render();
 }
 
-function esc(t){return String(t??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function stats() {
+  const R = STATE.results || [], P = STATE.probe?.results || [];
+  const pmap = new Map(P.map(x => [x.id, x]));
+  const counts = {
+    high: R.filter(x => x.risk === 'high').length,
+    med:  R.filter(x => x.risk === 'medium').length,
+    ok:   R.filter(x => x.risk === 'low' || x.risk === 'none').length,
+    unk:  R.filter(x => x.risk === 'unknown').length,
+    drift:P.filter(x => x.verdict === 'drift').length,
+    broken: P.filter(x => x.verdict === 'checker_error').length
+  };
+  const cells = [
+    ['high', counts.high, '白盒高风险', 'high'],
+    ['med',  counts.med,  '白盒中风险', 'med'],
+    ['ok',   counts.ok,   '无风险信号', 'ok'],
+    ['unk',  counts.unk,  '无法评估', ''],
+    ['drift',counts.drift,'黑盒漂移', 'high'],
+    ['broken',counts.broken,'检查器故障','broken']
+  ];
+  $('#stats').innerHTML = cells
+    .filter(c => c[0] !== 'drift' && c[0] !== 'broken' || P.length)
+    .map(c => `<div class="stat ${c[3]}"><div class="n">${c[1]}</div><div class="l">${c[2]}</div></div>`)
+    .join('');
+  void pmap;
+}
 
-function card(r) {
-  const badge = `<span class="badge ${RISK[r.risk]||'none'}">${esc(r.riskLabel||r.risk)}</span>`;
-  const ver = r.version ? `v${esc(r.version)}` : '—';
-  const when = r.publishedAt ? new Date(r.publishedAt).toLocaleDateString('zh-CN') : '';
-  let meta = `${ver} ${when}`;
-  if (r.fallbackUsed && r.fallbackReason) meta += ` · ${esc(r.fallbackReason)}`;
-  if (r.fetchError) meta += ` · 抓取: ${esc(r.fetchError)}`;
-
-  let notes = '';
-  if (r.notes) notes = `<div class="notes">${esc(r.notes.slice(0,1500))}</div>`;
-
-  let llm = '';
-  if (r.llm) llm = `<div class="hint">LLM: ${esc(r.llm.reason)}（捕获${r.llm.affectsCapture?'受影响':'无影响'} / MCP${r.llm.affectsMcp?'受影响':'无影响'}）</div>`;
-  else if (r.llmError) llm = `<div class="hint">${esc(r.llmError)}</div>`;
-
-  // 闭源/无法评估 → 给手动粘贴入口
-  let manual = '';
-  if (r.risk === 'unknown') {
-    manual = `<div class="act">
-      <button onclick="showManual('${r.agentId}')">手动粘贴 changelog</button>
-      <span class="hint">${esc(r.reason||'')}</span>
-    </div>
-    <div id="m-${r.agentId}" style="display:none;margin-top:8px">
-      <textarea placeholder="粘贴该 agent 的更新日志…"></textarea>
-      <div class="act"><button onclick="submitManual('${r.agentId}')">提交评估</button></div>
-    </div>`;
-  }
-
-  const link = r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noreferrer">原文</a>` : '';
-  return `<div class="card">
-    <div class="hd"><div><div class="name">${esc(r.agentId)} ${badge}</div>
-      <div class="meta">${meta}${link}</div></div></div>
-    ${r.hits && r.hits.length ? `<div class="hint">命中: ${r.hits.map(esc).join(', ')}</div>` : ''}
-    ${llm}${notes}${manual}
+function probeBar(id) {
+  const p = (STATE.probe?.results || []).find(x => x.id === id);
+  if (!p) return '';
+  const [cls, label] = VERDICT[p.verdict] || ['b-none', p.verdict];
+  return `<div class="probe">
+    <span class="tag">黑盒</span>
+    <span class="badge ${cls}">${label}</span>
+    <span class="txt">${esc(p.detail)}</span>
   </div>`;
 }
 
-function showManual(id){ const el=document.getElementById('m-'+id); if(el) el.style.display = el.style.display==='none'?'block':'none' }
+function card(r) {
+  const p = (STATE.probe?.results || []).find(x => x.id === r.agentId);
+  const pb = p ? VERDICT[p.verdict] : null;
+  const bb = r.risk === 'unknown';
+  const attention = r.risk === 'high' || (p && p.verdict === 'drift');
+  const warnish = r.risk === 'medium' || (p && p.verdict === 'checker_error');
 
-async function submitManual(id){
-  const el=document.getElementById('m-'+id); if(!el) return;
-  const notes=el.querySelector('textarea').value.trim();
-  if(!notes) return alert('请先粘贴内容');
-  const r=await fetch('/api/manual'+(tok?'?token='+encodeURIComponent(tok):''),{method:'POST',headers:H,body:JSON.stringify({agentId:id,notes})});
-  if(r.ok) load(); else alert('提交失败');
+  const cls = attention ? 'attention' : warnish ? 'warnish' : (r.risk === 'unknown' ? 'dimmed' : '');
+  const riskBadge = `<span class="badge b-${r.risk}">白盒 ${RISK_LABEL[r.risk] ?? r.risk}</span>`;
+  const bbBadge = bb ? `<span class="badge b-bb">闭源</span>` : '';
+  const pbBadge = pb ? `<span class="badge ${pb[0]}">黑盒 ${pb[1]}</span>` : '';
+
+  const ver = r.version ? `v${esc(r.version)}` : '—';
+  const when = r.publishedAt ? new Date(r.publishedAt).toLocaleDateString('zh-CN') : '';
+  const bits = [ver, when];
+  if (r.fallbackUsed && r.fallbackReason) bits.push(esc(r.fallbackReason));
+  if (r.fetchError) bits.push(`<span style="color:var(--med)">${esc(r.fetchError)}</span>`);
+  const link = r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noreferrer">原文 ↗</a>` : '';
+
+  const hits = (r.hits && r.hits.length)
+    ? `<div class="hits">命中 ${r.hits.slice(0, 10).map(h => `<code>${esc(h)}</code>`).join('')}</div>` : '';
+  const notes = r.notes ? `<div class="notes">${esc(r.notes.slice(0, 1200))}</div>` : '';
+  const llm = r.llm
+    ? `<div class="hits" style="color:var(--fg-2)">LLM:${r.llm.affectsCapture ? ' 捕获受影响' : ' 捕获无影响'} · MCP${r.llm.affectsMcp ? ' 受影响' : ' 无影响'} —— ${esc(r.llm.reason || '')}</div>`
+    : (r.llmError ? `<div class="hits" style="color:var(--fg-3)">${esc(r.llmError)}</div>` : '');
+  const reason = r.risk === 'unknown' ? `<div class="act"><span class="hint">${esc(r.reason || '')}</span></div>` : '';
+
+  const manual = r.risk === 'unknown' ? `
+    <textarea id="m-${r.agentId}" style="display:none" placeholder="粘贴该 agent 的更新日志…"></textarea>
+    <div class="act" style="margin-top:0;padding-top:0">
+      <button onclick="showManual('${r.agentId}')">手动粘贴 changelog</button>
+    </div>` : '';
+
+  return `<div class="card ${cls}">
+    <div class="rw">
+      <div>
+        <div class="name">${esc(r.agentId)} ${riskBadge} ${pbBadge} ${bbBadge}</div>
+        <div class="meta">${bits.filter(Boolean).join('<span class="dot">·</span>')} ${link}</div>
+      </div>
+    </div>
+    ${probeBar(r.agentId)}
+    ${hits}${llm}${notes}${reason}${manual}
+  </div>`;
 }
 
-$('#refresh').onclick=async()=>{ const b=$('#refresh'); b.disabled=true; b.textContent='抓取中…';
-  await fetch('/api/refresh'+(tok?'?token='+encodeURIComponent(tok):''),{method:'POST',headers:H}); b.disabled=false; b.textContent='立即刷新'; load() }
+function match(r) {
+  const p = (STATE.probe?.results || []).find(x => x.id === r.agentId);
+  if (FILTER === 'all') return true;
+  if (FILTER === 'attention') return r.risk === 'high' || r.risk === 'medium' || (p && (p.verdict === 'drift' || p.verdict === 'checker_error'));
+  if (FILTER === 'drift') return p && p.verdict === 'drift';
+  if (FILTER === 'bb') return r.risk === 'unknown';
+  if (FILTER === 'absent') return p && (p.verdict === 'absent' || p.verdict === 'blackbox_only');
+  return true;
+}
+
+function render() {
+  const R = STATE.results || [];
+  $('#sub').innerHTML = R.length
+    ? `白盒最近抓取 <b>${esc((STATE.lastRunAt || '').slice(0, 16).replace('T', ' '))}</b> · ${R.length} 家 agent${STATE.error ? ' · <span style="color:var(--high)">错误:' + esc(STATE.error) + '</span>' : ''}`
+    : '尚无数据,点「立即刷新」抓一轮';
+  $('#probetime').textContent = STATE.probe?.checkedAt
+    ? '黑盒上报于 ' + STATE.probe.checkedAt.slice(0, 16).replace('T', ' ') : '';
+  stats();
+  const list = R.filter(match);
+  $('#list').innerHTML = list.length
+    ? list.map(card).join('\n')
+    : '<div class="empty">没有符合筛选条件的 agent</div>';
+  document.querySelectorAll('#filters .chip').forEach(c =>
+    c.setAttribute('aria-pressed', String(c.dataset.f === FILTER)));
+}
+
+function showManual(id) {
+  const el = document.getElementById('m-' + id);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  if (el.style.display === 'block') el.focus();
+}
+
+async function submitManual(id) {
+  const el = document.getElementById('m-' + id);
+  const notes = el.value.trim();
+  if (!notes) return alert('请先粘贴内容');
+  const r = await fetch(U('/api/manual'), { method: 'POST', headers: H, body: JSON.stringify({ agentId: id, notes }) });
+  if (r.ok) load(); else alert('提交失败');
+}
+
+document.querySelectorAll('#filters .chip').forEach(c => {
+  c.onclick = () => { FILTER = c.dataset.f; render() };
+});
+
+$('#refresh').onclick = async () => {
+  const b = $('#refresh'); b.disabled = true; b.textContent = '抓取中…';
+  await fetch(U('/api/refresh'), { method: 'POST', headers: H });
+  b.disabled = false; b.textContent = '立即刷新'; load();
+};
 
 load();
 </script>

@@ -15,7 +15,8 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "upstream", "scripts"]
 }
