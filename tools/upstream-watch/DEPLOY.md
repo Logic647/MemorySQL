@@ -38,11 +38,13 @@ pm2 save
 |---|---|---|
 | `AUTH_TOKEN` | 公网必填 | 鉴权 token。`Authorization: Bearer <token>` 或 `?token=<token>`。**不设则任何人都能看** |
 | `PORT` | 否 | 默认 8788 |
-| `GITHUB_TOKEN` | 强烈建议 | 匿名 API 限流 60 次/小时,带 token 提到 5000。12 家一天一次其实够用,但建议配上 |
+| `GITHUB_TOKEN` | **实际必需** | 匿名 API 限流 **60 次/小时**,一轮要打 9 个 GitHub 仓库,**超限的表现不是报错,而是全部退化为「无法评估」**(看起来像功能没实现)。带 token 提到 5000/小时。实测踩过:反复点「立即刷新」即超限,12 家里 11 家变 unknown、连带 LLM 也没被调用 |
 | `LLM_API_KEY` | 否 | 启用 LLM 增强。**不设就纯规则**(功能完备,只是少一层语义判断)。调用失败/超时/返回非 JSON 一律自动降级,绝不阻塞看板 |
 | `LLM_BASE_URL` | 否 | 默认 `https://api.anthropic.com/v1/messages`。**填非 Anthropic 官方地址时自动改用 OpenAI 兼容格式**(Bearer 认证 + `choices[].message.content` 解析),所以第三方 provider / 自建网关也能直接用 |
 | `LLM_MODEL` | 否 | 默认 `claude-sonnet-4-5` |
 | `LLM_AUTH_HEADER` | 否 | 显式指定认证头名(如 `api-key`)。**默认不设时会同时发 `Authorization: Bearer` 和 `api-key` 两个头**,以兼容各家差异(OpenAI 要前者、小米 MiMo 要后者) |
+| `LEDGER_PATH` | 否 | 台账 JSON 路径,默认 `upstream/ledger.json` |
+| `REFRESH_HOURS` | 否 | 定时抓取间隔,默认 **24**(你定的「一天一次」足够) |
 
 ### 已预置的 provider
 
@@ -76,11 +78,18 @@ node scripts/check-llm.mjs mimo
 - 只对规则判为 `medium`/`high` 的条目调用,`low`/`none` 直接跳过(省钱省延迟)
 - **只能加严,不能放松** —— LLM 说「没事」不会把规则判的 `high` 降级,但它的理由仍会保留在看板里给人看
 
-**LLM 的两个设计约束**(改代码前务必知道):
-- 只对规则判为 `medium`/`high` 的条目调用,`low`/`none` 直接跳过(省钱省延迟)
-- **只能加严,不能放松** —— LLM 说「没事」不会把规则判的 `high` 降级,但它的理由仍会保留在看板里给人看
-| `LEDGER_PATH` | 否 | 台账 JSON 路径,默认 `upstream/ledger.json` |
-| `REFRESH_HOURS` | 否 | 定时抓取间隔,默认 **24**(你定的「一天一次」足够) |
+### 环境变量务必用前缀传,别用 `pm2 --env`
+
+```bash
+# ✅ 对:pm2 --env 传参会静默失败(曾导致 AUTH_TOKEN 没进进程,服务裸奔)
+AUTH_TOKEN=$(cat ~/.msql-watch-token) GITHUB_TOKEN=... LLM_API_KEY=... \
+  pm2 start tools/upstream-watch/server.mjs --name msql-upstream-watch
+
+# 改环境变量后同理
+AUTH_TOKEN=$(cat ~/.msql-watch-token) pm2 restart msql-upstream-watch --update-env
+```
+
+**验证必须同时看两个结果**:`no-token:401` 和 `with-token:200`。只看后者会以为配好了。
 
 ## 反向代理与 HTTPS
 

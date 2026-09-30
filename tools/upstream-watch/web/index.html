@@ -291,18 +291,18 @@ function llmBlock(r) {
 }
 
 function card(r) {
+  const ls = llmState(r);
   const p = (STATE.probe?.results || []).find(x => x.id === r.agentId);
   const pb = p ? VERDICT[p.verdict] : null;
   const bb = r.risk === 'unknown';
-  const attention = r.risk === 'high' || (p && p.verdict === 'drift');
+  const attention = r.risk === 'high' || ls.kind === 'hit' || (p && p.verdict === 'drift');
   const warnish = r.risk === 'medium' || (p && p.verdict === 'checker_error');
 
-  const cls = attention || ls.kind === 'hit' ? 'attention' : warnish ? 'warnish' : (r.risk === 'unknown' ? 'dimmed' : '');
+  const cls = attention ? 'attention' : warnish ? 'warnish' : (r.risk === 'unknown' ? 'dimmed' : '');
   const riskBadge = `<span class="badge b-${r.risk}">白盒 ${RISK_LABEL[r.risk] ?? r.risk}</span>`;
   const bbBadge = bb ? `<span class="badge b-bb">闭源</span>` : '';
   const pbBadge = pb ? `<span class="badge ${pb[0]}">黑盒 ${pb[1]}</span>` : '';
   // LLM 徽章:只在真有结论或有异常时出现,「未调用/未启用」不占头部
-  const ls = llmState(r);
   const llmBadge = (ls.kind === 'hit' || ls.kind === 'clear' || ls.kind === 'err')
     ? `<span class="badge ${ls.kind === 'hit' ? 'b-llmhit' : ls.kind === 'err' ? 'b-err' : 'b-llmok'}">${ls.label}</span>`
     : '';
