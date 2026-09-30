@@ -4,6 +4,41 @@
 
 ---
 
+## 2026-10-01 · v0.5.6 已发版(Windows + Linux + macOS arm64)
+
+`96ea687` / tag `v0.5.6`。**12 个资产,三平台必传件全齐**,一次性传到齐(未复现 blockmap 缺件坑):
+
+| 平台 | 资产 | updater 索引 |
+|---|---|---|
+| Windows | `Setup.exe` + `.exe.blockmap` | `latest.yml` ✅ |
+| Linux | `.AppImage` + `.tar.gz` + `_amd64.deb` | `latest-linux.yml` ✅ |
+| macOS arm64 | `.dmg` + `.zip` + 各自的 `.blockmap` | `latest-mac.yml` ✅ |
+
+### 关键取舍:不等 x64 就发
+
+`macos-13`(Intel)排了 **106 分钟仍未分配到 runner**(`runner_name` 为空),两个 run 各排一个。
+决定**照发**,理由:macOS 是本版才首次支持,**不存在从 0.5.5 自动升级到 0.5.6 的 mac 用户**,
+所以 arm64-only 清单的影响面推迟到了 0.5.6→0.5.7;而且 2026 年后的 Mac 全是 arm64。
+
+发版说明里**写明**了:Intel 用户请手动下载、不要用应用内更新按钮(否则会因清单里没有 x64 包而报错)。
+两个 x64 job 仍在排队,任一跑出来即可补传 x64 包 + 用 `merge-mac-manifest.mjs` 合并清单。
+
+### 版本号只有 3 处
+
+`package.json` 1 处 + `package-lock.json` 2 处。MCP `serverInfo` 与更新探测都走 `app.getVersion()`,
+自动跟随。改 lockfile 时**按 `"version": "0.5.5"` 全局替换会误伤同名版本的依赖**(`mkdirp` 恰好就是 0.5.6)——
+差点改坏,靠 `git diff` 只有 2 行 + 639 条依赖 `version`/`resolved` 一致性检查发现。
+
+### 校验产物时省下的两个坑
+
+1. **GitHub 的 release asset 带 `digest` 字段**(sha256),winget 要的哈希不用下 169 MB 也能拿到
+2. 但**仍然自己流式下了一遍**并同时算 sha256 + sha512:sha256 与 GitHub digest 比、sha512 与
+   `latest.yml` 里 electron-builder 写的比。两边都对上才敢填进 manifest —— 填错就是再被 msftbot 退一轮
+3. 公网可达性:`latest-mac.yml` 第一次 curl 返 **HTTP 000**(本机到 GitHub 瞬时抖动,不是文件问题),
+   重试 200/503 字节且 sha256 与 digest 一致。**HTTP 000 ≠ 文件缺失**,别误判
+
+---
+
 ## 2026-09-30 · 契约指纹 + 隐私披露 + macOS 清单合并(发版前抓到的三个坑)
 
 ### ① 契约指纹:「台账版本差」与「上游漂移」原来长得一模一样
