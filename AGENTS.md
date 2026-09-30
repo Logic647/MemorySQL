@@ -31,7 +31,8 @@ src/main/                  ← 主进程:入口、插件宿主、DB
 src/plugins/<id>/          ← 插件(manifest.json + index.ts)
 src/preload/  src/renderer/  src/shared/
 vault/                     ← MD 笔记库(Obsidian 兼容)
-test/fixtures/             ← 脱敏真实会话样本(适配器测试用)
+upstream/                  ← 上游适配契约台账 + 黑盒漂移检查(见下)
+test/*.test.ts             ← 单测。**样本内联在各 .test.ts 里,test/fixtures/ 不存在**
 memory.db                  ← SQLite 数据库(运行时生成)
 ```
 
@@ -43,6 +44,7 @@ npm run dev          # 开发模式(热重载)
 npm run build        # 构建
 npm run typecheck    # 类型检查
 npm test             # vitest 单元测试
+npm run upstream:check  # 上游契约黑盒检查:哪个 agent 改格式了导致捕获可能失效
 npm run import:scan  # 无头模式:扫描导入三个 agent 的真实会话(验收用)
 npm run dist         # 打包 Windows 安装包 + 免安装目录(需 ELECTRON_BUILDER_BINARIES_MIRROR,见 DEVLOG)
 ```
@@ -82,8 +84,9 @@ npm run dist         # 打包 Windows 安装包 + 免安装目录(需 ELECTRON_B
 - **滚动条观感(2026-09-30)**:`styles.css` 滚动条由 9px→12px 轨道且改用 `background-clip: padding-box`(旧 `content-box` + 2px border 让净宽只剩 5px);三态高亮 常态 `.16` / hover `.34` / 按下 `--msql-accent`;`::-webkit-scrollbar-button{display:none}` + `corner/resizer{background:transparent}` 抹掉 Chromium 默认 stepper 造成的底部白方块。**已由用户 2026-09-30 在 dev 模式目视验收通过**
 - **claudecode 断流已结案(2026-09-30)**:此前挂着的「自 9/11 起 19 天无新会话」**不是故障**——dev 日志 `source not detected, watcher disabled: C:\Users\18144\.claude\projects` + `scan ok: 0 found`,源目录不存在 = **本机已不装/不用 Claude Code**。其余未装适配器(qwen/kimi/codebuddy/workbuddy/qoder/gemini/cursor)同理,勿当 bug 排查
 - **dev 环境两个坑(非故障)**:①dev 数据目录**不是**真库(`env.ts:23-27` 按 `app.isPackaged` 分支,dev 用仓库内 `data/`),不会污染 95MB 真库;②dev 下 MCP 显示 **8 个**工具,多出的是 `data/plugins/hello` 示例插件注册的 `hello_greet`——「7 个工具」口径对装机版成立
-- 精确进度:见 `docs/DEVLOG.md` 最新一条(顶部);下一步:用户过目真实库截图 02-07 → 按 `docs/promo/checklist.md` 发布宣传(V2EX 周二~周四上午首发)→ winget 0.5.x 版 PR 跟进(#426778)→ mcp.so 催收录 → 评估 Comate Zulu
+- **上游契约台账 + 黑盒漂移检查(2026-09-30,第 0 期)**:`upstream/agents.ts` 声明 12 家 agent 的上游/changelog 类型/本地源/依赖的表与列/MCP 必需键;`upstream/check.ts` 探测真实数据 schema,四态判定 🟢匹配/🔴漂移/🟡源不存在/⚪仅黑盒。**跑 `npm run upstream:check`**。**改任一 capture-* 的存储布局或 MCP 配置格式,必须同步台账**(`test/upstream-contract.test.ts` 在 CI 断言台账自洽)。要点:①`localRoots` 支持 `{resolver}` 复用生产代码的路径探测(hermes 装在注册表/盘符任意位置,实测在 **D 盘**而 AGENTS.md 记的是 G 盘)②`tablesAnyOf` 支持多代布局并存 ③**CI runner 无 agent 数据,漂移检查在 CI 空跑**——CI 守的是台账自洽,真实漂移须在开发机跑 ④**4 家闭源(qoder/codebuddy/workbuddy/zcode)无任何公开 changelog,只能靠黑盒**;kimicli 正确仓库是 `MoonshotAI/kimi-code`(非已归档的 Kimi-Dev)
+- 精确进度:见 `docs/DEVLOG.md` 最新一条(顶部);下一步:**第 1 期 捕获失效可见化**(`capture-factory.ts:135-137` watcher 失败只写日志、不更新 `lastStatus`,是「静默失效」根因)→ 第 2 期云端看板(阿里云,纯 Node 无 native 依赖,token 鉴权,每日抓一次,LLM key 走 env 且失败降级纯规则)→ 用户过目真实库截图 02-07 → 按 `docs/promo/checklist.md` 发宣传 → winget 0.5.x 版 PR(#426778)→ mcp.so 催收录 → 评估 Comate Zulu
 - **v0.5.5 装机验收已通过(2026-09-30)**:自动更新 0.5.4→0.5.5 **真实验收闭环**(`%LOCALAPPDATA%\memorysql-updater\pending\` 存有完整下载的 `MemorySQL-Setup-0.5.5.exe` 177,318,979 字节,与 `latest.yml` 声明 size 一致;11:42 重启 → 11:56 下载 → 11:57 落盘);OpenCode 2.x 捕获在装机版确认可用(#233 实时摄入);typecheck 0 / vitest **130:130**(当轮;补修连接向导后为 134:134)。**无代码增量**,`main` @ `4396ed6` 干净
 - **两个已查清的操作坑(查历史会话前必读)**:①仓库内 `data/memory.db`(62MB)是**过期的开发副本**(id 只到 #221),真库在 `%APPDATA%\memorysql\data\memory.db`(95MB / 236 会话)——查会话一律走 MCP 或 `%APPDATA%`;②`sessions.started_at`/`ended_at` 存**秒**,`updated_at` 存**毫秒**,全链路刻意自洽(写侧各 parser `Math.floor(t/1000)`,读侧 `App.tsx:42 fmtTime` `new Date(ts*1000)`)——直查库按毫秒解读会全显示 1970,别误判成时间戳损坏
 - 常用验证:`npm run import:scan`;`npx electron . --dispatch`;`npx electron . --sync <folder>`;`npx electron . --scan --export-archive <path>`;`npx electron . --reindex`(语义全量重建);运行中 `curl http://127.0.0.1:8642/health`
-- 验收数据(本机真实存在):Codex `~/.codex/sessions/**/rollout-*.jsonl`;ZCode `~/.zcode/cli/db/db.sqlite`(权威库,rollout 仅剩 model-io 日志作 watcher 信号)+ `~/.zcode/cli/rollout/`;Hermes `G:\Hermes Agent CN Desktop\data\hermes-home\state.db`(0.7.0 布局:根级,旧机曾为 profiles/daily)+ `memories/*.md`;Claude Desktop `%LOCALAPPDATA%\Claude-3p\claude-code-sessions\**\local_*.json`(仅元数据,无对话正文)+ `~/.claude/history.jsonl`;OpenCode `~/.local/share/opencode/opencode.db`(SQLite,storage/ JSON 树为旧版遗留);Qwen Code/Kimi CLI/CodeBuddy/WorkBuddy 本机未装(格式:qwen `~/.qwen/**/chats/*.jsonl`、kimi `~/.kimi/sessions/**/context.jsonl`、codebuddy `~/.codebuddy/projects/**/*.jsonl`、workbuddy `~/.workbuddy/projects/**/*.jsonl` + `workbuddy.db`),合成样本单测 + `MEMORYSQL_DATA_DIR` 隔离端到端覆盖;Gemini/Cursor 本机未装,合成样本单测覆盖
+- 验收数据(本机真实存在):Codex `~/.codex/sessions/**/rollout-*.jsonl`;ZCode `~/.zcode/cli/db/db.sqlite`(权威库,rollout 仅剩 model-io 日志作 watcher 信号)+ `~/.zcode/cli/rollout/`;Hermes `<安装目录>\data\hermes-home\state.db`(**路径随注册表/盘符变动,2026-09-30 实测在本机 D 盘**;探测链见 `resolveHermesHome`,台账用 `{resolver:'hermes'}` 引用,勿硬编码)+ `memories/*.md`;Claude Desktop `%LOCALAPPDATA%\Claude-3p\claude-code-sessions\**\local_*.json`(仅元数据,无对话正文)+ `~/.claude/history.jsonl`;OpenCode `~/.local/share/opencode/opencode.db`(SQLite,storage/ JSON 树为旧版遗留);Qwen Code/Kimi CLI/CodeBuddy/WorkBuddy 本机未装(格式:qwen `~/.qwen/**/chats/*.jsonl`、kimi `~/.kimi/sessions/**/context.jsonl`、codebuddy `~/.codebuddy/projects/**/*.jsonl`、workbuddy `~/.workbuddy/projects/**/*.jsonl` + `workbuddy.db`),合成样本单测 + `MEMORYSQL_DATA_DIR` 隔离端到端覆盖;Gemini/Cursor 本机未装,合成样本单测覆盖

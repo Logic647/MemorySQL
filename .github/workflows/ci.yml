@@ -22,6 +22,10 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
+      # Includes test/upstream-contract.test.ts. Note: the drift half of that
+      # suite is a no-op on CI runners (no agent data dirs) — CI really guards
+      # the ledger self-consistency assertions. Real drift detection runs on a
+      # dev machine via `npm run upstream:check`.
       - run: npm test
       - run: npm run build
 

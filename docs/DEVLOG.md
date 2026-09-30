@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-09-30 · 上游契约台账 + 黑盒漂移检查(第 0 期,为「上游监控看板」打地基)
+
+用户提出真实痛点:各 agent 更新频繁,导致捕获/MCP 失效且**静默**,总等用户报障。规划四期(台账+黑盒 → 失效可见化 → 云端抓取+LLM → 探针上报+结论双写),本期落第 0 期。方案评审记录见 `.opencode/plan/upstream-watch.md`。
+
+**关键前置发现(推翻了规划时的两个假设):**
+1. **`test/fixtures/` 根本不存在** —— AGENTS.md 目录结构里写的「脱敏真实会话样本」是**文档失实**,现有 21 个测试的样本全部**内联在 .test.ts 里**。因此「可复用现有 fixture 基线」不成立。
+2. **跑旧 fixture 价值有限** —— 它只能验证「我的代码没退化」,而这正是 vitest 已在做的事。**黑盒的真实价值在于探测真实数据的 schema 漂移**。据此重新设计:SQLite 源**只探测 schema**(快、稳、直击要害),JSONL 源才真调生产 parser 解析样本。前者正是被 opencode 2.x 咬过的那类问题(`no such table: session`)——schema 探测能在解析器崩之前就发现。
+
+### 交付物
+
+- **`upstream/agents.ts` 契约台账** —— 12 家 agent 的上游地址/changelog 类型/监控模式/本地源/依赖的表与列/MCP 必需键/风险词。**写成 .ts 而非 YAML**:项目零依赖风格,顺带获得类型检查与注释能力。新增 `${AGENT} 安装位置漂移` 的正确解法:`localRoots` 支持 `{ resolver }`,路径探测复用生产代码(如 hermes 调 `resolveHermesHome`),**台账不重复实现探测逻辑**。实测立刻见效:resolver 找到 hermes 在 **D 盘**,而 AGENTS.md 记的是 **G 盘**——硬编码路径果然已经过期。
+- **`upstream/check.ts` 黑盒检查** —— 判定四态:🟢 匹配 / 🔴 漂移 / 🟡 源不存在 / ⚪ 仅黑盒(闭源)。支持 `tablesAnyOf` 多代布局并存(legacy 三表与 v2 双表同时算绿),漂移时**点名缺哪些表/哪些列**。
+- **`test/upstream-contract.test.ts`** —— ①真实数据无漂移 ②台账自洽 6 项(id 唯一、tracked 必须有上游源、sqlite 必须声明表、jsonl parser 必须已注册、mcp 必须声明必需键、风险词非空),防台账腐化。
+- **`test/upstream-selftest.test.ts`** —— **检查器自身的自测**:用合成库模拟上游改 schema(表改名/删列/空库/zcode 跟随迁 v2),断言**判红且指名缺什么**。没有这层,一个永远返回 ok 的检查器等于没有检查器。
+- `npm run upstream:check` 看彩色表格;CI 已自动覆盖(见下)。
+
+### 上游可得性实测(决定了双轨设计)
+
+| 梯队 | 家数 | 情况 |
+|---|---|---|
+| API 直抓有正文 | 5 | opencode / claudecode / qwencode / gemini / hermes |
+| 可抓但形态特殊 | 3 | codex(release 正文全空,需 commit)、kimicli(0 release)、cursor(0 release) |
+| **闭源无任何公开日志** | **4** | qoder / codebuddy / workbuddy / zcode —— 官方仓库全 404 |
+
+**修正一处错误记录**:`MoonshotAI/Kimi-Dev` 已归档失效,正确仓库是 **`MoonshotAI/kimi-code`**,台账已改并留注。
+
+### CI 语义(重要,勿误读绿灯)
+
+`npm test` 已含契约测试,CI 自动跑。但 **CI runner 上没有任何 agent 数据目录,漂移检测那一半会全部判 absent 而空跑** —— CI 真正守住的是「台账自洽性」,不是真实漂移。测试里已显式 `console.warn` 说明,不制造「全绿=检查过」的错觉。**真实漂移必须在开发机跑 `npm run upstream:check`**,或等第 3 期的本机探针定时上报。ci.yml 已加注释说明。
+
+**验证:** typecheck 0 / vitest **150:150**(23 文件,原 21)/ build 通过。**零新增依赖** —— 曾试 `vite-node` 但它拖进 rolldown+lightningcss+数十个平台 binary(lock +724 行),已回滚,改用既有 vitest 承载(`package.json` 仅加一行 script)。
+
+**下一步:** 第 1 期(捕获失效可见化:`capture-factory.ts:135-137` watcher 失败只写日志不更新 `lastStatus`,是「静默失效」的根因)→ 再议第 2 期云端看板。
+
+---
+
 ## 2026-09-30 · 修 OpenCode MCP 连接器(v2 必填 `type`)+ 滚动条观感修复
 
 用户报「opencode 识别不到 MCP」。根因不在服务端,在**本项目自己的连接向导写错了 opencode 配置格式**。

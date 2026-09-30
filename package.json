@@ -11,6 +11,7 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "upstream:check": "vitest run test/upstream-contract.test.ts --reporter=verbose",
     "import:scan": "electron-vite build && electron . --scan",
     "dist": "electron-vite build && electron-builder --win",
     "dist:linux": "electron-vite build && electron-builder --linux"
