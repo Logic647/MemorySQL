@@ -26,7 +26,7 @@
    |---|---|---|---|
    | Windows | `MemorySQL-Setup-X.Y.Z.exe` | `.exe.blockmap` | `latest.yml` |
    | Linux | `.AppImage` / `.deb` | — | `latest-linux.yml` |
-   | macOS | `MemorySQL-X.Y.Z-{arm64,x64}.dmg` | `.zip` | `latest-mac.yml` |
+   | macOS | `MemorySQL-X.Y.Z-{arm64,x64}.dmg` | `MemorySQL-X.Y.Z-{arm64,x64}.zip` | `latest-mac.yml`(**两个架构合并后的一份**,见下) |
 6. **验收自动更新**:已安装旧版的机器启动应用 → 应静默下载新版本并提示;或在设置里手动触发(后续可加)。
 
 ## macOS 发布注意事项
@@ -38,6 +38,43 @@
   只发 dmg 的话 mac 用户装上之后再也收不到自动更新,且**没有任何报错**。
 - **两个架构分别出包**:`macos-14`(arm64)与 `macos-13`(x64)各出一个,不做 universal。
   原因是原生模块按架构分发(`sqlite-vec-darwin-{arm64,x64}`),universal 要合并两套。
+- **`latest-mac.yml` 必须合并,不能各传各的 ⚠️ 这是最容易发出去一个坏更新的地方**
+
+  两个 CI job **各自都会产出一份叫 `latest-mac.yml` 的清单**,而一个 release 只能有一个同名文件,
+  后上传的覆盖先上传的。而 electron-updater 读的是**这一份**清单,再从里面的 `files:` 列表
+  按架构过滤(`MacUpdater.filterFilesForArch`,`node_modules/electron-updater/out/MacUpdater.js:30`)。
+  实测行为:
+
+  | 清单里只有 | Apple Silicon 装到 | Intel 装到 |
+  |---|---|---|
+  | arm64 条目 | ✅ arm64 | 空 → `ERR_UPDATER_ZIP_FILE_NOT_FOUND` |
+  | x64 条目 | ⚠️ **Intel 版** | ✅ x64 |
+
+  第二行是要命的:**Apple Silicon 会下载并安装 Intel 版**,而 `sqlite-vec` / `onnxruntime`
+  都是按架构编译的原生模块,换架构即损坏 —— 而且不报任何错,直到用到那个功能才崩。
+
+  所以发版时**先下载两个架构的清单、合并、再传**:
+
+  ```bash
+  gh run download <run-id> -n MemorySQL-macOS-arm64-<sha>  -D mac/arm64
+  gh run download <run-id> -n MemorySQL-macOS-x64-<sha>    -D mac/x64
+  # 两个目录里各有一份 latest-mac.yml,重名 —— 先改名
+  mv mac/arm64/latest-mac.yml mac/arm64.yml
+  mv mac/x64/latest-mac.yml   mac/x64.yml
+  node scripts/merge-mac-manifest.mjs mac/latest-mac.yml mac/arm64.yml mac/x64.yml
+  gh release upload <tag> mac/latest-mac.yml --clobber
+  ```
+
+  合并脚本会用 **electron-updater 自己的函数**校验「两个架构都能解析到 zip」,
+  校验不过就拒绝输出 —— 所以拼错不会发出去,只会在发版时立刻失败。
+  (两个架构的 zip/dmg 本来就是不同文件,直接原样上传即可,只有清单需要合并。)
+
+  `scripts/publish-release.mjs` 目前按各平台逐个上传,**mac 的清单要走上面这几步**。
+  Intel runner 排不到队时,可以先只发 arm64 —— 但**此时不要把 x64 的清单传上去**,
+  那会覆盖成只有 x64 条目,正好是最危险的方向。
+
+- **blockmap 缺失不影响正确性**:mac 产物里没有 `.blockmap`,只是退回全量下载
+  (differential download 失效),`latest-mac.yml` 里的 `sha512` 仍然校验下载完整性。
 - **本地无法验证 mac 构建**:electron-builder 硬性要求在 macOS 上构建,
   在 Windows 上跑 `--mac` 直接报 "supported only on macOS"。
   **唯一验证途径是 CI** —— 推 main 后看 package job 的两个 mac runner 是否绿。
