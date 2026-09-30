@@ -53,6 +53,23 @@ typecheck 0 / vitest **199:199**(26 文件)/ build 通过 / 零新增依赖。�
 
 **LLM 的两个设计约束**(别改坏):只对规则判 medium/high 调用;**只能加严,不能放松** —— LLM 说「没事」不会把规则判的 high 降级,但它的理由仍保留在看板里给人看。
 
+### MiMo 适配(用户指定 provider,按官方文档核对)
+
+用户用**小米 MiMo**。查官方文档后发现**原实现有两个对 MiMo 不兼容的点**,均已修:
+
+| 文档要求 | 原实现 | 后果 |
+|---|---|---|
+| 认证头 `api-key: $KEY` | 只发 `Authorization: Bearer` | **401** |
+| `max_completion_tokens` | 只发 `max_tokens` | 可能被拒 |
+
+修法:非 Anthropic 端点**默认同时发 `Authorization` 和 `api-key` 两个头**(同一 key 挂两个头无副作用,可同时兼容 OpenAI/MiMo/自建网关),并同时发两个 max_tokens 字段;另加 `LLM_AUTH_HEADER` 可显式指定。响应解析两种格式都吃。
+
+**顺带发现时效信息**:`mimo-v2.5-pro` / `mimo-v2.5` **将于 2026-10-21 下线**,预置默认用 `mimo-v2.6-pro`。Token Plan 订阅用户端点是 `token-plan-cn.xiaomimimo.com`、key 前缀 `tp-`/`ttp-` 而非 `sk-`。
+
+`scripts/check-llm.mjs` 加了 **4 个 provider 预置**(`mimo` / `openai` / `anthropic` / `deepseek`),`node scripts/check-llm.mjs mimo` 一键套用端点+模型,**key 一律走环境变量不落文件**。
+
+测试 5 → **14** 个。过程中还纠正了自己的一个错误假设:我最初以为「不设 BASE_URL 走通用分支」,实际**默认端点就是 Anthropic 官方**,走的是 `x-api-key` 分支——测试如实反映真实行为。
+
 ---
 
 ## 2026-09-30 · 看板部署上线(阿里云)+ 四个部署坑

@@ -201,19 +201,35 @@ export async function llmEnhance(result, agent) {
   try {
     const ctl = new AbortController()
     const timer = setTimeout(() => ctl.abort(), 20000)
-    // 端点不是 Anthropic 官方域名时,按 OpenAI 兼容格式发 —— 大多数第三方
-    // provider(含各类自建网关)都吃这套,不必为每家改代码
+    // 端点不是 Anthropic 官方域名时,按 OpenAI 兼容格式发。
+    //
+    // 认证头各家并不统一 —— OpenAI 官方用 `Authorization: Bearer`,而
+    // **小米 MiMo 的 OpenAI 兼容端点要求 `api-key`**(其官方 curl 示例即如此)。
+    // 与其猜,不如两个都发:同一个 key 挂两个头没有副作用,可同时兼容
+    // OpenAI / MiMo / 各类自建网关;也可用 LLM_AUTH_HEADER 显式指定。
     const isAnthropic = /anthropic\.com/.test(endpoint)
     const headers = { 'Content-Type': 'application/json' }
     if (isAnthropic) {
       headers['x-api-key'] = process.env.LLM_API_KEY
       headers['anthropic-version'] = '2023-06-01'
     } else {
-      headers.Authorization = `Bearer ${process.env.LLM_API_KEY}`
+      const explicit = process.env.LLM_AUTH_HEADER
+      if (explicit) {
+        headers[explicit] = process.env.LLM_API_KEY
+      } else {
+        headers.Authorization = `Bearer ${process.env.LLM_API_KEY}`
+        headers['api-key'] = process.env.LLM_API_KEY
+      }
     }
-    const body = isAnthropic
-      ? { model, max_tokens: 300, messages: [{ role: 'user', content: prompt }] }
-      : { model, max_tokens: 300, messages: [{ role: 'user', content: prompt }] }
+    // max_tokens(OpenAI 传统)与 max_completion_tokens(新标准,MiMo 用后者)
+    // 一并发送,避免字段名差异被拒
+    const body = {
+      model,
+      max_tokens: 300,
+      max_completion_tokens: 300,
+      temperature: 0,
+      messages: [{ role: 'user', content: prompt }]
+    }
 
     const res = await fetch(endpoint, {
       method: 'POST',
@@ -222,7 +238,13 @@ export async function llmEnhance(result, agent) {
       signal: ctl.signal
     })
     clearTimeout(timer)
-    if (!res.ok) return { ...result, llmError: `LLM HTTP ${res.status}` }
+    if (!res.ok) {
+      const hint =
+        res.status === 401 || res.status === 403
+          ? ' —— 认证头可能不对,可用 LLM_AUTH_HEADER 显式指定(如 api-key / Authorization)'
+          : ''
+      return { ...result, llmError: `LLM HTTP ${res.status}${hint}` }
+    }
     const data = await res.json()
     // 兼容两种响应形态:Anthropic content[].text / OpenAI choices[].message.content
     const text =

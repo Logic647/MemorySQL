@@ -42,18 +42,39 @@ pm2 save
 | `LLM_API_KEY` | 否 | 启用 LLM 增强。**不设就纯规则**(功能完备,只是少一层语义判断)。调用失败/超时/返回非 JSON 一律自动降级,绝不阻塞看板 |
 | `LLM_BASE_URL` | 否 | 默认 `https://api.anthropic.com/v1/messages`。**填非 Anthropic 官方地址时自动改用 OpenAI 兼容格式**(Bearer 认证 + `choices[].message.content` 解析),所以第三方 provider / 自建网关也能直接用 |
 | `LLM_MODEL` | 否 | 默认 `claude-sonnet-4-5` |
+| `LLM_AUTH_HEADER` | 否 | 显式指定认证头名(如 `api-key`)。**默认不设时会同时发 `Authorization: Bearer` 和 `api-key` 两个头**,以兼容各家差异(OpenAI 要前者、小米 MiMo 要后者) |
+
+### 已预置的 provider
+
+`node scripts/check-llm.mjs <名字>` 可直接套用端点+模型(key 仍走环境变量,不落文件):
+
+| 名字 | provider | 模型 |
+|---|---|---|
+| `mimo` | 小米 MiMo | `mimo-v2.6-pro` |
+| `openai` | OpenAI 官方 | `gpt-4o-mini` |
+| `anthropic` | Anthropic 官方 | `claude-sonnet-4-5` |
+| `deepseek` | DeepSeek | `deepseek-chat` |
+
+**MiMo 注意事项**(核对自官方文档 2026-09-30):
+- 认证头是 `api-key`,不是 `Authorization: Bearer` —— 本工具已兼容(默认两个都发)
+- 用 `max_completion_tokens` 而非 `max_tokens` —— 本工具也两个都发
+- ⚠ **`mimo-v2.5-pro` / `mimo-v2.5` 将于 2026-10-21 下线**,请用 `mimo-v2.6-pro` 或 `mimo-v2.6-flash`
+- Token Plan 订阅用户端点是 `https://token-plan-cn.xiaomimimo.com/v1`,key 前缀 `tp-`/`ttp-`(不是 `sk-`)
 
 ### 启用 LLM 后请先自检
 
 `llmEnhance` 的单元测试全是 mock(离线、不花钱),但 **mock 证明不了你的 key/端点/模型名真的能用**。真调一次才算数:
 
 ```bash
-export LLM_API_KEY=sk-...
-export LLM_BASE_URL=https://api.anthropic.com/v1/messages   # 可选
-node scripts/check-llm.mjs
+export LLM_API_KEY=sk-xxxx
+node scripts/check-llm.mjs mimo
 ```
 
 它会打印规则判定 → LLM 判定 → 合并结果,并在失败时给出排查方向(退出码 1)。
+
+**LLM 的两个设计约束**(改代码前务必知道):
+- 只对规则判为 `medium`/`high` 的条目调用,`low`/`none` 直接跳过(省钱省延迟)
+- **只能加严,不能放松** —— LLM 说「没事」不会把规则判的 `high` 降级,但它的理由仍会保留在看板里给人看
 
 **LLM 的两个设计约束**(改代码前务必知道):
 - 只对规则判为 `medium`/`high` 的条目调用,`low`/`none` 直接跳过(省钱省延迟)

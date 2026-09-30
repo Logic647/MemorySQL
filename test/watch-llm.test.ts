@@ -1,4 +1,4 @@
-﻿import { afterEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { llmEnhance } from '../tools/upstream-watch/evaluate.mjs'
 
 const agent = {
@@ -17,9 +17,16 @@ const agent = {
  * **任何失败都必须降级为规则结果,绝不抛异常、绝不吞掉原有结论。**
  */
 describe('llmEnhance(LLM 增强,可选)', () => {
-  const ENV = { ...process.env }
+  const LLM_VARS = ['LLM_API_KEY', 'LLM_BASE_URL', 'LLM_MODEL', 'LLM_AUTH_HEADER']
+
+  // 逐个清掉,避免上一个用例的设置泄漏到下一个
+  // (给 process.env 整体赋值在 Node 里不可靠,实测会造成用例互相污染)
+  beforeEach(() => {
+    for (const v of LLM_VARS) delete process.env[v]
+  })
+
   afterEach(() => {
-    process.env = { ...ENV }
+    for (const v of LLM_VARS) delete process.env[v]
     vi.unstubAllGlobals()
   })
 
@@ -128,6 +135,75 @@ describe('llmEnhance(LLM 增强,可选)', () => {
     const r = await llmEnhance(med(), agent)
     expect(r.llm?.affectsCapture).toBe(true)
     expect(r.risk).toBe('high')
+  })
+
+  /**
+   * 认证头:各家不统一 —— 小米 MiMo 的 OpenAI 兼容端点要求 `api-key`,
+   * OpenAI 官方要 `Authorization: Bearer`。
+   *
+   * 注意:不设 LLM_BASE_URL 时**默认端点就是 Anthropic 官方**,走 x-api-key 分支;
+   * 要测 OpenAI 兼容分支必须显式给一个非 anthropic.com 的端点。
+   */
+  it('不设 BASE_URL 时走 Anthropic 分支(x-api-key)', async () => {
+    process.env.LLM_API_KEY = 'sk-ant-x'
+    delete process.env.LLM_BASE_URL
+    let headers: Record<string, string> = {}
+    vi.stubGlobal('fetch', async (_u: unknown, init: { headers: Record<string, string> }) => {
+      headers = init.headers
+      return anthropicOk({ affectsCapture: false, affectsMcp: false, severity: 'low', reason: 'r' })
+    })
+    await llmEnhance(med(), agent)
+    expect(headers['x-api-key']).toBe('sk-ant-x')
+    expect(headers['anthropic-version']).toBe('2023-06-01')
+  })
+
+  it('非 anthropic 端点(MiMo/OpenAI 兼容)默认同时发两个认证头', async () => {
+    process.env.LLM_API_KEY = 'sk-x'
+    process.env.LLM_BASE_URL = 'https://api.xiaomimimo.com/v1/chat/completions'
+    let headers: Record<string, string> = {}
+    vi.stubGlobal('fetch', async (_u: unknown, init: { headers: Record<string, string> }) => {
+      headers = init.headers
+      return anthropicOk({ affectsCapture: false, affectsMcp: false, severity: 'low', reason: 'r' })
+    })
+    await llmEnhance(med(), agent)
+    expect(headers.Authorization).toBe('Bearer sk-x')
+    expect(headers['api-key']).toBe('sk-x')
+  })
+
+  it('LLM_AUTH_HEADER 可显式指定认证头(MiMo 用 api-key)', async () => {
+    process.env.LLM_API_KEY = 'sk-x'
+    process.env.LLM_BASE_URL = 'https://api.xiaomimimo.com/v1/chat/completions'
+    process.env.LLM_AUTH_HEADER = 'api-key'
+    let headers: Record<string, string> = {}
+    vi.stubGlobal('fetch', async (_u: unknown, init: { headers: Record<string, string> }) => {
+      headers = init.headers
+      return anthropicOk({ affectsCapture: false, affectsMcp: false, severity: 'low', reason: 'r' })
+    })
+    await llmEnhance(med(), agent)
+    expect(headers['api-key']).toBe('sk-x')
+    expect(headers.Authorization).toBeUndefined()
+  })
+
+  it('同时发 max_tokens 与 max_completion_tokens(MiMo 用后者)', async () => {
+    process.env.LLM_API_KEY = 'k'
+    process.env.LLM_BASE_URL = 'https://api.xiaomimimo.com/v1/chat/completions'
+    let body = ''
+    vi.stubGlobal('fetch', async (_u: unknown, init: { body: string }) => {
+      body = init.body
+      return anthropicOk({ affectsCapture: false, affectsMcp: false, severity: 'low', reason: 'r' })
+    })
+    await llmEnhance(med(), agent)
+    const parsed = JSON.parse(body)
+    expect(parsed.max_tokens).toBeGreaterThan(0)
+    expect(parsed.max_completion_tokens).toBeGreaterThan(0)
+  })
+
+  it('401/403 时提示认证头可能不对', async () => {
+    process.env.LLM_API_KEY = 'bad'
+    process.env.LLM_BASE_URL = 'https://api.xiaomimimo.com/v1/chat/completions'
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 401 }))
+    const r = await llmEnhance(med(), agent)
+    expect(r.llmError).toContain('LLM_AUTH_HEADER')
   })
 
   it('prompt 里必须带「我们依赖什么」,否则模型无从判断', async () => {
