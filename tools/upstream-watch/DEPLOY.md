@@ -39,6 +39,17 @@ pm2 start tools/upstream-watch/server.mjs --name msql-upstream-watch
 
 实测:Node v20.20.2 / linux-x64,`api.github.com` 直连可用(200,成功率 100%,均 310ms),**无需代理**。
 
+> ⚠️ **两条 GitHub 链路的可靠性不一样,别混为一谈**(2026-09-30 实测):
+> `api.github.com`(看板抓 changelog 用)稳定在 0.36 秒;而 **`github.com`(git 传输用)会间歇性连不上**,表现是 `git pull` 卡到超时、`curl` 直接 `Connection timed out`,同一次 `git fetch` 重试 7 次才成功过。
+> **所以:抓取失败和拉不到代码是两种不同故障,不要互相归因。** `git pull` 失败时别怀疑 token 或网络配置 —— 先确认 `curl https://api.github.com/rate_limit` 是否正常,若正常就只是 git 链路抖动,重试即可。部署时建议:
+> ```bash
+> for i in $(seq 1 8); do
+>   GIT_TERMINAL_PROMPT=0 timeout 90 git -c http.version=HTTP/1.1 fetch -q origin && break
+>   echo "第 $i 次失败,重试"; sleep 6
+> done
+> ```
+> 另外 `git -c http.version=HTTP/1.1` 能绕开偶发的 `curl 16 Error in the HTTP2 framing layer`。
+
 ```bash
 # 1. 完整 clone —— 不要用 --depth 1!
 #    后面「台账变了怎么办」要靠 git pull 拿新提交,浅克隆 pull 会直接报错,

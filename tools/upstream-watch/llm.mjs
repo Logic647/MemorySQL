@@ -161,13 +161,15 @@ export async function callLlmJson(prompt, { maxTokens = 300, timeoutMs = 20000 }
     }
 
     const data = await res.json()
-    // 解析不出 JSON 时把 finish_reason 带出来 —— 'length' 意味着该调大 maxTokens,
+    // 解析不出 JSON 时把 finish_reason 带出来 —— 'length' 意味着该调大 maxTokens。
     // 这条线索不报出来就只能靠猜(实测因此浪费了一轮排查)。
     const finish = data?.choices?.[0]?.finish_reason
     const parsed = extractJson(extractCandidates(data))
     if (!parsed.ok) {
-      const tail = finish === 'length' ? '(响应被 maxTokens 截断,请调大 maxTokens)' : ''
-      return { ok: false, error: `LLM 未返回可解析的 JSON: ${parsed.error}${tail}` }
+      const why = finish === 'length'
+        ? '响应被 maxTokens 截断,请调大 maxTokens'
+        : (finish && finish !== 'stop' ? `finish_reason=${finish}` : parsed.error)
+      return { ok: false, error: `LLM 未返回可解析的 JSON:${why}` }
     }
     return { ok: true, data: parsed.data }
   } catch (e) {

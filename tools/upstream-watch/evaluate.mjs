@@ -200,7 +200,10 @@ export async function llmEnhance(result, agent) {
     '{"affectsCapture":true|false,"affectsMcp":true|false,"severity":"none|low|medium|high","reason":"一句话中文说明"}'
   ].join('\n')
 
-  const res = await callLlmJson(prompt, { maxTokens: 300 })
+  // 300 太小:实测 MiMo 光 reasoning_tokens 就要 136(推理模型,reasoning 计入
+  // completion 预算),留给正文的不到 170,claudecode 这种 21KB changelog 的条目
+  // 就会被截断 → JSON 解析失败。宁可多花一点 token,也不要间歇性失败。
+  const res = await callLlmJson(prompt, { maxTokens: 800 })
   if (!res.ok) return { ...result, llmError: res.error }
 
   const parsed = res.data

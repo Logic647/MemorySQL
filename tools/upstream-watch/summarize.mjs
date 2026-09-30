@@ -194,7 +194,9 @@ export async function summarize(results, probe) {
     return { ...base, error: '尚无抓取结果' }
   }
 
-  const res = await callLlmJson(`${PROMPT}\n\n---\n事实:\n${renderBrief(brief)}`, { maxTokens: 600 })
+  // 同 llmEnhance:推理型 provider 的 reasoning 计入 completion 预算,600 偏紧,
+  // 会被截断成半个 JSON。宁可多花 token。
+  const res = await callLlmJson(`${PROMPT}\n\n---\n事实:\n${renderBrief(brief)}`, { maxTokens: 1200 })
   if (!res.ok) return { ...base, error: res.error, llmInvoked: true }
 
   const d = res.data
