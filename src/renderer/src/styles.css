@@ -359,6 +359,10 @@ section h3 { font-size: var(--msql-fs-lg); margin: 0 0 4px; font-weight: 600; }
 .agent-state { font-size: var(--msql-fs-xs); }
 .agent-state.ok { color: var(--msql-success); }
 .agent-state.dim { color: var(--msql-fg-dim); }
+/* 捕获健康度告警:「已装但读不懂」必须比「没装」醒目得多 —— 前者要适配发版,
+   后者什么都不用做。颜色沿用 token,不做硬编码。 */
+.agent-state.warn { color: var(--msql-warning); }
+.agent-state.bad { color: var(--msql-danger); font-weight: 600; }
 
 /* ---------- spotlight ---------- */
 .spotlight { display: flex; flex-direction: column; height: 100vh; background: var(--msql-bg); position: relative; z-index: 1; }

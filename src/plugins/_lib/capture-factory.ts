@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { MemorySQLPlugin, PluginContext } from '../../main/core/plugin-host'
 import type { CaptureStatus, RawSession } from '../../shared/types'
 import type { IngestService } from '../core-schema/ingest'
+import { failureDetail, healthFrom } from './capture-health'
 
 /**
  * Shared skeleton for session-capture plugins: status/scanNow IPC, source
@@ -40,7 +41,12 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
     sessionsFound: 0,
     sessionsImported: 0,
     lastScanAt: null,
-    lastError: null
+    lastError: null,
+    health: 'unknown',
+    consecutiveFailures: 0,
+    lastFailureAt: null,
+    lastFailureDetail: null,
+    lastSuccessAt: null
   }
   const runtime: { start?: () => void } = {}
 
@@ -73,7 +79,11 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
             sessionsFound: res.scanned,
             sessionsImported: res.imported + res.updated,
             lastScanAt: Date.now(),
-            lastError: null
+            lastError: null,
+            // a full scan that completes is proof the format is still readable
+            health: 'healthy',
+            consecutiveFailures: 0,
+            lastSuccessAt: Date.now()
           }
           ctx.log.info(
             `scan ok: ${res.scanned} found, ${res.imported} imported, ${res.updated} updated, ${res.skipped} unchanged`
@@ -132,8 +142,29 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
                   if (res.imported + res.updated > 0) {
                     ctx.log.info(`incremental import from ${path.basename(changed)}`)
                   }
+                  // 增量捕获成功 = 格式仍读得懂。归零失败计数,让偶发失败不累积成告警
+                  lastStatus = {
+                    ...lastStatus,
+                    health: healthFrom(0, true),
+                    consecutiveFailures: 0,
+                    lastSuccessAt: Date.now()
+                  }
                 } catch (err) {
-                  ctx.log.warn(`incremental parse failed for ${changed}:`, err)
+                  // 增量失败必须落到状态里:过去这里只写日志,导致上游改格式后
+                  // 每条新会话都解析失败,而 UI 始终显示「N 条会话 / M 扫描」——
+                  // 静默失效的根因。
+                  const n = lastStatus.consecutiveFailures + 1
+                  lastStatus = {
+                    ...lastStatus,
+                    health: healthFrom(n, lastStatus.lastSuccessAt !== null),
+                    consecutiveFailures: n,
+                    lastFailureAt: Date.now(),
+                    lastFailureDetail: failureDetail(err, changed)
+                  }
+                  ctx.log.warn(
+                    `incremental parse failed (${n}x) for ${changed}:`,
+                    err
+                  )
                 }
               })()
             },

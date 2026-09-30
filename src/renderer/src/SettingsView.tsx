@@ -911,7 +911,16 @@ const CAPTURE_AGENTS: CaptureAgent[] = [
 function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
   const [enabled, setEnabled] = useState<Record<string, boolean>>({})
   const [pending, setPending] = useState<Record<string, boolean>>({})
-  const [status, setStatus] = useState<Record<string, { available: boolean; sourceRoot: string; detail: string }>>({})
+  const [status, setStatus] = useState<
+    Record<
+      string,
+      {
+        available: boolean
+        sourceRoot: string
+        detail: { level: 'ok' | 'warn' | 'bad' | 'dim'; text: string }
+      }
+    >
+  >({})
   const [drafts, setDrafts] = useState<Record<string, string>>({})
 
   const load = useCallback(async (): Promise<void> => {
@@ -927,13 +936,31 @@ function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
           [a.id]: {
             available: s.available,
             sourceRoot: s.sourceRoot,
-            detail: s.lastError
-              ? `错误: ${s.lastError}`
-              : s.lastScanAt
-                ? `${s.sessionsImported} 新导入 / ${s.sessionsFound} 扫描`
-                : s.available
-                  ? '已检测到,待扫描'
-                  : '未检测到'
+            // 三态区分(这是第 1 期的核心):「agent 没装」与「agent 装了但我们读不懂」
+            // 该采取的行动完全相反,过去两者都渲染成「未检测到」,导致误判。
+            detail: !s.available
+              ? { level: 'dim', text: '未检测到(该 agent 未安装,无需处理)' }
+              : s.lastError
+                ? { level: 'bad', text: `扫描失败: ${s.lastError}` }
+                : s.health === 'failing'
+                  ? {
+                      level: 'bad',
+                      text: `格式可能已变更 — 连续 ${s.consecutiveFailures} 次捕获失败${s.lastFailureDetail ? `: ${s.lastFailureDetail}` : ''}`
+                    }
+                  : s.health === 'suspect'
+                    ? {
+                        level: 'warn',
+                        text: `捕获异常 ${s.consecutiveFailures} 次${s.lastFailureDetail ? `: ${s.lastFailureDetail}` : ''}`
+                      }
+                    : s.lastScanAt
+                      ? {
+                          level: s.sessionsFound === 0 ? 'warn' : 'ok',
+                          text:
+                            s.sessionsFound === 0
+                              ? `已扫描但 0 条会话(源存在但没读到内容,可能格式已变)`
+                              : `${s.sessionsImported} 新导入 / ${s.sessionsFound} 扫描`
+                        }
+                      : { level: 'ok', text: '已检测到,待扫描' }
           }
         }))
         setDrafts((prev) => ({ ...prev, [a.id]: prev[a.id] ?? s.sourceRoot }))
@@ -983,7 +1010,7 @@ function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
                   <span className={`agent-state ${pending[a.id] ? 'ok' : 'dim'}`}>重启后{pending[a.id] ? '启用' : '停用'}</span>
                 )}
                 {!pending[a.id] && st && (
-                  <span className={`agent-state ${st.available ? 'ok' : 'dim'}`}>{st.detail}</span>
+                  <span className={`agent-state ${st.detail.level}`}>{st.detail.text}</span>
                 )}
               </div>
               {on && a.pathKey && st && (
@@ -1081,7 +1108,13 @@ function AgentConnectSection({ onMsg }: { onMsg: (s: string) => void }) {
           onMsg(`${r.label} 未在本机检测到,未写入配置`)
           return
         }
-        onMsg(`${r.label} 已连接 → ${r.configPath}(重启该 agent 生效)`)
+        // 回读校验没过 = 我们写的东西该 agent 不认。此时报「已连接」是骗人的,
+        // 必须把原因摊开,否则用户只能重启后对着失效的 MCP 一头雾水。
+        if (!r.configured) {
+          onMsg(`${r.label} 已写入但回读校验未通过 → ${r.verifyError ?? '未知原因'}`)
+          return
+        }
+        onMsg(`${r.label} 已连接并校验通过 → ${r.configPath}(重启该 agent 生效)`)
         return api.agentSnippet(id).then((s) => {
           setRows((prev) => ({ ...prev, [id]: { ...prev[id], snippet: s.snippet } }))
         })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AGENTS } from '../upstream/agents'
+import { AGENTS } from '../src/shared/upstream-agents'
 import { render, runChecks } from '../upstream/check'
 
 /**

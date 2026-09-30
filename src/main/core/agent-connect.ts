@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { AGENT_BY_ID } from '../../shared/upstream-agents'
 import { app } from 'electron'
 
 /**
@@ -18,6 +19,70 @@ export interface AgentConnector {
   configPath: (home: string, appData?: string) => string
   apply: (configPath: string, mcpUrl: string, bridgePath: string) => string
   snippet: (mcpUrl: string, bridgePath: string) => string
+  /**
+   * 写后回读校验:返回 null 表示通过,否则返回给用户看的原因。
+   *
+   * 为什么必需 —— agent 侧的失败常常是**静默**的:OpenCode ≥2.0 会把缺 `type`
+   * 的 mcp 条目判为 legacy 直接丢弃,只在自己日志里留一行 WARN,而连接向导却报告
+   * 「已配置成功」。写完不回读,我们永远不知道自己写的东西有没有被接受。
+   */
+  verify?: (configPath: string, mcpUrl: string) => string | null
+}
+
+/** 极简 JSONPath 取值,支持 `$.a.b` 与 `a.b` 两种写法 */
+function pickPath(root: unknown, jsonpath: string): unknown {
+  const p = jsonpath.replace(/^\$\.?/, '')
+  let node: unknown = root
+  for (const key of p ? p.split('.') : []) {
+    if (typeof node !== 'object' || node === null) return undefined
+    node = (node as Record<string, unknown>)[key]
+  }
+  return node
+}
+
+/** 通用 JSON 回读校验,期望值全部来自契约台账(upstream/agents.ts) */
+function verifyJsonEntry(
+  configPath: string,
+  jsonpath: string,
+  requiredKeys: string[],
+  valueHints: Record<string, string> = {}
+): string | null {
+  if (!fs.existsSync(configPath)) return `配置文件不存在:${configPath}`
+  let root: unknown
+  try {
+    root = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+  } catch (e) {
+    return `配置文件不是有效 JSON:${String(e)}`
+  }
+  const entry = pickPath(root, jsonpath)
+  if (typeof entry !== 'object' || entry === null) {
+    return `回读失败:配置里找不到 ${jsonpath}(该 agent 可能已改配置结构)`
+  }
+  const obj = entry as Record<string, unknown>
+  const missing = requiredKeys.filter((k) => obj[k] === undefined || obj[k] === null)
+  if (missing.length) {
+    return `回读失败:${jsonpath} 缺少必需键 ${missing.join(', ')}(该 agent 可能因此忽略这条配置)`
+  }
+  const bad = Object.entries(valueHints).filter(([k, v]) => obj[k] !== v)
+  if (bad.length) {
+    return `回读失败:${bad.map(([k, v]) => `${k} 应为 ${v},实为 ${JSON.stringify(obj[k])}`).join('; ')}`
+  }
+  return null
+}
+
+/**
+ * 给 JSON 类 connector 生成 verify —— 期望值取自契约台账,不多写一份。
+ * URL 会被替换成 <url> 再返回,避免把本机端口/配置路径泄进面向用户的报错。
+ * TOML(codex)/ YAML(hermes)不做 JSONPath 校验,故不给它们挂 verify。
+ */
+function ledgerVerify(agentId: string): AgentConnector['verify'] {
+  const c = AGENT_BY_ID.get(agentId)
+  if (!c?.mcp) return undefined
+  const { jsonpath, requiredKeys, valueHints } = c.mcp
+  return (configPath: string, mcpUrl: string): string | null => {
+    const err = verifyJsonEntry(configPath, jsonpath, requiredKeys, valueHints)
+    return err ? err.split(mcpUrl).join('<url>') : null
+  }
 }
 
 function mergeJson(
@@ -165,7 +230,8 @@ startup_timeout_sec = 30`,
         setNested(root, ['mcp', 'servers', 'memorysql'], HTTP_ENTRY(url))
       }),
     snippet: (url) =>
-      `// ~/.zcode/cli/config.json 的 mcp.servers 中加:\n"memorysql": { "type": "http", "url": "${url}" }`
+      `// ~/.zcode/cli/config.json 的 mcp.servers 中加:\n"memorysql": { "type": "http", "url": "${url}" }`,
+    verify: ledgerVerify('zcode')
   },
   {
     id: 'claudecode',
@@ -177,7 +243,8 @@ startup_timeout_sec = 30`,
         setNested(root, ['mcpServers', 'memorysql'], HTTP_ENTRY(url))
       }),
     snippet: (url) =>
-      `claude mcp add --transport http memorysql ${url}\n# 或 ~/.claude.json 的 mcpServers 中加:\n"memorysql": { "type": "http", "url": "${url}" }`
+      `claude mcp add --transport http memorysql ${url}\n# 或 ~/.claude.json 的 mcpServers 中加:\n"memorysql": { "type": "http", "url": "${url}" }`,
+    verify: ledgerVerify('claudecode')
   },
   {
     id: 'gemini',
@@ -192,7 +259,8 @@ startup_timeout_sec = 30`,
         })
       }),
     snippet: (_url, bridge) =>
-      `// ~/.gemini/settings.json 的 mcpServers 中加:\n"memorysql": { "command": "node", "args": ["${bridge.replace(/\\/g, '\\\\')}"] }`
+      `// ~/.gemini/settings.json 的 mcpServers 中加:\n"memorysql": { "command": "node", "args": ["${bridge.replace(/\\/g, '\\\\')}"] }`,
+    verify: ledgerVerify('gemini')
   },
   {
     id: 'qwencode',
@@ -207,7 +275,8 @@ startup_timeout_sec = 30`,
         })
       }),
     snippet: (_url, bridge) =>
-      `// ~/.qwen/settings.json 的 mcpServers 中加:\n"memorysql": { "command": "node", "args": ["${bridge.replace(/\\/g, '\\\\')}"] }`
+      `// ~/.qwen/settings.json 的 mcpServers 中加:\n"memorysql": { "command": "node", "args": ["${bridge.replace(/\\/g, '\\\\')}"] }`,
+    verify: ledgerVerify('qwencode')
   },
   {
     id: 'kimicli',
@@ -219,7 +288,8 @@ startup_timeout_sec = 30`,
         setNested(root, ['mcpServers', 'memorysql'], { url })
       }),
     snippet: (url) =>
-      `kimi mcp add --transport http memorysql ${url}\n// 或 ~/.kimi/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "url": "${url}" }\n  }\n}`
+      `kimi mcp add --transport http memorysql ${url}\n// 或 ~/.kimi/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "url": "${url}" }\n  }\n}`,
+    verify: ledgerVerify('kimicli')
   },
   {
     id: 'codebuddy',
@@ -231,7 +301,8 @@ startup_timeout_sec = 30`,
         setNested(root, ['mcpServers', 'memorysql'], HTTP_ENTRY(url))
       }),
     snippet: (url) =>
-      `// ~/.codebuddy/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "type": "http", "url": "${url}" }\n  }\n}`
+      `// ~/.codebuddy/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "type": "http", "url": "${url}" }\n  }\n}`,
+    verify: ledgerVerify('codebuddy')
   },
   {
     id: 'workbuddy',
@@ -243,7 +314,8 @@ startup_timeout_sec = 30`,
         setNested(root, ['mcpServers', 'memorysql'], { url, disabled: false })
       }),
     snippet: (url) =>
-      `// ~/.workbuddy/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "url": "${url}", "disabled": false }\n  }\n}`
+      `// ~/.workbuddy/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "url": "${url}", "disabled": false }\n  }\n}`,
+    verify: ledgerVerify('workbuddy')
   },
   {
     id: 'qoder',
@@ -260,7 +332,8 @@ startup_timeout_sec = 30`,
         setNested(root, ['mcpServers', 'memorysql'], HTTP_ENTRY(url))
       }),
     snippet: (url) =>
-      `qoder mcp add --transport http memorysql ${url}\n// 或 settings.json 的 mcpServers 中加:\n{\n  "mcpServers": {\n    "memorysql": { "type": "http", "url": "${url}" }\n  }\n}`
+      `qoder mcp add --transport http memorysql ${url}\n// 或 settings.json 的 mcpServers 中加:\n{\n  "mcpServers": {\n    "memorysql": { "type": "http", "url": "${url}" }\n  }\n}`,
+    verify: ledgerVerify('qoder')
   },
   {
     id: 'cursor',
@@ -274,7 +347,8 @@ startup_timeout_sec = 30`,
         setNested(root, ['mcpServers', 'memorysql'], HTTP_ENTRY(url))
       }),
     snippet: (url) =>
-      `// ~/.cursor/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "url": "${url}" }\n  }\n}`
+      `// ~/.cursor/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "url": "${url}" }\n  }\n}`,
+    verify: ledgerVerify('cursor')
   },
   {
     id: 'opencode',
@@ -291,7 +365,8 @@ startup_timeout_sec = 30`,
         setNested(root, ['mcp', 'memorysql'], { type: 'remote', url, enabled: true })
       }),
     snippet: (url) =>
-      `// ~/.config/opencode/opencode.json:\n{\n  "mcp": {\n    "memorysql": { "type": "remote", "url": "${url}", "enabled": true }\n  }\n}\n\n// v2 起 type 必填;缺失会被 opencode 静默丢弃(日志: omitted enabled-only legacy MCP entry)`
+      `// ~/.config/opencode/opencode.json:\n{\n  "mcp": {\n    "memorysql": { "type": "remote", "url": "${url}", "enabled": true }\n  }\n}\n\n// v2 起 type 必填;缺失会被 opencode 静默丢弃(日志: omitted enabled-only legacy MCP entry)`,
+    verify: ledgerVerify('opencode')
   },
   {
     id: 'hermes',
@@ -312,9 +387,12 @@ export interface AgentConnectResult {
   id: string
   label: string
   detected: boolean
+  /** 配置已写入**且回读校验通过。校验不过时为 false,原因见 verifyError */
   configured: boolean
   configPath: string | null
   snippet: string
+  /** 写后回读失败的原因(成功时为 null)——不填这个,用户就只能对着「已配置」干瞪眼 */
+  verifyError: string | null
 }
 
 export function connectAgent(
@@ -332,12 +410,23 @@ export function connectAgent(
   const snippet = connector.snippet(url, bridge)
   let configPath: string | null = null
   let configured = false
+  let verifyError: string | null = null
   if (detected) {
     configPath = connector.configPath(home, appData ?? localAppData)
     connector.apply(configPath, url, bridge)
-    configured = true
+    // 写完必须回读:agent 侧可能静默丢弃我们写的配置(见 AgentConnector.verify)
+    verifyError = connector.verify ? connector.verify(configPath, url) : null
+    configured = verifyError === null
   }
-  return { id: connector.id, label: connector.label, detected, configured, configPath, snippet }
+  return {
+    id: connector.id,
+    label: connector.label,
+    detected,
+    configured,
+    configPath,
+    snippet,
+    verifyError
+  }
 }
 
 export function agentSnippet(

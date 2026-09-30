@@ -1,16 +1,19 @@
 /**
  * MemorySQL 上游适配契约台账
  * ============================================================================
- * 这是「上游监控 / 影响评估 / 黑盒契约测试」的唯一真相源,一份数据三处复用:
+ * 这是「上游监控 / 影响评估 / 黑盒契约测试 / 连接向导回读校验」的唯一真相源,
+ * 一份数据四处复用:
  *   1. 文档     — 记录每家 agent 的上游、changelog 来源、我们依赖什么
- *   2. 监控     — 云端抓取器按 `upstream` 决定抓什么
- *   3. 契约测试 — `scripts/upstream-check.ts` 按 `schema` 声明探测真实数据
+ *   2. 监控     — 云端抓取器按 `upstream` 决定抓什么(第 2 期)
+ *   3. 契约测试 — `upstream/check.ts` 按 schema 声明探测真实数据
+ *   4. 连接校验 — `main/core/agent-connect.ts` 写完配置回读校验必需键
  *
- * 写成 .ts 而非 YAML:项目零依赖风格,且能获得类型检查与注释能力。
+ * 放在 src/shared 而非仓库根的 upstream/:因为产品代码(main 进程连接向导)也读它,
+ * 必须进打包产物。纯数据、无 electron 依赖,main/renderer 皆可 import。
  *
  * 维护约定(见 docs/DEVLOG.md):
- *   - 改动任一 capture-* 适配器的存储布局或 MCP 配置格式时,必须同步本文件
- *   - `test/contract.test.ts` 在 CI 断言台账与代码实际依赖一致,防台账腐化
+ *   - 改动任一 capture-* 适配器的存储布局、或任一连接器写入的 MCP 配置格式时,
+ *     必须同步本文件,否则 test/upstream-contract.test.ts 会红
  */
 
 /** 上游更新日志的获取方式 */
@@ -183,8 +186,9 @@ export const AGENTS: AgentContract[] = [
     mcp: {
       file: '.claude.json',
       jsonpath: '$.mcpServers.memorysql',
-      requiredKeys: ['command', 'args'],
-      note: 'CLI 侧仅支持 stdio,需用 resources/mcp-bridge.mjs 桥接 Streamable HTTP'
+      requiredKeys: ['type', 'url'],
+      valueHints: { type: 'http' },
+      note: '现走 HTTP 直连(type=http);Antigravity 一路仍限 stdio,需 resources/mcp-bridge.mjs 桥'
     },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
@@ -234,7 +238,7 @@ export const AGENTS: AgentContract[] = [
     },
     mcp: {
       file: '.qwen/settings.json',
-      jsonpath: 'mcpServers.memorysql',
+      jsonpath: '$.mcpServers.memorysql',
       requiredKeys: ['command', 'args'],
       note: 'Claude 兼容配置形态'
     },
@@ -256,7 +260,7 @@ export const AGENTS: AgentContract[] = [
     },
     mcp: {
       file: '.gemini/settings.json',
-      jsonpath: 'mcpServers.memorysql',
+      jsonpath: '$.mcpServers.memorysql',
       requiredKeys: ['command', 'args'],
       note:
         'Antigravity MCP 走 ~/.gemini/config/mcp_config.json,仅支持 stdio(serverUrl 标 SSE,与本项目 Streamable HTTP 不兼容),推荐 stdio 桥'
@@ -315,9 +319,9 @@ export const AGENTS: AgentContract[] = [
       }
     },
     mcp: {
-      file: '.kimi/settings.json',
-      jsonpath: 'mcpServers.memorysql',
-      requiredKeys: ['command', 'args']
+      file: '.kimi/mcp.json',
+      jsonpath: '$.mcpServers.memorysql',
+      requiredKeys: ['url']
     },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
@@ -341,10 +345,10 @@ export const AGENTS: AgentContract[] = [
       }
     },
     mcp: {
-      file: 'AppData/Roaming/Cursor/User/mcp.json',
-      jsonpath: 'servers.memorysql',
-      requiredKeys: ['url'],
-      note: 'Cursor 用 servers 而非 mcpServers'
+      file: '.cursor/mcp.json',
+      jsonpath: '$.mcpServers.memorysql',
+      requiredKeys: ['type', 'url'],
+      valueHints: { type: 'http' }
     },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
@@ -368,7 +372,7 @@ export const AGENTS: AgentContract[] = [
     },
     mcp: {
       file: '.qoder/settings.json',
-      jsonpath: 'mcpServers.memorysql',
+      jsonpath: '$.mcpServers.memorysql',
       requiredKeys: ['type', 'url'],
       valueHints: { type: 'http' }
     },
@@ -392,8 +396,9 @@ export const AGENTS: AgentContract[] = [
     },
     mcp: {
       file: '.codebuddy/mcp.json',
-      jsonpath: 'mcpServers.memorysql',
-      requiredKeys: ['command', 'args']
+      jsonpath: '$.mcpServers.memorysql',
+      requiredKeys: ['type', 'url'],
+      valueHints: { type: 'http' }
     },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
@@ -415,8 +420,8 @@ export const AGENTS: AgentContract[] = [
     },
     mcp: {
       file: '.workbuddy/mcp.json',
-      jsonpath: 'mcpServers.memorysql',
-      requiredKeys: ['command', 'args']
+      jsonpath: '$.mcpServers.memorysql',
+      requiredKeys: ['url']
     },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
@@ -441,8 +446,9 @@ export const AGENTS: AgentContract[] = [
     },
     mcp: {
       file: '.zcode/config.json',
-      jsonpath: 'mcpServers.memorysql',
-      requiredKeys: ['url']
+      jsonpath: '$.mcp.servers.memorysql',
+      requiredKeys: ['type', 'url'],
+      valueHints: { type: 'http' }
     },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   }

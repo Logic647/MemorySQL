@@ -208,6 +208,7 @@ export const api = {
     configured: boolean
     configPath: string | null
     snippet: string
+    verifyError: string | null
   }> =>
     window.memorysql.invoke('memorysql:host:agentConnect', { agent }) as Promise<{
       id: string
@@ -216,6 +217,7 @@ export const api = {
       configured: boolean
       configPath: string | null
       snippet: string
+      verifyError: string | null
     }>,
   agentSnippet: (agent: string): Promise<{ snippet: string; detected: boolean }> =>
     window.memorysql.invoke('memorysql:host:agentSnippet', { agent }) as Promise<{

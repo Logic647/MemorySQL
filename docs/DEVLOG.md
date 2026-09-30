@@ -4,6 +4,50 @@
 
 ---
 
+## 2026-09-30 · 第 1 期:捕获失效可见化 + MCP 连接写后回读校验
+
+第 0 期建了台账与黑盒检查,但**检测到漂移之后,产品本身仍是瞎的**——本期补上这条链路。核心是把两类「静默失效」变成显式信号。
+
+### 1. 捕获健康度(静默失效的总开关)
+
+**根因**:`capture-factory.ts` 的增量 watcher 解析失败时**只写日志**,`lastStatus` 压根不更新。而 `lastStatus` 是 UI 的唯一数据源 —— 于是上游一改格式,每条新会话都解析失败,面板却始终显示「N 条会话 / M 扫描」。**这不是某个 adapter 的 bug,是整个捕获层的反馈缺失。**
+
+`CaptureStatus` 新增 `health`(`unknown`/`healthy`/`suspect`/`failing`)、`consecutiveFailures`、`lastFailureAt`、`lastFailureDetail`、`lastSuccessAt`。判定阈值 **3**(`_lib/capture-health.ts`):1~2 次判 `suspect`(给偶发留空间:文件写入中、权限抖动),≥3 判 `failing`;任意一次成功立即归零。
+
+**修掉的静默点(共 4 处,不止 factory 一处):**
+- `capture-factory` 增量 watcher 失败 —— 只写日志
+- `capture-codex` 增量失败 + **单文件解析失败**(独立实现,未并入 factory)
+- `capture-zcode` 增量失败 + 单文件解析失败
+- `capture-hermes` **库读取失败**(最隐蔽:它在 scan 内部,失败后 scan 仍返回「成功」,连 `lastError` 都不会有,UI 显示正常而实际零捕获)
+
+后三者补了「全部失败 vs 部分失败」区分:全部失败才升级为连续失败,部分失败只作提示,避免个别坏文件造成误报。
+
+### 2. MCP 连接写后回读校验
+
+`connectAgent` 过去写完就报「已连接」。现在写完**回读校验**:按台账声明的 jsonpath 定位条目、检查必需键与取值,不过则 `configured=false` 并把原因摊给用户(`AgentConnectResult.verifyError`)。TOML(codex)/ YAML(hermes)不做 JSONPath 校验,故未挂。
+
+`verify` 的期望值全部取自台账(不另写一份),并**把 URL 替换成 `<url>`** 再返回,避免把本机端口/配置路径泄进面向用户的报错(有测试守着)。
+
+### 3. 顺手抓出并修正台账 7 处与代码不符
+
+写「每个连接器写出的配置必须能通过台账校验」这条断言时,**当场抓到台账自己的错**:zcode 实为 `mcp.servers`(台账写 `mcpServers`)、cursor 实为 `mcpServers`(台账写 `servers`)、claudecode 实为 `type+url`(台账写 `command/args` 且 note 还停留在早已废弃的「仅支持 stdio 需桥接」)、kimicli 实为 `~/.kimi/mcp.json`+`{url}`、zcode/codebuddy/workbuddy 的必需键同理。**台账写错,校验就形同虚设** —— 已全部按代码(权威)修正。
+
+### 4. UI 三态区分
+
+设置页过去把「agent 没装」和「agent 装了但我们读不懂」渲染成同一个「未检测到」,**而这两者该采取的行动完全相反**(前者什么都不用做,后者要适配发版)。现在按 `level` 分档:`dim` 未安装 / `ok` 正常 / `warn` 偶发失败或扫到 0 条 / `bad` 连续失败(加粗+红)。新增 `.agent-state.warn/.bad` 样式,颜色走 token。
+
+### 验证
+
+typecheck 0 / vitest **169:169**(24 文件,第 0 期为 150)/ build 通过。零新增依赖。
+
+新增测试 19 个:`capture-health.test.ts` 11(阈值/归零/截断)、`agent-connect.test.ts` +7(回读校验 6 条 + **台账↔连接器一致性**)、台账 jsonpath 统一为 `$.` 前缀。
+
+**过程中的一次失误值得记:**我曾用 PowerShell 脚本批量改 `agent-connect.ts`,`Set-Content -Encoding utf8` **破坏了文件里的中文**(注释变乱码)且插入位置错误。`git checkout` 回滚后改用 edit 工具重做。**教训:改含中文的源文件不要用 PowerShell 批量写,一律用 edit 工具。**
+
+**下一步:** 第 2 期云端看板(阿里云;纯 Node 无 native 依赖;每日抓一次;LLM key 走 env,失败降级纯规则;token 鉴权)。
+
+---
+
 ## 2026-09-30 · 上游契约台账 + 黑盒漂移检查(第 0 期,为「上游监控看板」打地基)
 
 用户提出真实痛点:各 agent 更新频繁,导致捕获/MCP 失效且**静默**,总等用户报障。规划四期(台账+黑盒 → 失效可见化 → 云端抓取+LLM → 探针上报+结论双写),本期落第 0 期。方案评审记录见 `.opencode/plan/upstream-watch.md`。

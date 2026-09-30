@@ -7,6 +7,7 @@ import type { CaptureStatus, RawMessage, RawSession } from '../../shared/types'
 import type { IngestService } from '../core-schema/ingest'
 import type { MemoriesService } from '../core-schema'
 import { openForeignDb } from '../../main/core/sqlite-ro'
+import { failureDetail, healthFrom } from '../_lib/capture-health'
 import { segmentSource, splitHermesMemoryFile } from './split'
 
 /**
@@ -209,7 +210,12 @@ let lastStatus: CaptureStatus = {
   sessionsFound: 0,
   sessionsImported: 0,
   lastScanAt: null,
-  lastError: null
+  lastError: null,
+  health: 'unknown',
+  consecutiveFailures: 0,
+  lastFailureAt: null,
+  lastFailureDetail: null,
+  lastSuccessAt: null
 }
 
 const plugin: MemorySQLPlugin = {
@@ -235,22 +241,42 @@ const plugin: MemorySQLPlugin = {
           return lastStatus
         }
         const sessions: RawSession[] = []
+        const dbFailures: string[] = []
         for (const { dbPath, label } of findHermesDbs(profilesRoot)) {
           try {
             sessions.push(...parseHermesDb(dbPath, label))
           } catch (err) {
+            // 库读不出来(典型原因:上游改了 state.db 的表/列)必须让状态体现出来。
+            // 过去只写日志,scan 仍返回「成功」,UI 显示正常而实际零捕获 —— 比
+            // watcher 静默更隐蔽,因为连 lastError 都不会有。
+            dbFailures.push(failureDetail(err, dbPath))
             ctx.log.warn(`failed to read ${dbPath}:`, err)
           }
         }
         const memChanged = importHermesMemories(profilesRoot, ctx.db.sqlite, memories)
         const res = await ingest.ingestSessions(sessions)
+        // 全部 db 都读失败 = 本轮零捕获,等同于失败(最典型的 schema 漂移信号)
+        const allFailed = dbFailures.length > 0 && sessions.length === 0
+        const n = lastStatus.consecutiveFailures + (allFailed ? 1 : 0)
         lastStatus = {
           ...lastStatus,
           available: true,
           sessionsFound: res.scanned,
           sessionsImported: res.imported + res.updated,
           lastScanAt: Date.now(),
-          lastError: null
+          lastError: null,
+          health: allFailed ? healthFrom(n, lastStatus.lastSuccessAt !== null) : 'healthy',
+          consecutiveFailures: allFailed ? n : 0,
+          lastFailureAt: allFailed ? Date.now() : lastStatus.lastFailureAt,
+          lastFailureDetail: allFailed
+            ? (dbFailures[0] ?? '未知错误')
+            : dbFailures.length > 0
+              ? `部分库读取失败: ${dbFailures.join('; ')}`
+              : lastStatus.lastFailureDetail,
+          lastSuccessAt: allFailed ? lastStatus.lastSuccessAt : Date.now()
+        }
+        if (allFailed) {
+          ctx.log.error(`all ${dbFailures.length} hermes db(s) failed to read — 疑似上游改了 schema`)
         }
         ctx.log.info(
           `scan ok: ${res.scanned} found, ${res.imported} imported, ${res.updated} updated, ${res.skipped} unchanged, ${memChanged} memory files synced`
