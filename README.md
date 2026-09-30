@@ -30,6 +30,9 @@
 **MemorySQL 解决这件事**:自动捕获所有 agent 的会话、维护你的记忆画像与项目状态,并在本机起一个 MCP 服务端。任何 agent 连上后一次 `memory_get_context` 调用,即可拿到完整上下文继续干活——连上一个 agent 干到哪、下一步是什么,都内联在返回里。
 
 > **数据 100% 存本机**(SQLite + Markdown,除 LLM API 外零服务器依赖);任何导出/分享路径强制过脱敏模块;语义检索用本地 ONNX 模型,全程离线。
+>
+> ⚠️ 本机会以**明文**保存全部对话与记忆,并开一个**无鉴权**的本地 MCP 端点(仅绑 `127.0.0.1`)供 agent 读取。
+> 完整的数据流向、信任假设与关闭方式见 **[隐私与安全说明](PRIVACY.md)**。
 
 ## 📸 界面一览
 
@@ -155,6 +158,7 @@ npm run import:scan  # 无头扫描导入本机 agent 会话(验收用)
 
 | 文档 | 内容 |
 |---|---|
+| [**PRIVACY.md**](PRIVACY.md) | **隐私与安全披露**(数据流向、MCP 端点信任假设、文件夹同步风险) |
 | [docs/architecture.md](docs/architecture.md) | 架构、数据模型、全部决策记录 |
 | [docs/plugins.md](docs/plugins.md) | 插件 API 完整参考 |
 | [docs/DEVLOG.md](docs/DEVLOG.md) | 开发日志(追加式) |
