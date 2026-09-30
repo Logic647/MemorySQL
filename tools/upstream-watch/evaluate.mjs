@@ -25,6 +25,8 @@
  * 结构有关。告警泛滥等于没告警,所以单词级通用词一律降级,只有命中
  * 「结构变更短语」才升 high。
  */
+import { callLlmJson, llmConfigured } from './llm.mjs'
+
 const STRONG = [
   'schema change', 'schema migration', 'migrate schema', 'schema mismatch',
   'database schema', 'change schema', 'schema changed', 'schema update',
@@ -177,14 +179,14 @@ export function evaluate(agent, upstream) {
 /**
  * LLM 增强 —— 可选,失败静默降级。
  * 只有 base.risk 为 medium/high 才值得花 token;low/none 不问。
+ *
+ * provider 差异(认证头 / token 字段名)已收敛到 llm.mjs,这里只管 prompt 与合并规则。
  */
 export async function llmEnhance(result, agent) {
-  if (!process.env.LLM_API_KEY) return result
+  if (!llmConfigured()) return result
   if (!['medium', 'high'].includes(result.risk)) return result
   if (!result.notes) return result
 
-  const endpoint = process.env.LLM_BASE_URL ?? 'https://api.anthropic.com/v1/messages'
-  const model = process.env.LLM_MODEL ?? 'claude-sonnet-4-5'
   const prompt = [
     '你在帮一个「AI agent 会话捕获器」判断上游发版是否影响其兼容性。',
     '',
@@ -198,70 +200,20 @@ export async function llmEnhance(result, agent) {
     '{"affectsCapture":true|false,"affectsMcp":true|false,"severity":"none|low|medium|high","reason":"一句话中文说明"}'
   ].join('\n')
 
-  try {
-    const ctl = new AbortController()
-    const timer = setTimeout(() => ctl.abort(), 20000)
-    // 端点不是 Anthropic 官方域名时,按 OpenAI 兼容格式发。
-    //
-    // 认证头各家并不统一 —— OpenAI 官方用 `Authorization: Bearer`,而
-    // **小米 MiMo 的 OpenAI 兼容端点要求 `api-key`**(其官方 curl 示例即如此)。
-    // 与其猜,不如两个都发:同一个 key 挂两个头没有副作用,可同时兼容
-    // OpenAI / MiMo / 各类自建网关;也可用 LLM_AUTH_HEADER 显式指定。
-    const isAnthropic = /anthropic\.com/.test(endpoint)
-    const headers = { 'Content-Type': 'application/json' }
-    if (isAnthropic) {
-      headers['x-api-key'] = process.env.LLM_API_KEY
-      headers['anthropic-version'] = '2023-06-01'
-    } else {
-      const explicit = process.env.LLM_AUTH_HEADER
-      if (explicit) {
-        headers[explicit] = process.env.LLM_API_KEY
-      } else {
-        headers.Authorization = `Bearer ${process.env.LLM_API_KEY}`
-        headers['api-key'] = process.env.LLM_API_KEY
-      }
-    }
-    // max_tokens(OpenAI 传统)与 max_completion_tokens(新标准,MiMo 用后者)
-    // 一并发送,避免字段名差异被拒
-    const body = {
-      model,
-      max_tokens: 300,
-      max_completion_tokens: 300,
-      temperature: 0,
-      messages: [{ role: 'user', content: prompt }]
-    }
+  const res = await callLlmJson(prompt, { maxTokens: 300 })
+  if (!res.ok) return { ...result, llmError: res.error }
 
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: ctl.signal
-    })
-    clearTimeout(timer)
-    if (!res.ok) {
-      const hint =
-        res.status === 401 || res.status === 403
-          ? ' —— 认证头可能不对,可用 LLM_AUTH_HEADER 显式指定(如 api-key / Authorization)'
-          : ''
-      return { ...result, llmError: `LLM HTTP ${res.status}${hint}` }
-    }
-    const data = await res.json()
-    // 兼容两种响应形态:Anthropic content[].text / OpenAI choices[].message.content
-    const text =
-      data?.content?.[0]?.text ?? data?.choices?.[0]?.message?.content ?? ''
-    const m = String(text).match(/\{[\s\S]*\}/)
-    if (!m) return { ...result, llmError: 'LLM 未返回 JSON' }
-    const parsed = JSON.parse(m[0])
-    // 规则优先级更高:LLM 只能在规则之上「加严」,不能把 high 降级
-    const order = ['none', 'low', 'medium', 'high']
-    const merged =
-      order.indexOf(parsed.severity ?? 'none') > order.indexOf(result.risk)
-        ? parsed.severity
-        : result.risk
-    return { ...result, risk: merged, llm: parsed }
-  } catch (e) {
-    return { ...result, llmError: `LLM 调用失败(已降级为规则结果): ${e?.message ?? e}` }
+  const parsed = res.data
+  if (typeof parsed !== 'object' || parsed === null) {
+    return { ...result, llmError: 'LLM 返回的 JSON 不是对象' }
   }
+  // 规则优先级更高:LLM 只能在规则之上「加严」,不能把 high 降级
+  const order = ['none', 'low', 'medium', 'high']
+  const merged =
+    order.indexOf(parsed.severity ?? 'none') > order.indexOf(result.risk)
+      ? parsed.severity
+      : result.risk
+  return { ...result, risk: merged, llm: parsed }
 }
 
 function summarizeDeps(agent) {

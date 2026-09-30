@@ -20,6 +20,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fetchUpstream } from './fetch.mjs'
 import { evaluate, llmEnhance } from './evaluate.mjs'
+import { summarize } from './summarize.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const STATE = path.join(HERE, 'state.json')
@@ -28,7 +29,7 @@ const PORT = Number(process.env.PORT ?? 8788)
 const REFRESH_HOURS = Number(process.env.REFRESH_HOURS ?? 24)
 const TOKEN = process.env.AUTH_TOKEN ?? ''
 
-let state = { results: [], probe: null, lastRunAt: null, running: false, error: null }
+let state = { results: [], probe: null, summary: null, lastRunAt: null, running: false, error: null }
 
 function loadLedger() {
   const raw = JSON.parse(fs.readFileSync(LEDGER, 'utf-8'))
@@ -64,6 +65,10 @@ async function runOnce() {
       out.push(r)
     }
     state.results = out
+    // 总体情况:brief 由代码算(永远可信),LLM 只负责把 brief 组织成人话。
+    // 放在 for 循环之后 —— 它要看完全部 12 家才有意义。
+    // 失败只记进 summary.error,绝不让整轮刷新失败(否则这功能一挂看板就空白)。
+    state.summary = await summarize(out, state.probe)
     state.lastRunAt = new Date().toISOString()
   } catch (e) {
     state.error = String(e?.message ?? e)

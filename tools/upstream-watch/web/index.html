@@ -114,6 +114,57 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .pill.good{color:var(--ok);background:var(--ok-soft);border-color:#abefc6}
 .pill.bad{color:var(--high);background:var(--high-soft);border-color:#fecdca}
 
+/* ── 总体情况面板 ──────────────────────────────────────────────
+   分两层是刻意的:上层「程序统计」是代码算出的事实,下层「LLM 解读」是叙述。
+   **两者必须肉眼可分** —— 一旦 LLM 说出和统计矛盾的数字,用户要能当场看见,
+   而不是被一段通顺的文字糊弄过去。 */
+.summary{
+  margin:0 0 18px;border:1px solid var(--border-strong);border-radius:12px;
+  background:var(--surface);overflow:hidden;
+}
+.summary.hot{border-color:#f9dbaf;box-shadow:inset 3px 0 0 #f79009}
+.summary .sh{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface-2);
+}
+.summary .sh .t{font-weight:650;font-size:13px;letter-spacing:.02em}
+.summary .sb{padding:14px 16px}
+.summary .facts{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.summary .fact{
+  font-size:12px;padding:3px 9px;border-radius:5px;
+  border:1px solid var(--border);background:var(--surface-2);color:var(--fg-2);
+  font-variant-numeric:tabular-nums;
+}
+.summary .fact b{color:var(--fg);font-weight:650}
+.summary .fact.warn{color:#b54708;background:#fff6ed;border-color:#f9dbaf}
+.summary .fact.bad{color:var(--high);background:var(--high-soft);border-color:#fecdca}
+.summary .fact.good{color:var(--ok);background:var(--ok-soft);border-color:#abefc6}
+.summary .hl{font-size:15px;line-height:1.65;font-weight:600;margin-bottom:10px}
+.summary .note{font-size:12.5px;color:var(--fg-2);margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+.summary .acts{margin:8px 0 0;padding-left:0;list-style:none}
+.summary .acts li{
+  font-size:13px;line-height:1.6;padding:5px 0 5px 22px;position:relative;color:var(--fg);
+}
+.summary .acts li::before{
+  content:'';position:absolute;left:6px;top:12px;width:5px;height:5px;
+  border-radius:50%;background:var(--msql-accent,#1570ef);
+}
+.summary .blind{
+  margin-top:12px;padding:9px 12px;border-radius:7px;font-size:12.5px;line-height:1.6;
+  background:#fffaeb;border:1px solid #f9dbaf;color:#93370d;
+}
+.summary .blind .k{font-weight:650;display:block;margin-bottom:2px}
+.summary .stamp{font-size:11px;color:var(--fg-3);font-family:var(--mono)}
+/* LLM 未启用/失败:虚线弱提示,别让它看起来像"没有风险" */
+.summary.warn{border-style:dashed}
+.summary.warn .sb{color:var(--fg-2);font-size:13px;line-height:1.65}
+.attn{
+  margin-top:10px;font-size:12.5px;border-top:1px dashed var(--border);padding-top:10px;
+}
+.attn .r{display:flex;gap:8px;align-items:baseline;padding:3px 0;flex-wrap:wrap}
+.attn .r .id{font-family:var(--mono);font-weight:600;font-size:12px}
+.attn .r .rs{color:#b54708;font-size:11.5px}
+
 /* 黑盒条 */
 .probe{
   margin:0 16px 12px;padding:9px 12px;background:var(--surface-2);
@@ -152,6 +203,8 @@ textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
 
 <h1>MemorySQL 上游监控</h1>
 <div class="sub" id="sub">加载中…</div>
+
+<div id="summary"></div>
 
 <div class="top">
   <div class="stats" id="stats"></div>
@@ -290,6 +343,68 @@ function llmBlock(r) {
   </div>`;
 }
 
+/**
+ * 总体情况面板。
+ *
+ * 关键:**程序统计与 LLM 解读分成两块显示**。统计是 brief.brief 里的原始数字
+ * (由 buildBrief 用代码算出);解读是 LLM 基于同一份 brief 写的话。
+ * 如果 LLM 说出与统计矛盾的数字,两块并排就看得见 —— 这是刻意不让它蒙混过关。
+ */
+function summaryPanel() {
+  const S = STATE.summary;
+  const b = S?.brief;
+  if (!b) return '';
+
+  const hot = b.whitebox.high > 0 || b.blackbox.drift > 0 || b.llm.hit > 0 || b.blackbox.checkerError > 0;
+
+  // ---- 第一层:程序统计(永远可信,与 LLM 无关) ----
+  const facts = [];
+  facts.push(`<span class="fact">白盒 <b>高 ${b.whitebox.high}</b> · 中 ${b.whitebox.medium} · 无信号 ${b.whitebox.lowOrNone} · 无法评估 ${b.whitebox.unknown}</span>`);
+  if (b.llm.hit || b.llm.clear || b.llm.error) {
+    facts.push(`<span class="fact${b.llm.hit ? ' warn' : ''}">LLM 判有影响 <b>${b.llm.hit}</b> · 无影响 ${b.llm.clear}${b.llm.error ? ` · 失败 ${b.llm.error}` : ''}</span>`);
+  }
+  facts.push(b.blackbox.reported
+    ? `<span class="fact${b.blackbox.drift ? ' bad' : ''}">黑盒 漂移 <b>${b.blackbox.drift}</b> · 匹配 ${b.blackbox.ok} · 未装/仅黑盒 ${b.blackbox.absent}${b.blackbox.checkerError ? ` · 检查器故障 <b>${b.blackbox.checkerError}</b>` : ''}</span>`
+    : `<span class="fact bad">黑盒 <b>尚未上报</b> —— 闭源 agent 的漂移目前无人看守</span>`);
+  if (b.fetchErrors.length) facts.push(`<span class="fact bad">抓取失败 <b>${b.fetchErrors.length}</b> 家</span>`);
+
+  // ---- 需要处理的名单(判定来自代码,不是 LLM) ----
+  let attn = '';
+  if (b.attention.length) {
+    attn = '<div class="attn">' + b.attention.map(a =>
+      `<div class="r"><span class="id">${esc(a.id)}</span>` +
+      `<span class="rs">${esc(a.reasons.join('、'))}</span>` +
+      (a.version ? `<span class="rs" style="color:var(--fg-3)">${esc(a.version)}</span>` : '') +
+      `</div>`).join('') + '</div>';
+  }
+
+  // ---- 第二层:LLM 解读 ----
+  let llmPart;
+  if (S.headline) {
+    llmPart = `<div class="hl">${esc(S.headline)}</div>` +
+      (S.actions.length
+        ? '<ul class="acts">' + S.actions.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>'
+        : '') +
+      (S.blindspot
+        ? `<div class="blind"><span class="k">当前最大盲区</span>${esc(S.blindspot)}</div>`
+        : '') +
+      `<div class="stamp">LLM 生成于 ${esc((S.generatedAt || '').slice(0, 16).replace('T', ' '))} · 叙述仅供参考,数字以上方统计为准</div>`;
+  } else {
+    // 没生成出来要说清是哪一种,否则「空白」会被读成「没风险」
+    llmPart = `<div class="sb">${esc(S.error || 'LLM 未生成解读')}</div>`;
+  }
+
+  return `<div class="summary${hot ? ' hot' : ''}${S.headline ? '' : ' warn'}">
+    <div class="sh"><span class="t">总体情况</span>
+      <span class="stamp">${b.total} 家已适配</span></div>
+    <div class="sb">
+      <div class="facts">${facts.join('')}</div>
+      ${attn}
+      ${llmPart}
+    </div>
+  </div>`;
+}
+
 function card(r) {
   const ls = llmState(r);
   const p = (STATE.probe?.results || []).find(x => x.id === r.agentId);
@@ -359,6 +474,7 @@ function render() {
     ? '黑盒上报于 ' + STATE.probe.checkedAt.slice(0, 16).replace('T', ' ') : '';
   void R;
   stats();
+  $('#summary').innerHTML = summaryPanel();
   const list = R.filter(match);
   $('#list').innerHTML = list.length
     ? list.map(card).join('\n')
