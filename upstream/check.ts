@@ -56,9 +56,18 @@ export interface CheckResult {
  * 新增 resolver 时在此登记,并在 agents.ts 里按名字引用。
  */
 const RESOLVERS: Record<string, () => Promise<string | null>> = {
-  // 安装位置随注册表/盘符变动:配置 → 注册表 → 各盘符根 → home
+  /**
+   * 安装位置随注册表/盘符变动:配置 → 注册表 → 各盘符根 → home
+   *
+   * 只 import resolve-home.ts,**不要 import 插件 index** —— 那个文件会连带
+   * 拉进 sqlite-ro → better-sqlite3 原生模块,纯 Node 环境下直接炸。
+   * 另外 import 必须带 `.ts` 扩展名:check.ts 自己的静态 import 都带了,
+   * 之前这里漏了,Node ESM 解析失败,而异常又被 resolveRoot 的 catch 吞成
+   * 「未找到」,于是装着也报「本机未检测到源」—— 而 absent 的措辞还写着
+   * 「(非故障)」,把一次工具崩溃说成了用户的安装状态。
+   */
   hermes: async () => {
-    const m = await import('../src/plugins/capture-hermes/index')
+    const m = await import('../src/plugins/capture-hermes/resolve-home.ts')
     const root = m.resolveHermesHome(undefined)
     if (!root) return null
     // profiles 根下可能是根级 state.db,或 profiles/<name>/state.db
@@ -78,23 +87,46 @@ const RESOLVERS: Record<string, () => Promise<string | null>> = {
   }
 }
 
-async function resolveRoot(contract: AgentContract): Promise<string | null> {
+/**
+ * 解析本地数据源。三种结果必须分开,这是本文件最重要的一条不变式:
+ *
+ *   { path }        找到了
+ *   { path: null }  解析器正常跑完,本机确实没有 → 才是「未装」
+ *   { error }       **解析器自己崩了** → 必须是 checker_error,不能记成未装
+ *
+ * 旧实现是 `catch {}` 之后当作未找到,注释还写着「resolver 失败视为未找到」。
+ * 那正是 checker_error 判定本来要防的事,只是漏在 resolveRoot 这一层:
+ * 一句 catch 把「工具坏了」翻译成了「用户没装」,看板上两者都是一行黄字,
+ * 谁也看不出区别。实测代价:Hermes 明明装在 D 盘、state.db 15MB,黑盒却报
+ * 「本机未检测到源(非故障)」—— 一个装着且有真实数据的 agent 被当成未验证,
+ * 盲区白白留了多天。修好后首次实跑:19 张表全部匹配,布局与列都对得上。
+ */
+type RootResolution =
+  | { path: string; error?: undefined }
+  | { path: null; error?: undefined }
+  | { path: null; error: string }
+
+async function resolveRoot(contract: AgentContract): Promise<RootResolution> {
   for (const r of contract.localRoots) {
     if (typeof r !== 'string') {
       const fn = RESOLVERS[r.resolver]
       if (!fn) continue
       try {
         const hit = await fn()
-        if (hit && fs.existsSync(hit)) return hit
-      } catch {
-        /* resolver 失败视为未找到 */
+        if (hit && fs.existsSync(hit)) return { path: hit }
+      } catch (e) {
+        // 解析器崩了 ≠ 没装。上抛,由 checkOne 归为 checker_error
+        return {
+          path: null,
+          error: `resolver <${r.resolver}> 失败: ${String((e as Error)?.message ?? e).split('\n')[0]}`
+        }
       }
       continue
     }
     const abs = path.isAbsolute(r) ? r : path.join(os.homedir(), r)
-    if (fs.existsSync(abs)) return abs
+    if (fs.existsSync(abs)) return { path: abs }
   }
-  return null
+  return { path: null }
 }
 
 function tableNames(db: Database.Database): string[] {
@@ -274,21 +306,31 @@ function checkJson(c: AgentContract, root: string): CheckResult {
 }
 
 export async function checkOne(c: AgentContract): Promise<CheckResult> {
-  const root = await resolveRoot(c)
-  if (!root) {
+  const resolved = await resolveRoot(c)
+  // 解析器崩了 → 检查器故障,绝不能报成「本机未装」。
+  // 「用户没装」和「我们没测出来」在看板上是两行不同的黄字,处置方式也相反。
+  if (resolved.error) {
+    return {
+      ...base(c, c.localRoots.map((r) => (typeof r === 'string' ? r : `<${r.resolver}>`)).join(' | ')),
+      verdict: 'checker_error',
+      detail: resolved.error,
+      notes: c.notes
+    }
+  }
+  if (!resolved.path) {
     return {
       ...base(c, c.localRoots.map((r) => (typeof r === 'string' ? r : `<${r.resolver}>`)).join(' | ')),
       verdict: c.monitor === 'blackbox_only' ? 'blackbox_only' : 'absent',
-      detail: '本机未检测到源(非故障)',
+      detail: '本机未检测到源(探测已正常执行,不是故障)',
       notes: c.notes
     }
   }
   const r =
     c.source.kind === 'sqlite'
-      ? checkSqlite(c, root)
+      ? checkSqlite(c, resolved.path)
       : c.source.kind === 'jsonl'
-        ? await checkJsonl(c, root)
-        : checkJson(c, root)
+        ? await checkJsonl(c, resolved.path)
+        : checkJson(c, resolved.path)
   return { ...r, notes: c.notes }
 }
 

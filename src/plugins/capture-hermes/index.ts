@@ -1,6 +1,4 @@
-import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import type { CaptureStatus, RawMessage, RawSession } from '../../shared/types'
@@ -164,43 +162,16 @@ function importHermesMemories(
  * drive root (portable layout "<install>\data\hermes-home"). A profilesRoot
  * recorded on another machine must not wedge detection, so probe: configured →
  * registry InstallLocation → every drive root → user home.
+ *
+ * 实现在 ./resolve-home.ts —— 那里不 import 任何 sqlite / electron,
+ * 黑盒检查器才能在纯 Node 下直接复用(曾经因为放在本文件里、而本文件 import 了
+ * better-sqlite3,导致黑盒永远报「本机未装」)。这里只做转出,保持既有导出面不变。
  */
-export function resolveHermesHome(
-  configured: string | undefined,
-  exists: (p: string) => boolean = fs.existsSync,
-  registryInstallDir: () => string | null = readRegistryInstallDir
-): string | undefined {
-  if (configured && exists(configured)) return configured
-  const candidates: string[] = []
-  const regDir = registryInstallDir()
-  if (regDir) candidates.push(path.join(regDir, 'data', 'hermes-home'))
-  for (const drive of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
-    candidates.push(`${drive}:\\Hermes Agent CN Desktop\\data\\hermes-home`)
-  }
-  candidates.push(path.join(os.homedir(), 'Hermes Agent CN Desktop', 'data', 'hermes-home'))
-  return candidates.find((c) => exists(c)) ?? configured
-}
-
-function readRegistryInstallDir(): string | null {
-  if (process.platform !== 'win32') return null
-  try {
-    const out = execFileSync(
-      'reg',
-      [
-        'query',
-        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Hermes Agent CN Desktop',
-        '/v',
-        'InstallLocation'
-      ],
-      { encoding: 'utf-8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'] }
-    )
-    const m = out.match(/REG_SZ\s+(.+)/)
-    if (!m) return null
-    return m[1].trim().replace(/^"|"$/g, '') || null
-  } catch {
-    return null
-  }
-}
+// 探测逻辑在 ./resolve-home.ts(不依赖 sqlite / electron,黑盒检查器可直接复用)。
+// 既要 re-export 保持既有导出面,也要 import 供本文件内部使用 ——
+// `export { x } from` 不会把 x 带进本地作用域。
+import { resolveHermesHome } from './resolve-home.ts'
+export { resolveHermesHome, stripQuotes } from './resolve-home.ts'
 
 let lastStatus: CaptureStatus = {
   pluginId: 'capture-hermes',
