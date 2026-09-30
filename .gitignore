@@ -11,6 +11,10 @@ data/
 # editor / agent workspace metadata
 .zcode/
 
+# 上游监控看板的运行时状态(抓取结果快照,含 changelog 原文,机器本地生成)
+tools/upstream-watch/state.json
+tools/upstream-watch/state.json.tmp
+
 # misc
 *.log
 .DS_Store

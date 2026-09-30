@@ -1,5 +1,7 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { AGENTS } from '../src/shared/upstream-agents'
+import { AGENTS, DEFAULT_RISK_KEYWORDS } from '../src/shared/upstream-agents'
 import { render, runChecks } from '../upstream/check'
 
 /**
@@ -105,6 +107,53 @@ describe('台账自洽性(防台账腐化)', () => {
   it('风险关键词非空(白盒粗筛依赖它)', () => {
     for (const a of AGENTS) {
       expect(a.riskKeywords.length, `${a.id} 未声明 riskKeywords`).toBeGreaterThan(0)
+    }
+  })
+})
+
+/**
+ * 台账 JSON 中间层同步 —— 云端(Node 20,零依赖)读的是 upstream/ledger.json,
+ * 不是 TS 源。这条断言防止两者悄悄脱节 —— 否则云端会拿着一份过期台账做评估,
+ * 而本地一切正常,极难察觉。
+ *
+ * 重新生成:node --experimental-strip-types scripts/export-ledger.ts
+ */
+describe('台账 JSON 与 TS 源同步', () => {
+  const ledgerPath = path.join(__dirname, '..', 'upstream', 'ledger.json')
+  const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')) as {
+    version: number
+    riskKeywords: string[]
+    agents: typeof AGENTS
+  }
+
+  it('agent 列表一致', () => {
+    expect(ledger.agents.map((a) => a.id).sort()).toEqual(AGENTS.map((a) => a.id).sort())
+  })
+
+  it('每条契约逐字段一致(不只是 id)', () => {
+    for (const src of AGENTS) {
+      const got = ledger.agents.find((a) => a.id === src.id)
+      expect(got, `ledger.json 缺少 ${src.id}`).toBeDefined()
+      expect(got, `${src.id} 内容与 TS 源不一致 —— 跑 export-ledger 重新生成`).toEqual(src)
+    }
+  })
+
+  it('风险关键词一致', () => {
+    expect(ledger.riskKeywords).toEqual(DEFAULT_RISK_KEYWORDS)
+  })
+
+  it('云端字段完整(评估器依赖这些)', () => {
+    for (const a of ledger.agents) {
+      expect(a.id, '缺 id').toBeTruthy()
+      expect(a.name, `${a.id} 缺 name`).toBeTruthy()
+      expect(['github', 'commit', 'npm', 'none'], `${a.id} 的 upstream.kind 非法`).toContain(
+        a.upstream.kind
+      )
+      if (a.upstream.kind === 'github' || a.upstream.kind === 'commit') {
+        expect(a.upstream.repo, `${a.id} 缺 repo`).toBeTruthy()
+      }
+      expect(['tracked', 'blackbox_only'], `${a.id} 的 monitor 非法`).toContain(a.monitor)
+      expect(a.riskKeywords.length, `${a.id} 缺 riskKeywords`).toBeGreaterThan(0)
     }
   })
 })

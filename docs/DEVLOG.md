@@ -4,6 +4,55 @@
 
 ---
 
+## 2026-09-30 · 第 2 期:云端上游监控看板(阿里云,零依赖)
+
+前三期把「上游漂移」从**用户报障才知道**变成**主动可见**。本期是最初那块「小程序」:一个汇总 12 家 agent 更新日志并评估影响面的网页看板。
+
+### 台账 JSON 中间层
+
+云端实测是 **Node v20.20.2**(跑不了 `--experimental-strip-types`,而本地是 Node 24 能跑),而台账是 `.ts`。解法:加 `upstream/ledger.json` 导出件 + `scripts/export-ledger.ts`(本地导出)。**云端因此保持零依赖纯 JS**。同步由 `upstream-contract.test.ts` 断言「逐字段一致」——忘导出会直接 CI 变红,而不是让云端悄悄拿着一份过期台账做评估。
+
+### 云端服务(零依赖)
+
+`tools/upstream-watch/`:`server.mjs`(http+鉴权+定时+原子写 state.json)、`fetch.mjs`、`evaluate.mjs`、`web/index.html`。**只依赖 Node 18+ 内置 http/fetch/fs,部署时无需 `npm install`**。环境变量:`AUTH_TOKEN`(公网必填)、`GITHUB_TOKEN`(限流 60→5000/h)、`LLM_API_KEY`(可选)、`REFRESH_HOURS=24`。部署说明见 `tools/upstream-watch/DEPLOY.md`。
+
+### 抓取:四种上游形态实测
+
+| 形态 | 家数 | 处理 |
+|---|---|---|
+| github(release 有正文) | 5 | 直接取 body |
+| commit(release 无正文/无 release) | 2 | codex 的 release **正文全空**;cursor **0 条 release** → 退化 commit |
+| npm | 1 | kimicli `MoonshotAI/kimi-code` |
+| none(闭源) | 4 | 不抓,标「仅黑盒」+ 看板给**手动粘贴 changelog** 入口 |
+
+**踩坑:** npm registry 不接受 GitHub 的 `Accept: application/vnd.github+json`,照抄会返回 **HTTP 406**,kimicli 一开始就是 0 数据 —— 已在 `fetchNpm` 覆盖 Accept。
+
+### 白盒分级:两次调优压掉全部误报
+
+初版用**单词级**强信号,真实跑下来 **4 家同时报 high,而无一与存储结构有关**:
+
+- claude-code 命中 UI 提示里的 "rename it"、"markdown table"(排版)
+- hermes 命中 "two-column ticket modal"(UI 布局)
+- qwen-code 命中 "## Breaking Changes / **No known** breaking changes"(Keep a Changelog 固定段落,每个版本都飘红)
+
+两轮修复:①强信号改**短语级**(`rename table` / `drop column` / `database schema`),单词级通用词全降为 medium ②加**否定句式**(`no known breaking changes` / `backwards compatible`)抵消。**修复后 0 家误报**,四家从 high 降到 medium/low。两次误报都用真实 changelog 原文写成了回归测试。
+
+另修一个设计缺陷:分级词表原先**依赖台账收录**,导致台账漏收某词就永远升不了级 —— 改为内置词表直接扫文本,台账只管展示口径。
+
+### 手动粘贴入口救活
+
+首次实现时 `evaluate` 对 `blackbox_only` 直接短路返回 `unknown`,导致**给闭源 zcode 粘了明确的 breaking change changelog 仍返回 unknown**,手动入口形同虚设。改为「闭源且**没拿到** notes 才走仅黑盒」;现在粘贴后正确判 **high**,并保留「人工提供、该 agent 无自动监控」的提醒。
+
+### 验证
+
+typecheck 0 / vitest **190:190**(24 文件,第 1 期 169)/ build 通过 / **零新增依赖**。端到端实测:服务起于 8788,12 家全部抓取成功、网页 200;鉴权无 token → 401、带 token → 200;手动粘贴 zcode → high。`state.json`(含 changelog 原文)已 gitignore。
+
+**已知代价:** 白盒是关键词匹配,必然残留误报,靠短语化 + 否定句式 + LLM 压制。**黑盒才是确定答案**,两者冲突时以黑盒为准。
+
+**下一步:** 第 3 期(本机探针定时上报黑盒结果 + 结论双写 Markdown/memories)→ 或先在阿里云把服务跑起来看看实际效果。
+
+---
+
 ## 2026-09-30 · 第 1 期:捕获失效可见化 + MCP 连接写后回读校验
 
 第 0 期建了台账与黑盒检查,但**检测到漂移之后,产品本身仍是瞎的**——本期补上这条链路。核心是把两类「静默失效」变成显式信号。

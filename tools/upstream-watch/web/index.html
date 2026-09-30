@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MemorySQL 上游监控</title>
+<style>
+  :root{--bg:#070b12;--fg:#eef3f9;--dim:#64748b;--muted:#94a3b8;--accent:#4f8cff;
+        --danger:#ef4444;--warn:#f59e0b;--ok:#22c55e;--border:rgba(255,255,255,.08)}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:14px/1.6 'IBM Plex Sans','Segoe UI','Microsoft YaHei',sans-serif;padding:28px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:20px}
+  .bar{display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
+  button{background:var(--accent);color:#fff;border:0;padding:8px 16px;border-radius:8px;
+         cursor:pointer;font-size:13px}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .card{background:rgba(30,41,59,.4);border:1px solid var(--border);border-radius:12px;
+        padding:14px 16px;margin-bottom:10px}
+  .hd{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+  .name{font-weight:600}
+  .meta{color:var(--dim);font-size:12px;margin-top:2px}
+  .badge{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border)}
+  .high{color:var(--danger);border-color:var(--danger)}
+  .medium{color:var(--warn);border-color:var(--warn)}
+  .low{color:var(--muted)}
+  .none{color:var(--dim)}
+  .unknown{color:var(--muted);border-style:dashed}
+  .notes{margin-top:10px;font-size:13px;white-space:pre-wrap;word-break:break-word;
+         max-height:180px;overflow:auto;color:var(--muted)}
+  .act{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+  .act button{background:transparent;border:1px solid var(--border);color:var(--muted);
+              padding:4px 10px;font-size:12px}
+  .act button:hover{border-color:var(--accent);color:var(--fg)}
+  textarea{width:100%;min-height:80px;background:var(--bg);color:var(--fg);
+           border:1px solid var(--border);border-radius:8px;padding:8px;font:12px/1.5 monospace}
+  a{color:var(--accent);text-decoration:none}
+  .hint{color:var(--dim);font-size:12px;margin-top:6px}
+</style>
+</head>
+<body>
+<h1>MemorySQL 上游监控看板</h1>
+<div class="sub" id="sub">加载中…</div>
+<div class="bar">
+  <button id="refresh">立即刷新</button>
+  <span class="meta" id="stat"></span>
+</div>
+<div id="list"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const tok = new URLSearchParams(location.search).get('token') ?? localStorage.getItem('msql_token') ?? '';
+const H = tok ? { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+
+const RISK = { high:'high', medium:'medium', low:'low', none:'none', unknown:'unknown' };
+
+async function load() {
+  const s = await (await fetch('/api/state' + (tok ? '?token=' + encodeURIComponent(tok) : ''), { headers: H })).json();
+  const now = new Date().toLocaleString('zh-CN');
+  $('#sub').textContent = s.lastRunAt ? '最近抓取: ' + s.lastRunAt : '尚未抓取';
+  $('#stat').textContent = (s.results || []).length + ' 家 agent' + (s.error ? ' · 错误: ' + s.error : '');
+  $('#list').innerHTML = (s.results || []).map(card).join('\n');
+}
+
+function esc(t){return String(t??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+
+function card(r) {
+  const badge = `<span class="badge ${RISK[r.risk]||'none'}">${esc(r.riskLabel||r.risk)}</span>`;
+  const ver = r.version ? `v${esc(r.version)}` : '—';
+  const when = r.publishedAt ? new Date(r.publishedAt).toLocaleDateString('zh-CN') : '';
+  let meta = `${ver} ${when}`;
+  if (r.fallbackUsed && r.fallbackReason) meta += ` · ${esc(r.fallbackReason)}`;
+  if (r.fetchError) meta += ` · 抓取: ${esc(r.fetchError)}`;
+
+  let notes = '';
+  if (r.notes) notes = `<div class="notes">${esc(r.notes.slice(0,1500))}</div>`;
+
+  let llm = '';
+  if (r.llm) llm = `<div class="hint">LLM: ${esc(r.llm.reason)}（捕获${r.llm.affectsCapture?'受影响':'无影响'} / MCP${r.llm.affectsMcp?'受影响':'无影响'}）</div>`;
+  else if (r.llmError) llm = `<div class="hint">${esc(r.llmError)}</div>`;
+
+  // 闭源/无法评估 → 给手动粘贴入口
+  let manual = '';
+  if (r.risk === 'unknown') {
+    manual = `<div class="act">
+      <button onclick="showManual('${r.agentId}')">手动粘贴 changelog</button>
+      <span class="hint">${esc(r.reason||'')}</span>
+    </div>
+    <div id="m-${r.agentId}" style="display:none;margin-top:8px">
+      <textarea placeholder="粘贴该 agent 的更新日志…"></textarea>
+      <div class="act"><button onclick="submitManual('${r.agentId}')">提交评估</button></div>
+    </div>`;
+  }
+
+  const link = r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noreferrer">原文</a>` : '';
+  return `<div class="card">
+    <div class="hd"><div><div class="name">${esc(r.agentId)} ${badge}</div>
+      <div class="meta">${meta}${link}</div></div></div>
+    ${r.hits && r.hits.length ? `<div class="hint">命中: ${r.hits.map(esc).join(', ')}</div>` : ''}
+    ${llm}${notes}${manual}
+  </div>`;
+}
+
+function showManual(id){ const el=document.getElementById('m-'+id); if(el) el.style.display = el.style.display==='none'?'block':'none' }
+
+async function submitManual(id){
+  const el=document.getElementById('m-'+id); if(!el) return;
+  const notes=el.querySelector('textarea').value.trim();
+  if(!notes) return alert('请先粘贴内容');
+  const r=await fetch('/api/manual'+(tok?'?token='+encodeURIComponent(tok):''),{method:'POST',headers:H,body:JSON.stringify({agentId:id,notes})});
+  if(r.ok) load(); else alert('提交失败');
+}
+
+$('#refresh').onclick=async()=>{ const b=$('#refresh'); b.disabled=true; b.textContent='抓取中…';
+  await fetch('/api/refresh'+(tok?'?token='+encodeURIComponent(tok):''),{method:'POST',headers:H}); b.disabled=false; b.textContent='立即刷新'; load() }
+
+load();
+</script>
+</body>
+</html>
