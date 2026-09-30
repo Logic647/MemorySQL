@@ -387,10 +387,30 @@ section h3 { font-size: var(--msql-fs-lg); margin: 0 0 4px; font-weight: 600; }
 .spotlight-empty { padding: 18px; text-align: center; color: var(--msql-fg-dim); font-size: var(--msql-fs-md); }
 
 /* ---------- scrollbars ---------- */
-::-webkit-scrollbar { width: 9px; height: 9px; }
-::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); background-clip: content-box; }
+/* 12px 轨道 + 2px 内缩 = 8px 可见滑块(旧版 9px 轨道配 2px border 只剩 5px,
+   太细抓不住)。hover/active 明显提亮,深色玻璃面上要有足够对比度。 */
+::-webkit-scrollbar { width: 12px; height: 12px; }
 ::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background var(--msql-t-fast) var(--msql-ease);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.34);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:active {
+  background: var(--msql-accent);
+  background-clip: padding-box;
+}
+/* Chromium 默认给竖向滚动条两端画 stepper 按钮、给横竖交点画 corner,
+   在深色主题下渲染成一个突兀的白色方块 —— 全部抹掉 */
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-resizer { background: transparent; }
 
 /* ---------- focus visibility ---------- */
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {

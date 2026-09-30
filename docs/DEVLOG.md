@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-09-30 · 修 OpenCode MCP 连接器(v2 必填 `type`)+ 滚动条观感修复
+
+用户报「opencode 识别不到 MCP」。根因不在服务端,在**本项目自己的连接向导写错了 opencode 配置格式**。
+
+### 1. OpenCode MCP 连接器(v0.5.5 已发版,现修)
+
+`~/.config/opencode/opencode.json` 里向导写的是 `{ url, enabled }`,**缺 `type`**。OpenCode ≥2.0 起 `type` 为必填(官方文档 Options 表 Required=Y),配置规范化阶段直接把这条判为 legacy 并**静默丢弃**——只留一行 WARN,用户侧完全无感:
+
+```
+level=WARN message="configuration normalization diagnostic"
+  path=$.mcp.memorysql kind=unsupported
+  action="omitted enabled-only legacy MCP entry"
+```
+
+日志实测**从 2026-09-25 起持续刷**(即坏了约 5 天,非今日新增)。症状:opencode 会话里 memorysql 的 7 个工具整个不出现,agent 查不到任何历史知识,只能像本次一样手搓 HTTP 兜底。
+
+**修复(`src/main/core/agent-connect.ts` opencode 连接器):** `apply()` 与 `snippet()` 均补 `type: 'remote'`;snippet 追加一行注释说明缺失后果。**存量用户的 legacy 配置会被同一入口自动修复**(连接向导 `setNested` 整体覆盖 `mcp.memorysql`,重跑一次即补齐)。本机 `~/.config/opencode/opencode.json` 已手工修正并留备份 `opencode.json.bak-before-mcp-fix`。
+
+**验证:** `opencode mcp list` → `memorysql  connected`;`memory_list_sessions` 实际调用返回会话 #233。新增 `test/agent-connect.test.ts` 4 用例(写入含 type / 修复 legacy 条目 / 保留无关键 / snippet 带 type)锁死回归。**typecheck 0 / vitest 134:134(21 文件,原 130)/ build 通过。**
+
+### 2. 滚动条观感(用户截图反馈)
+
+- **太细抓不住**:旧规则 9px 轨道 + 2px `border` + `background-clip: content-box`,净可见滑块只剩 **5px**。改为 12px 轨道 + `background-clip: padding-box`,净宽 **8px**。
+- **hover 高亮**:旧 0.1→0.18 太弱。新增三态:常态 `rgba(255,255,255,.16)` → hover `.34` → **按下时用主题色 `--msql-accent`**,并加 `--msql-t-fast` 过渡。
+- **底部白色方块**:Chromium 默认给竖向滚动条两端画 stepper 按钮、横竖交点画 corner,深色主题下渲染成突兀白块。新增 `::-webkit-scrollbar-button { display:none }`、`::-webkit-scrollbar-corner/resizer { background:transparent }` 抹除。
+
+**验证边界(如实记录):** CSS 已确认正确编译进产物(`out/renderer/assets/index-*.css` 四条规则齐全),typecheck/build/单测全绿;但**未做像素级视觉验收**——浏览器截图需可见桌面窗口(本环境不可用),已装版 v0.5.5 进程占着单实例锁也起不了 dev 实例。**需用户在 dev 模式(`npm run dev`)或下个版本安装后目视确认。**
+
+---
+
 ## 2026-09-30 · v0.5.5 装机验收 + 全量会话对账(无代码增量)
 
 用户要求「读取 memorysql 相关会话更新当前项目情况」。走 MCP 拉会话时踩到两个坑,顺带查清并留档;**代码零改动**,`main` @ `4396ed6` 工作树干净,typecheck 0 / vitest **130:130**(20 文件)。

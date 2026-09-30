@@ -283,12 +283,15 @@ startup_timeout_sec = 30`,
       fs.existsSync(path.join(home, '.local', 'share', 'opencode')) ||
       (localAppData ? fs.existsSync(path.join(localAppData, 'opencode')) : false),
     configPath: (home) => path.join(home, '.config', 'opencode', 'opencode.json'),
+    // `type` is required since OpenCode v2: without it the entry is silently
+    // dropped by config normalization ("omitted enabled-only legacy MCP entry"),
+    // so the server never connects and the failure is invisible to the user.
     apply: (configPath, url) =>
       mergeJson(configPath, (root) => {
-        setNested(root, ['mcp', 'memorysql'], { url, enabled: true })
+        setNested(root, ['mcp', 'memorysql'], { type: 'remote', url, enabled: true })
       }),
     snippet: (url) =>
-      `// ~/.config/opencode/opencode.json:\n{\n  "mcp": {\n    "memorysql": { "url": "${url}", "enabled": true }\n  }\n}`
+      `// ~/.config/opencode/opencode.json:\n{\n  "mcp": {\n    "memorysql": { "type": "remote", "url": "${url}", "enabled": true }\n  }\n}\n\n// v2 起 type 必填;缺失会被 opencode 静默丢弃(日志: omitted enabled-only legacy MCP entry)`
   },
   {
     id: 'hermes',
