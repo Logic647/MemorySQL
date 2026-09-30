@@ -30,7 +30,12 @@ level=WARN message="configuration normalization diagnostic"
 - **hover 高亮**:旧 0.1→0.18 太弱。新增三态:常态 `rgba(255,255,255,.16)` → hover `.34` → **按下时用主题色 `--msql-accent`**,并加 `--msql-t-fast` 过渡。
 - **底部白色方块**:Chromium 默认给竖向滚动条两端画 stepper 按钮、横竖交点画 corner,深色主题下渲染成突兀白块。新增 `::-webkit-scrollbar-button { display:none }`、`::-webkit-scrollbar-corner/resizer { background:transparent }` 抹除。
 
-**验证边界(如实记录):** CSS 已确认正确编译进产物(`out/renderer/assets/index-*.css` 四条规则齐全),typecheck/build/单测全绿;但**未做像素级视觉验收**——浏览器截图需可见桌面窗口(本环境不可用),已装版 v0.5.5 进程占着单实例锁也起不了 dev 实例。**需用户在 dev 模式(`npm run dev`)或下个版本安装后目视确认。**
+**验证边界:** typecheck/build/单测全绿,CSS 已确认编译进产物;**视觉验收由用户 2026-09-30 在 dev 模式确认「滚动条没问题」**(补记:dev 数据目录**不是**真库,见下条「dev 环境两个坑」)。
+
+### 3. dev 环境两个坑(实跑 dev 日志后查清,均非故障)
+
+- **dev 数据目录 ≠ 真库。** `src/main/core/env.ts:23-27` 走 `app.isPackaged` 分支:装机版用 `%APPDATA%\memorysql\data`,**dev 用仓库内 `F:\桌面\MemorySQL\data`**(故 dev 日志 `vault indexed: 13 notes`,而真库 36 个 md)。dev 完全隔离,不会污染 95MB 真库;`data/` 已 gitignore。
+- **dev 下 MCP 是 8 个工具而非 7 个。** 多出的是 `data/plugins/hello`(2026-08-30 外部插件功能示例)注册的 `hello_greet`。**文档口径「MCP 工具 7 个」对装机版成立**,dev 下多此一项,看日志勿误判。
 
 ---
 
