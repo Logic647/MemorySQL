@@ -23,10 +23,11 @@ const PRESETS = {
   mimo: {
     label: '小米 MiMo',
     baseUrl: 'https://api.xiaomimimo.com/v1/chat/completions',
-    model: 'mimo-v2.6-pro',
+    model: 'mimo-v2.6-flash',
     notes: [
       '认证头是 api-key(本工具默认同时发 Authorization 与 api-key,已兼容)',
       '⚠ mimo-v2.5-pro / mimo-v2.5 将于 2026-10-21 下线,别用',
+      '想换更强的判断力:LLM_MODEL=mimo-v2.6-pro(本用途调用量小,两者差别有限)',
       'Token Plan 用户改用 https://token-plan-cn.xiaomimimo.com/v1/chat/completions,key 前缀 tp-/ttp-'
     ]
   },
@@ -109,7 +110,7 @@ if (withLlm.llmError) {
   console.log('排查:')
   console.log('  1. key 是否正确、有没有多余引号或空格')
   console.log('  2. LLM_BASE_URL 是否指向你实际用的 provider(填非 anthropic.com 会自动走 OpenAI 兼容格式)')
-  console.log('  3. LLM_MODEL 是否存在(填错会 404/400)—— MiMo 用 mimo-v2.6-pro,别用即将下线的 v2.5')
+  console.log('  3. LLM_MODEL 是否存在(填错会 404/400)—— MiMo 用 mimo-v2.6-flash / -pro,别用即将下线的 v2.5')
   console.log('  4. 服务器能否出网访问该端点')
   console.log('  5. 余额是否耗尽(401/403 也可能是欠费而非 key 错)\n')
   console.log('注:即使 LLM 挂了,看板也照常工作 —— 已自动降级为纯规则结果。\n')

@@ -50,7 +50,7 @@ pm2 save
 
 | 名字 | provider | 模型 |
 |---|---|---|
-| `mimo` | 小米 MiMo | `mimo-v2.6-pro` |
+| `mimo` | 小米 MiMo | `mimo-v2.6-flash`(判断力更强可改 `mimo-v2.6-pro`) |
 | `openai` | OpenAI 官方 | `gpt-4o-mini` |
 | `anthropic` | Anthropic 官方 | `claude-sonnet-4-5` |
 | `deepseek` | DeepSeek | `deepseek-chat` |
@@ -58,7 +58,7 @@ pm2 save
 **MiMo 注意事项**(核对自官方文档 2026-09-30):
 - 认证头是 `api-key`,不是 `Authorization: Bearer` —— 本工具已兼容(默认两个都发)
 - 用 `max_completion_tokens` 而非 `max_tokens` —— 本工具也两个都发
-- ⚠ **`mimo-v2.5-pro` / `mimo-v2.5` 将于 2026-10-21 下线**,请用 `mimo-v2.6-pro` 或 `mimo-v2.6-flash`
+- ⚠ **`mimo-v2.5-pro` / `mimo-v2.5` 将于 2026-10-21 下线**,请用 `mimo-v2.6-flash`(本项目默认)或 `mimo-v2.6-pro`
 - Token Plan 订阅用户端点是 `https://token-plan-cn.xiaomimimo.com/v1`,key 前缀 `tp-`/`ttp-`(不是 `sk-`)
 
 ### 启用 LLM 后请先自检

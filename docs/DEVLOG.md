@@ -64,7 +64,7 @@ typecheck 0 / vitest **199:199**(26 文件)/ build 通过 / 零新增依赖。�
 
 修法:非 Anthropic 端点**默认同时发 `Authorization` 和 `api-key` 两个头**(同一 key 挂两个头无副作用,可同时兼容 OpenAI/MiMo/自建网关),并同时发两个 max_tokens 字段;另加 `LLM_AUTH_HEADER` 可显式指定。响应解析两种格式都吃。
 
-**顺带发现时效信息**:`mimo-v2.5-pro` / `mimo-v2.5` **将于 2026-10-21 下线**,预置默认用 `mimo-v2.6-pro`。Token Plan 订阅用户端点是 `token-plan-cn.xiaomimimo.com`、key 前缀 `tp-`/`ttp-` 而非 `sk-`。
+**顺带发现时效信息**:`mimo-v2.5-pro` / `mimo-v2.5` **将于 2026-10-21 下线**,预置默认用 `mimo-v2.6-flash`(用户选定;判断力更强可切 `mimo-v2.6-pro`,本用途每天仅 2~5 次调用,两者差别有限)。Token Plan 订阅用户端点是 `token-plan-cn.xiaomimimo.com`、key 前缀 `tp-`/`ttp-` 而非 `sk-`。
 
 `scripts/check-llm.mjs` 加了 **4 个 provider 预置**(`mimo` / `openai` / `anthropic` / `deepseek`),`node scripts/check-llm.mjs mimo` 一键套用端点+模型,**key 一律走环境变量不落文件**。
 
