@@ -65,6 +65,80 @@ function extractText(data) {
 }
 
 /**
+ * 结构化输出有时不走 content 而走 tool_calls(实测 MiMo 的返回里就带着这个字段)。
+ * 两条路都试,否则这类"content 是空的"会表现成"LLM 未返回 JSON",极难排查。
+ */
+function extractCandidates(data) {
+  const out = []
+  const msg = data?.choices?.[0]?.message
+  if (msg) {
+    if (typeof msg.content === 'string' && msg.content.trim()) out.push(msg.content)
+    if (typeof msg.reasoning_content === 'string' && msg.reasoning_content.trim()) {
+      out.push(msg.reasoning_content)
+    }
+    const args = msg.tool_calls?.[0]?.function?.arguments
+    if (typeof args === 'string' && args.trim()) out.push(args)
+  }
+  const text = extractText(data)
+  if (typeof text === 'string' && text.trim()) out.push(text)
+  return out
+}
+
+/**
+ * 从一段文本里抠出 JSON 对象。
+ *
+ * **不要用 `/\{[\s\S]*\}/` 这种贪婪正则** —— 它从第一个 `{` 吃到最后一个 `}`,
+ * 一旦文本里出现两段 JSON、或字符串里含花括号(比如举例说明 schema),
+ * 抠出来的就是垃圾。实测踩过:摘要返回偶发解析失败,position 329 落在 actions 数组里。
+ * 正确做法是**做括号配平扫描**,并跳过字符串字面量内部的花括号。
+ */
+export function extractJson(candidates) {
+  let lastErr = null
+  for (const text of candidates) {
+    const s = String(text).trim()
+    // 整段就是 JSON(最快的路径,也最常见)
+    try {
+      return { ok: true, data: JSON.parse(s) }
+    } catch (e) {
+      lastErr = e
+    }
+    // 括号配平扫描
+    const start = s.indexOf('{')
+    if (start < 0) continue
+    let depth = 0
+    let inStr = false
+    let esc = false
+    for (let i = start; i < s.length; i++) {
+      const c = s[i]
+      if (inStr) {
+        if (esc) esc = false
+        else if (c === '\\') esc = true
+        else if (c === '"') inStr = false
+        continue
+      }
+      if (c === '"') inStr = true
+      else if (c === '{') depth++
+      else if (c === '}') {
+        depth--
+        if (depth === 0) {
+          const slice = s.slice(start, i + 1)
+          try {
+            return { ok: true, data: JSON.parse(slice) }
+          } catch (e) {
+            lastErr = e
+            // 配平了但解析不了 —— 换下一个候选,别放弃
+            break
+          }
+        }
+      }
+    }
+    // 没配平 = 响应被截断,maxTokens 不够。这是最常见的失败原因,单独报。
+    if (depth > 0) lastErr = new Error('JSON 未闭合,响应很可能被 maxTokens 截断')
+  }
+  return { ok: false, error: lastErr?.message ?? '未找到可解析的 JSON' }
+}
+
+/**
  * 调一次 LLM 并要求返回 JSON。
  * @returns {Promise<{ok:true,data:any}|{ok:false,error:string}>} 永不抛异常
  */
@@ -86,10 +160,16 @@ export async function callLlmJson(prompt, { maxTokens = 300, timeoutMs = 20000 }
       return { ok: false, error: `LLM HTTP ${res.status}${hint}` }
     }
 
-    const text = extractText(await res.json())
-    const m = String(text).match(/\{[\s\S]*\}/)
-    if (!m) return { ok: false, error: 'LLM 未返回 JSON' }
-    return { ok: true, data: JSON.parse(m[0]) }
+    const data = await res.json()
+    // 解析不出 JSON 时把 finish_reason 带出来 —— 'length' 意味着该调大 maxTokens,
+    // 这条线索不报出来就只能靠猜(实测因此浪费了一轮排查)。
+    const finish = data?.choices?.[0]?.finish_reason
+    const parsed = extractJson(extractCandidates(data))
+    if (!parsed.ok) {
+      const tail = finish === 'length' ? '(响应被 maxTokens 截断,请调大 maxTokens)' : ''
+      return { ok: false, error: `LLM 未返回可解析的 JSON: ${parsed.error}${tail}` }
+    }
+    return { ok: true, data: parsed.data }
   } catch (e) {
     return { ok: false, error: `LLM 调用失败:${e?.message ?? e}` }
   }

@@ -503,9 +503,19 @@ document.querySelectorAll('#filters .chip').forEach(c => {
 });
 
 $('#refresh').onclick = async () => {
-  const b = $('#refresh'); b.disabled = true; b.textContent = '抓取中…';
-  await fetch(U('/api/refresh'), { method: 'POST', headers: H });
-  b.disabled = false; b.textContent = '立即刷新'; load();
+  const b = $('#refresh');
+  b.disabled = true; b.textContent = '抓取中…';
+  // 必须看状态码。服务端在「已有抓取在进行」时回 409(旧实现回 200 + 一份旧数据),
+  // 这里若不判断,就会把陈旧数据当成本次刷新成功展示 —— 看起来一切正常,其实根本没刷新。
+  try {
+    const res = await fetch(U('/api/refresh'), { method: 'POST', headers: H });
+    b.textContent = res.status === 409 ? '已有抓取在进行' : (res.ok ? '立即刷新' : '刷新失败');
+  } catch {
+    b.textContent = '连接失败';
+  }
+  await load();
+  b.disabled = false;
+  if (b.textContent !== '立即刷新') setTimeout(() => { b.textContent = '立即刷新'; }, 2500);
 };
 
 load();

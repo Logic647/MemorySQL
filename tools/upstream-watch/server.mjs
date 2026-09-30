@@ -36,18 +36,37 @@ function loadLedger() {
   return { agents: raw.agents ?? [], riskKeywords: raw.riskKeywords ?? [] }
 }
 
+/**
+ * 只把**需要跨重启保留**的字段写盘。
+ *
+ * `running` 是纯内存的瞬时标志,绝不能落盘 —— 它一旦被写进 state.json,
+ * 就会在下次启动时被 loadState() 读回来,于是启动那轮 runOnce() 判定
+ * "已经在跑了" 直接返回,此后**永远不会再抓一次**。
+ * 症状极其隐蔽:服务 online、接口返 200、页面照常显示,只是数据永远停在那一刻。
+ * 实测踩过:模拟"抓取途中进程被杀"(即每次部署都会发生)→ 重启后刷新 9ms 秒回旧数据,
+ * 且再也刷不动。写盘与读盘两侧都做了防护,任何一侧被改动也不至于锁死。
+ */
+const TRANSIENT = new Set(['running'])
+
 function loadState() {
   try {
-    if (fs.existsSync(STATE)) state = { ...state, ...JSON.parse(fs.readFileSync(STATE, 'utf-8')) }
+    if (fs.existsSync(STATE)) {
+      const saved = JSON.parse(fs.readFileSync(STATE, 'utf-8'))
+      state = { ...state, ...saved }
+    }
   } catch {
     /* 损坏则用默认值,下次刷新覆盖 */
   }
+  // 读盘侧兜底:无论文件里写了什么,running 一律从 false 起步
+  state.running = false
 }
 
 // 原子写:先写临时文件再 rename,避免进程被杀时留下半截 JSON
 function saveState() {
+  const persist = {}
+  for (const [k, v] of Object.entries(state)) if (!TRANSIENT.has(k)) persist[k] = v
   const tmp = `${STATE}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf-8')
+  fs.writeFileSync(tmp, JSON.stringify(persist, null, 2), 'utf-8')
   fs.renameSync(tmp, STATE)
 }
 
@@ -124,7 +143,17 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  /**
+   * 手动触发一轮抓取。
+   *
+   * 已在跑时必须回 **409** 而不是 200 + 旧状态 —— 旧实现直接 `return`,
+   * 客户端拿到 200 和一份陈旧数据,页面看起来一切正常,用户以为自己刚刷新过。
+   * 这正是本项目反复吃的"静默失败":**失败要看起来像失败。**
+   */
   if (url.pathname === '/api/refresh' && req.method === 'POST') {
+    if (state.running) {
+      return json(res, 409, { error: '正在抓取中,请稍候再试', running: true, state })
+    }
     void runOnce().then(() => json(res, 200, state))
     return
   }
