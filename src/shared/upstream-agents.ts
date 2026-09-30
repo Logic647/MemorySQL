@@ -292,9 +292,20 @@ export const AGENTS: AgentContract[] = [
     mcp: {
       file: 'hermes-home/config.yaml',
       jsonpath: 'mcp_servers.memorysql',
-      requiredKeys: ['url', 'protocol', 'trust'],
-      valueHints: { protocol: 'stateless' },
-      note: 'YAML 格式,非 JSON;改完需执行 /reload-mcp'
+      // 只认 url —— 2026-09-30 核对上游 main(NousResearch/hermes-agent)源码:
+      // hermes_cli/mcp_config.py 判定传输的方式是 `if "url" in cfg` → HTTP,
+      // 而 `protocol` / `trust` / `stateless` 在全仓**一次都没出现**
+      // (trust 只用于 skills 的 trusted_project_dirs,protocol 只用于
+      //  bot_mode_protocol / ws ping / delegation wire protocol)。
+      // 以前写 requiredKeys:['url','protocol','trust'] 等于**对外声明了一个
+      // 不存在的契约**,还会让写后回读校验去校验死键。
+      requiredKeys: ['url'],
+      valueHints: {},
+      note:
+        'YAML 格式,非 JSON;改完需执行 /reload-mcp。' +
+        '连接器仍会写 protocol/trust 两键仅为兼容老版本(上游忽略它们,' +
+        'mcp_security.validate_mcp_server_entry 不拒绝未知键,故无害);' +
+        '认证走 auth: oauth 或 headers'
     },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },

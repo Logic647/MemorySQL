@@ -34,6 +34,73 @@ describe('ruleEvaluate(纯规则)', () => {
     expect(ruleEvaluate('update readme screenshot', agent).risk).toBe('none')
   })
 
+  /**
+   * 词边界回归 —— 2026-09-30 看真实 qwen-code changelog 时撞出来的。
+   * 纯子串匹配会让 `table` 命中 `stable`,把无关提交记成结构变更。
+   * 下面几句都是 qwen-code v0.24.7 的**原文**。
+   */
+  it('table 不得匹配进 stable(子串匹配的经典翻车)', () => {
+    const real = '- refactor: anchor rewind mapping to stable prompt identity ([#9466](https://x/9466))'
+    const r = ruleEvaluate(real, agent)
+    expect(r.hits, `误报:${r.hits.join(',')}`).not.toContain('table')
+  })
+
+  it('独立成词的 table 仍要命中(词边界不能矫枉过正)', () => {
+    const r = ruleEvaluate('refactor: align Flyway Runtime tables with the Broker schema', agent)
+    expect(r.hits).toContain('table')
+  })
+
+  it('中文关键词不受词边界影响(JS 的词边界在 CJK 之间不成立,必须仍走子串)', () => {
+    const r = ruleEvaluate('修复会话存储格式变更导致的解析失败', agent)
+    expect(r.risk).toBe('high')
+  })
+
+  /**
+   * 否定式回归 —— qwen-code 用 Keep a Changelog 模板,每版固定输出
+   * 「## Breaking Changes / No known breaking changes」。旧实现**只过滤 STRONG,
+   * 过滤不到 MEDIUM**,于是抵消掉 breaking 却留下一堆 schema/migration/table/rename,
+   * 版本照样被判 medium —— 实测每版都中招,告警彻底失效。
+   */
+  it('空模板小节:否定式要同时抵消 MEDIUM,整节归 none', () => {
+    const real = [
+      '<!-- qwen-release-notes:v1 -->',
+      '',
+      '## Breaking Changes',
+      '',
+      'No known breaking changes.',
+      '',
+      '## Complete Change List',
+      '',
+      '### Features',
+      '',
+      '- feat(memory): extract structured scan and bounded retrieval'
+    ].join('\n')
+    const r = ruleEvaluate(real, agent)
+    expect(r.negatedBy).toContain('no known breaking changes')
+    expect(r.risk, `残留命中:${r.hits.join(',')}`).toBe('none')
+  })
+
+  it('否定式只管自己那一个小节,不能替别处实打实的 schema 变更背书', () => {
+    const real = [
+      '## Breaking Changes',
+      '',
+      'No known breaking changes.',
+      '',
+      '## Complete Change List',
+      '',
+      '- BREAKING: drop column `legacy` from the sessions table'
+    ].join('\n')
+    const r = ruleEvaluate(real, agent)
+    // 模板小节的空声明被抵消;但另一小节里真的结构性变更必须照报
+    expect(r.risk).not.toBe('none')
+    expect(r.negatedBy).toContain('no known breaking changes')
+  })
+
+  it('没有否定式时行为不变', () => {
+    const r = ruleEvaluate('BREAKING: drop column `legacy` from the sessions table', agent)
+    expect(r.risk).toBe('high')
+  })
+
   it('空/未定义 changelog 不炸', () => {
     expect(ruleEvaluate('', agent).risk).toBe('none')
     expect(ruleEvaluate(undefined, agent).risk).toBe('none')

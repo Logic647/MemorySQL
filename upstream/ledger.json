@@ -351,14 +351,10 @@
         "file": "hermes-home/config.yaml",
         "jsonpath": "mcp_servers.memorysql",
         "requiredKeys": [
-          "url",
-          "protocol",
-          "trust"
+          "url"
         ],
-        "valueHints": {
-          "protocol": "stateless"
-        },
-        "note": "YAML 格式,非 JSON;改完需执行 /reload-mcp"
+        "valueHints": {},
+        "note": "YAML 格式,非 JSON;改完需执行 /reload-mcp。连接器仍会写 protocol/trust 两键仅为兼容老版本(上游忽略它们,mcp_security.validate_mcp_server_entry 不拒绝未知键,故无害);认证走 auth: oauth 或 headers"
       },
       "riskKeywords": [
         "schema",

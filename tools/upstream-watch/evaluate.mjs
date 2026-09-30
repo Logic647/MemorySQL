@@ -72,8 +72,71 @@ const NEGATION = [
   '保持兼容'
 ]
 
-/** 命中否定句式时,应被抵消掉的强信号 */
-const NEGATABLE = ['breaking change', 'breaking changes', 'migrate schema', 'schema migration']
+/**
+ * 命中否定句式时,应被抵消掉的信号。
+ *
+ * **必须包含裸词 `breaking`** —— 分级表里 MEDIUM 收的是 `breaking`,
+ * 而这里若只写 `breaking change`,`k.includes(n)` 会因裸词更短而判不出来,
+ * 抵消不掉(实测 qwen-code 每版都被这个残留词判成 medium)。
+ */
+const NEGATABLE = ['breaking', 'breaking change', 'breaking changes', 'migrate schema', 'schema migration']
+
+/**
+ * 关键词匹配器。
+ *
+ * **纯 ASCII 词必须按词边界匹配,不能子串包含** —— 实测踩过:
+ * qwen-code 的 "anchor rewind mapping to s**table** prompt identity" 里
+ * `table` 匹配进了 `stable`,把一条无关的提交记成了结构变更命中。
+ * 中文词没有词边界概念(JS 的 `\b` 基于 \w,在 CJK 之间不成立),故 CJK 词仍走子串。
+ */
+const ASCII_KEYWORD = /^[\x20-\x7e]+$/
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const matcherCache = new Map()
+function matcher(keyword) {
+  const k = String(keyword)
+  if (!matcherCache.has(k)) {
+    if (ASCII_KEYWORD.test(k)) {
+      // **只锁左边界,右侧一律放行。**
+      //   左边界挡住子串误报:`table` 不会命中 s●table●。
+      //   右侧不能锁,否则 camelCase 标识符全废:实测 gemini 的
+      //   `formatTruncatedToolOutput` 里的 `format` 会连不上 —— 而
+      //   "格式相关"本来就是有效信号,JS/TS 仓库的 changelog 里这类词极常见。
+      //   复数(s/es)由后缀选项自然覆盖,不需要额外边界。
+      const re = new RegExp(`(?<![a-z0-9])${escapeRe(k.toLowerCase())}(?:s|es)?`)
+      matcherCache.set(k, (t) => re.test(t))
+    } else {
+      matcherCache.set(k, (t) => t.includes(k.toLowerCase()))
+    }
+  }
+  return matcherCache.get(k)
+}
+
+/**
+ * 把 changelog 按 markdown 标题切成小节。
+ *
+ * 用于**限定否定句式的作用域**:qwen-code 每次发版都输出
+ * 「## Breaking Changes / No known breaking changes」这个**空模板小节**。
+ * 若否定式全文档生效,等于替整个 release 背书"没有任何破坏性变更",
+ * 反而会掩盖别处真的 schema 变更;若完全不生效,模板标题本身又永远把版本判成
+ * medium/high。所以:否定式只抵消**同一小节内**的命中 —— 模板小节被抵消,
+ * 其它小节里实打实的变更照旧报警。
+ */
+function sections(text) {
+  const out = []
+  const lines = text.split('\n')
+  let cur = { heading: null, body: '' }
+  for (const line of lines) {
+    const h = /^(#{1,6})\s+(.*)$/.exec(line)
+    if (h) {
+      out.push(cur)
+      cur = { heading: h[2].trim().toLowerCase(), body: '' }
+    } else {
+      cur.body += line + '\n'
+    }
+  }
+  out.push(cur)
+  return out
+}
 
 /**
  * 纯规则评估:不依赖网络,确定性。
@@ -87,16 +150,45 @@ export function ruleEvaluate(changelog, agent) {
   const text = String(changelog ?? '')
   const lower = text.toLowerCase()
   const has = (k) => lower.includes(String(k).toLowerCase())
+  const hasWord = (k) => matcher(k)(lower)
 
-  const negated = NEGATION.filter(has)
-  // 强信号先扫,再把「被显式否定的」剔掉
-  const strongRaw = STRONG.filter(has)
-  const strong = negated.length
-    ? strongRaw.filter((k) => !NEGATABLE.some((n) => String(k).toLowerCase().includes(n)))
-    : strongRaw
-  const medium = MEDIUM.filter(has)
-  const weak = WEAK.filter(has)
-  const declared = (agent?.riskKeywords ?? []).filter(has)
+  const negated = NEGATION.filter(hasWord)
+  // 找出每个否定句式所在的小节 —— 抵消只在该小节内生效
+  const secs = sections(text)
+  const negatedSections = new Set()
+  for (const s of secs) {
+    const low = s.body.toLowerCase()
+    if (NEGATION.some((n) => matcher(n)(low))) negatedSections.add(s)
+  }
+  /**
+   * 某命中词是否被否定抵消:必须与否定句式**同处一个小节**。
+   * 同一小节 → 抵消(这就是空模板的情形);不同小节 → 保留。
+   *
+   * 小节内容 = **标题行 + 正文**。标题必须算进去:qwen-code 的模板里
+   * `## Breaking Changes` 本身就是 markdown 标题,`breaking change` 这个
+   * 强信号出现在 heading 上而不是 body 里 —— 只看 body 会抵消不掉(实测踩过)。
+   */
+  const killed = (k) => {
+    if (!negated.length) return false
+    if (!NEGATABLE.some((n) => String(k).toLowerCase().includes(n))) return false
+    return secs.some((s) => {
+      if (!negatedSections.has(s)) return false
+      return matcher(k)(((s.heading ?? '') + '\n' + s.body).toLowerCase())
+    })
+  }
+
+  const strongRaw = STRONG.filter(hasWord)
+  const strong = strongRaw.filter((k) => !killed(k))
+  // MEDIUM 也必须过否定过滤 —— 旧实现只过滤 STRONG,于是
+  // 「No known breaking changes」抵消掉了 breaking,却留下一堆
+  // schema/migration/table/rename,版本照样被判 medium(实测 qwen-code 每版都中招)
+  const mediumRaw = MEDIUM.filter(hasWord)
+  const medium = mediumRaw.filter((k) => !killed(k))
+  const weak = WEAK.filter(hasWord)
+  // 台账声明的词同样要过否定过滤 —— 否则 hits 里会出现「已抵消的 breaking」,
+  // 展示上自相矛盾(等级对了但命中词表骗人)。实测 qwen-code 就是这样:
+  // neg 里明明有 no known breaking changes,hits 里却还挂着 breaking。
+  const declared = (agent?.riskKeywords ?? []).filter((k) => hasWord(k) && !killed(k))
 
   let risk = 'none'
   if (strong.length) risk = 'high'
@@ -115,7 +207,7 @@ export function ruleEvaluate(changelog, agent) {
       risk === 'none'
         ? '未命中风险信号'
         : `命中 ${hits.length} 个风险词${strong.length ? `(强:${strong.join(',')})` : ''}` +
-          (negated.length ? ` —— 已按否定声明「${negated[0]}」抵消强信号` : '')
+          (negated.length ? ` —— 同小节内的「${negated[0]}」已抵消 ${strongRaw.length - strong.length + mediumRaw.length - medium.length} 个信号` : '')
   }
 }
 
