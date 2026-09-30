@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-09-30 · 看板部署上线(阿里云)+ 四个部署坑
+
+服务已在阿里云跑通并对公网提供:`https://watch.logic-yjb.top`(子域名 + certbot HTTPS + nginx 注入 token header)。**踩了四个坑,全是"静默失败"型,值得记档。**
+
+### 坑 1 · 提交没推送 → 服务器上根本找不到文件
+
+本地 `git push` 没做,服务器 clone 的远端 main 不含 `tools/upstream-watch/`,报 `MODULE_NOT_FOUND`。**部署任何东西之前先确认已推送。**
+
+### 坑 2 · 前台进程没退 → pm2 崩溃循环
+
+先前按文档"前台跑看效果"起的那份进程还占着 8788,`pm2 start` 每次都 `EADDRINUSE` 崩掉(↺ 15,status `errored`)。**迷惑点:服务其实是活的**——`curl` 拿得到响应,只是活的是那个游离进程而非 pm2 管的。看到 pm2 errored 但 curl 有响应,先查端口占用(`ss -lntp | grep <port>`),别急着删 pm2 实例。
+
+### 坑 3 · `pm2 --env` 静默失败 → 鉴权形同虚设
+
+`pm2 start ... --env AUTH_TOKEN=xxx` 没把变量传进进程,结果 **`curl` 不带 token 也返回 200**——看板裸奔。**这种"配置没生效"不会报错,只会让你以为配好了。** 改用环境变量前缀方式启动更可靠:
+
+```bash
+PORT=8788 AUTH_TOKEN=$(cat ~/.msql-watch-token) pm2 start server.mjs --name xxx
+```
+
+**验证必须同时看两条:`no-token: 401` + `with-token: 200`。只看后者会以为没事。**
+
+### 坑 4 · nginx 注入 token 的取舍
+
+`proxy_set_header Authorization "Bearer <token>"` 让 token 永不出现在 URL / 浏览器历史 / access log,代价是**明文存在 nginx 配置文件里**(已 chmod 收紧)。若改用 `?token=` 则相反——token 会进 access log。**自用小服务的取舍:nginx 注入 + 文件权限控制。**
+
+### 部署要点(下次照抄)
+
+- 服务只监听 `127.0.0.1`,公网只能经 nginx —— 天然不暴露
+- 子域名独立 `server` 块,**不碰现有 qa 站点**(同机器还跑着 qa-server,80/443 已被占用)
+- token 存 `~/.msql-watch-token`(600),nginx 配置用 `sed` 从该文件注入,避免两处硬编码不一致
+- `pm2 save` 必做,否则服务器重启丢失
+- 实测抓取结果与本机**逐项一致**:opencode low / claudecode·qwencode·gemini·hermes medium / codex·kimicli·cursor none / 4 家闭源 unknown,**零误报**
+
+**下一步(待定):** 第 3 期(本机探针定时上报黑盒 + 结论双写)/ 发 v0.5.6(连接向导修复对存量用户重要)/ 原有宣传与渠道待办。
+
+---
+
 ## 2026-09-30 · 第 2 期:云端上游监控看板(阿里云,零依赖)
 
 前三期把「上游漂移」从**用户报障才知道**变成**主动可见**。本期是最初那块「小程序」:一个汇总 12 家 agent 更新日志并评估影响面的网页看板。
