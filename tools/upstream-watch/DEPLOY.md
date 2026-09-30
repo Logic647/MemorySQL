@@ -91,6 +91,31 @@ AUTH_TOKEN=$(cat ~/.msql-watch-token) pm2 restart msql-upstream-watch --update-e
 
 **验证必须同时看两个结果**:`no-token:401` 和 `with-token:200`。只看后者会以为配好了。
 
+## 一键配置脚本 `setup-watch.sh`
+
+上面那些坑(GitHub 限流静默降级、`pm2 --env` 静默失效、重启丢配置)手工操作容易漏,这个脚本把它们固化了:
+
+```bash
+scp tools/upstream-watch/setup-watch.sh root@<server>:/root/
+ssh root@<server> 'chmod +x /root/setup-watch.sh'
+
+/root/setup-watch.sh <github_token>            # 应用
+/root/setup-watch.sh <github_token> --refresh  # 应用并触发一次抓取
+/root/setup-watch.sh --verify                  # 只体检,不改任何东西
+/root/setup-watch.sh --show                    # 打印当前配置(密钥自动掩码)
+/root/setup-watch.sh --reset                   # 摘掉 GITHUB_TOKEN,保留其余
+```
+
+**它的几条硬设计(改脚本前先知道)**:
+
+- **先验证 token 再动手** —— 打 `api.github.com/rate_limit`,`core.limit < 100` 直接中止。实测用假 token 会在这一步退出,**不碰 pm2、不写 env 文件**
+- **从活进程 env 快照出配置再叠加新变量** —— 原来只在 pm2 命令行里给的 `LLM_*` 不会因为这次配置而丢失
+- **落盘到 `~/.msql-watch-env`(600)并 `pm2 save`** —— 否则重启后 `LLM_API_KEY` 直接消失,页面只显示「LLM 未启用」,**全程无任何报错**
+- **只动 `msql-upstream-watch`** —— `qa-server` 不是我们的,不能碰
+- **每次写入前自动备份** `~/.msql-watch-env.bak.<时间戳>`,verify 失败会打印回滚命令
+- **体检同时看 401 和 200**,缺一即判失败
+- 脚本是**纯 ASCII**,因为它要经 PowerShell 管道送到 Linux 执行(中文/多字节字符会让远端 `sed` 引号失配)
+
 ## 反向代理与 HTTPS
 
 服务默认只监听 `127.0.0.1`,公网访问走 nginx:
