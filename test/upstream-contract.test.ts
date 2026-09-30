@@ -109,6 +109,34 @@ describe('台账自洽性(防台账腐化)', () => {
       expect(a.riskKeywords.length, `${a.id} 未声明 riskKeywords`).toBeGreaterThan(0)
     }
   })
+
+  /**
+   * hermes 的身份陷阱 —— 2026-09-30 用户纠正过一次,别再犯第二次。
+   *
+   * 用户装的是中文线(外壳 Eynzof/Hermes-CN-Desktop + 内嵌核心 Eynzof/Hermes-CN-Core),
+   * 但台账的 upstream 刻意指向英文上游 NousResearch/hermes-agent,因为分支只是镜像:
+   * 它的 commit 全是「同步主分支」这类合并噪音、release 正文为空,盯它会漏掉
+   * 上游每一次 schema 变更。变更在上游发生,分支只决定「什么时候轮到我」。
+   *
+   * 所以这里断言的是**理由必须留在台账里**,而不是断言某个仓库名 ——
+   * 换仓库前请先确认新仓库的 release 有可用正文,否则白盒会退化成只看 commit。
+   */
+  it('hermes:盯的是上游而非用户实际运行的中文分支,且理由已记录', () => {
+    const h = AGENTS.find((a) => a.id === 'hermes')!
+    expect(h.upstream.repo).toBe('NousResearch/hermes-agent')
+    const note = h.upstream.note ?? ''
+    // 分支身份必须写在台账里,否则下一个人会以为用户装的就是英文上游
+    expect(note, '未记录中文分支身份').toContain('Eynzof/Hermes-CN-Core')
+    expect(note, '未记录版本对应关系').toMatch(/runtime-v[\d.]+-cn/)
+    expect(note, '未说明为何盯上游').toMatch(/上游/)
+  })
+
+  it('hermes:mcp 只要求 url —— protocol/trust 在上游与中文分支都不存在', () => {
+    const h = AGENTS.find((a) => a.id === 'hermes')!
+    // 曾误写 ['url','protocol','trust'],那等于声明了一个不存在的契约,
+    // 还会让写后回读校验去校验死键
+    expect(h.mcp?.requiredKeys).toEqual(['url'])
+  })
 })
 
 /**

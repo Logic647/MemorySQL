@@ -269,9 +269,30 @@ export const AGENTS: AgentContract[] = [
   },
   {
     id: 'hermes',
-    name: 'Hermes Agent',
+    name: 'Hermes Agent(CN 桌面版)',
     agentType: 'hermes',
-    upstream: { kind: 'github', repo: 'NousResearch/hermes-agent' },
+    /**
+     * ⚠️ 这里盯的是**英文上游**,但用户实际装的是中文分支 —— 刻意如此,理由见 note。
+     *
+     * 装的是:Eynzof/Hermes-CN-Desktop(Tauri+Rust 外壳)内嵌 Eynzof/Hermes-CN-Core
+     * (Hermes Agent 的中文社区分支,Python 侧仍是 hermes_cli)。
+     * 曾经把 upstream 错记成本仓库,导致整个 hermes 的 changelog 监控盯的是
+     * 另一个产品(2026-09-30 由用户纠正后重新核实)。
+     */
+    upstream: {
+      kind: 'github',
+      repo: 'NousResearch/hermes-agent',
+      note:
+        '**盯英文上游,尽管用户装的是中文分支** —— 刻意如此。分支只是上游的镜像:' +
+        '它的 commit 几乎全是「同步主分支到 dev-fix」这类合并噪音,release 正文为空,' +
+        '盯它会漏掉上游的每一次 schema 变更。变更发生在上游,分支只决定「什么时候轮到我」。' +
+        '版本对应关系:分支 tag `runtime-v<上游版本>-cn.<序号>`,例如 ' +
+        '`runtime-v0.21.0-cn.18` ↔ 上游 0.21.0(上游 tag v2026.8.31)。' +
+        '2026-09-30 实测:用户安装在 0.21.0,上游已到 0.21.5 —— **落后 5 个 patch**,' +
+        '这些变更尚未进入本机,但迟早会。真正的安装身份:外壳 Eynzof/Hermes-CN-Desktop' +
+        '(release 正文是 43 字符的 nightly 模板,自述 prototype,同样不适合当 changelog)' +
+        '+ 内嵌核心 Eynzof/Hermes-CN-Core。'
+    },
     monitor: 'tracked',
     // 安装位置随注册表 / 盘符变动(home → 注册表 InstallLocation → 各盘符根),
     // 探测链已封装在 resolveHermesHome();台账不重复实现,直接引用
@@ -286,17 +307,22 @@ export const AGENTS: AgentContract[] = [
         },
         note:
           'state.db 布局在 0.7.0 变过(根级 vs profiles/<name>/),resolveHermesHome 有探测链;' +
-          '解析逻辑内联在 capture-hermes/index.ts 的 scan 中,未导出为纯函数'
+          '解析逻辑内联在 capture-hermes/index.ts 的 scan 中,未导出为纯函数。' +
+          '**本机未装该 agent 的原生 hermes,故此表长期黑盒未验证** —— ' +
+          'capture-hermes 读的是 CN 桌面版内嵌核心写出的库,格式变更先在英文上游发生'
       }
     },
     mcp: {
       file: 'hermes-home/config.yaml',
       jsonpath: 'mcp_servers.memorysql',
-      // 只认 url —— 2026-09-30 核对上游 main(NousResearch/hermes-agent)源码:
-      // hermes_cli/mcp_config.py 判定传输的方式是 `if "url" in cfg` → HTTP,
-      // 而 `protocol` / `trust` / `stateless` 在全仓**一次都没出现**
-      // (trust 只用于 skills 的 trusted_project_dirs,protocol 只用于
-      //  bot_mode_protocol / ws ping / delegation wire protocol)。
+      // 只认 url —— 2026-09-30 同时核对**英文上游**与**用户实际运行的中文分支**,
+      // 两者结论一致:
+      //   hermes_cli/mcp_config.py 判定传输的方式是 `if "url" in cfg` → HTTP;
+      //   `stateless` 在两个仓库全仓 0 次;`trust` 只用于 skills 的
+      //   trusted_project_dirs;`protocol` 只用于 bot_mode_protocol / ws ping /
+      //   delegation wire protocol(注意:代码里叫 transport 的那个变量只是
+      //   **显示用**的局部变量,不是配置键;桌面版 API 的 McpServer 类型里
+      //   确有 transport 字段,但那层由 Python 侧从 url/command 推导)。
       // 以前写 requiredKeys:['url','protocol','trust'] 等于**对外声明了一个
       // 不存在的契约**,还会让写后回读校验去校验死键。
       requiredKeys: ['url'],

@@ -307,11 +307,12 @@
     },
     {
       "id": "hermes",
-      "name": "Hermes Agent",
+      "name": "Hermes Agent(CN 桌面版)",
       "agentType": "hermes",
       "upstream": {
         "kind": "github",
-        "repo": "NousResearch/hermes-agent"
+        "repo": "NousResearch/hermes-agent",
+        "note": "**盯英文上游,尽管用户装的是中文分支** —— 刻意如此。分支只是上游的镜像:它的 commit 几乎全是「同步主分支到 dev-fix」这类合并噪音,release 正文为空,盯它会漏掉上游的每一次 schema 变更。变更发生在上游,分支只决定「什么时候轮到我」。版本对应关系:分支 tag `runtime-v<上游版本>-cn.<序号>`,例如 `runtime-v0.21.0-cn.18` ↔ 上游 0.21.0(上游 tag v2026.8.31)。2026-09-30 实测:用户安装在 0.21.0,上游已到 0.21.5 —— **落后 5 个 patch**,这些变更尚未进入本机,但迟早会。真正的安装身份:外壳 Eynzof/Hermes-CN-Desktop(release 正文是 43 字符的 nightly 模板,自述 prototype,同样不适合当 changelog)+ 内嵌核心 Eynzof/Hermes-CN-Core。"
       },
       "monitor": "tracked",
       "localRoots": [
@@ -344,7 +345,7 @@
               "timestamp"
             ]
           },
-          "note": "state.db 布局在 0.7.0 变过(根级 vs profiles/<name>/),resolveHermesHome 有探测链;解析逻辑内联在 capture-hermes/index.ts 的 scan 中,未导出为纯函数"
+          "note": "state.db 布局在 0.7.0 变过(根级 vs profiles/<name>/),resolveHermesHome 有探测链;解析逻辑内联在 capture-hermes/index.ts 的 scan 中,未导出为纯函数。**本机未装该 agent 的原生 hermes,故此表长期黑盒未验证** —— capture-hermes 读的是 CN 桌面版内嵌核心写出的库,格式变更先在英文上游发生"
         }
       },
       "mcp": {
