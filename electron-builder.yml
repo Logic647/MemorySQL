@@ -55,3 +55,25 @@ linux:
     - target: AppImage
     - target: deb
     - target: tar.gz
+
+# ── macOS ────────────────────────────────────────────────────────────────────
+# 图标:不指定 .icns,electron-builder 会从 build/icon.png 自动生成。
+# 该 PNG 原本只有 256x256,而自动转换要求 >=512,故已放大到 1024x1024
+# (HighQualityBicubic + 一次轻量 unsharp mask 找回边缘锐度)。
+# 换源图时注意尺寸,别再退回 256。
+mac:
+  icon: build/icon.png
+  category: public.app-category.developer-tools
+  darkModeSupport: true
+  # 未签名:没有 Apple Developer ID 就签不了。CI 上把 identity 显式置 null,
+  # 免得 electron-builder 去翻钥匙串里不存在的证书。
+  # 代价是首次启动 Gatekeeper 会拦,用户需「右键 -> 打开」或
+  #   xattr -dr com.apple.quarantine /Applications/MemorySQL.app
+  # 这条已写进 README 与发版说明。要正式签名见 docs/RELEASE.md。
+  identity: null
+  target:
+    # dmg 给人装;zip 是 electron-updater 在 macOS 上的更新载体 ——
+    # 少了 zip,mac 用户装上之后再也不会收到自动更新。
+    - target: dmg
+    - target: zip
+  artifactName: MemorySQL-${version}-${arch}.${ext}

@@ -9,13 +9,21 @@
 [![CI](https://github.com/Logic647/MemorySQL/actions/workflows/ci.yml/badge.svg)](https://github.com/Logic647/MemorySQL/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Logic647/MemorySQL)](https://github.com/Logic647/MemorySQL/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows-0078d4)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078d4)
 
 [下载安装包](https://github.com/Logic647/MemorySQL/releases/latest) · [快速开始](#-快速开始) · [插件开发](#-插件开发规范) · [文档](#-文档)
 
 </div>
 
 ---
+
+> [!NOTE]
+> **macOS 包未签名**:首次启动 Gatekeeper 会拦下未验证的应用。选「**右键 → 打开**」确认一次即可,之后正常双击启动。
+> 不想每次都这样,可在终端执行一次:
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/MemorySQL.app
+> ```
+> Apple Silicon 与 Intel Mac 都有对应安装包,认准文件名里的 `arm64` / `x64`。
 
 你同时用三四个 AI agent(Codex / ZCode / Claude Code / Hermes …),换一个就得重新铺垫背景:项目讲到哪、你有什么偏好、踩过什么坑——全部重来。
 

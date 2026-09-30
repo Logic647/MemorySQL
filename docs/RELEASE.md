@@ -19,10 +19,37 @@
      --title "MemorySQL vX.Y.Z" --notes "..."
    ```
    必传三件:**exe + .exe.blockmap(差分更新用)+ latest.yml(updater 索引)**;win-unpacked 可选打包 zip 给免安装用户。
+
+   三个平台各自的必传件(`scripts/publish-release.mjs` 已按此上传,缺哪件 updater 就对哪个平台失效):
+
+   | 平台 | 安装包 | 更新载荷 | updater 索引 |
+   |---|---|---|---|
+   | Windows | `MemorySQL-Setup-X.Y.Z.exe` | `.exe.blockmap` | `latest.yml` |
+   | Linux | `.AppImage` / `.deb` | — | `latest-linux.yml` |
+   | macOS | `MemorySQL-X.Y.Z-{arm64,x64}.dmg` | `.zip` | `latest-mac.yml` |
 6. **验收自动更新**:已安装旧版的机器启动应用 → 应静默下载新版本并提示;或在设置里手动触发(后续可加)。
 
-## winget 提交(首次发版后)
+## macOS 发布注意事项
 
+- **未签名**:目前没有 Apple Developer ID,`electron-builder.yml` 里 `mac.identity: null`。
+  首次启动 Gatekeeper 会拦,用户需「右键 → 打开」或执行
+  `xattr -dr com.apple.quarantine /Applications/MemorySQL.app`。README 顶部已写明。
+- **dmg 与 zip 缺一不可**:dmg 给人装,**zip 才是 electron-updater 替换用的载荷**。
+  只发 dmg 的话 mac 用户装上之后再也收不到自动更新,且**没有任何报错**。
+- **两个架构分别出包**:`macos-14`(arm64)与 `macos-13`(x64)各出一个,不做 universal。
+  原因是原生模块按架构分发(`sqlite-vec-darwin-{arm64,x64}`),universal 要合并两套。
+- **本地无法验证 mac 构建**:electron-builder 硬性要求在 macOS 上构建,
+  在 Windows 上跑 `--mac` 直接报 "supported only on macOS"。
+  **唯一验证途径是 CI** —— 推 main 后看 package job 的两个 mac runner 是否绿。
+- **要转正式签名 + 公证**:需 Apple Developer Program(US$99/年),然后
+  1. 仓库 Settings → Secrets 配 `CSC_LINK`(Developer ID Application 导出的 .p12,base64)、
+     `CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`
+  2. `electron-builder.yml` 删掉 `identity: null`,补 `notarize: true` 与 `hardenedRuntime: true`
+  3. CI 里去掉 `CSC_IDENTITY_AUTO_DISCOVERY: 'false'`
+
+  转完后 mac 用户双击即开,不再有 Gatekeeper 提示。
+
+## winget 提交(首次发版后)
 - ✅ **v0.4.0 已提交**:PR https://github.com/microsoft/winget-pkgs/pull/426778
   (fork `Logic647/winget-pkgs` 分支 `winget-memorysql-0.4.0`,路径 `manifests/l/Logic647/MemorySQL/0.4.0/` 三件套,
   通过 GitHub Contents API 上传——本机无法 clone 大仓库也能提交)

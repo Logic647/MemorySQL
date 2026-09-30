@@ -30,7 +30,8 @@ jobs:
       - run: npm run build
 
   # package on main pushes (build artifact) and on v* tags (auto-publish the
-  # GitHub Release with exe/AppImage/deb/tar.gz via electron-builder publish)
+  # GitHub Release with exe/AppImage/deb/tar.gz/dmg/zip via electron-builder
+  # publish). Windows + Linux + macOS, so the three platforms stay covered.
   package:
     needs: ci
     permissions:
@@ -39,8 +40,25 @@ jobs:
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     strategy:
+      # macOS is split by architecture rather than built as universal.
+      # Reason: the native modules ship as per-arch optional dependencies
+      # (sqlite-vec-darwin-{arm64,x64}), and a universal build would have to
+      # merge two of those plus onnxruntime's dylib. macos-13 is the last
+      # Intel runner; macos-14 is Apple Silicon. Using a real runner of each
+      # arch means `npm ci` installs the matching optional deps, so no
+      # cross-arch install trickery is needed.
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-14
+            platform: mac
+            arch: arm64
+          - os: macos-13
+            platform: mac
+            arch: x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -52,20 +70,32 @@ jobs:
       # the packaged app runs under Electron's ABI, not node's
       - run: npx electron-rebuild
       - name: Build and package (Windows)
-        if: matrix.os == 'windows-latest'
+        if: matrix.platform == 'win'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-vite build && npx electron-builder --win
 
       - name: Build and package (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'linux'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-vite build && npx electron-builder --linux
 
+      # Unsigned on purpose (no Apple Developer ID yet). electron-builder is
+      # told identity: null in electron-builder.yml so it does not go hunting
+      # for a certificate that is not in the keychain. Notarization is skipped
+      # for the same reason — see docs/RELEASE.md for turning both on.
+      - name: Build and package (macOS)
+        if: matrix.platform == 'mac'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # keep an accidental local signing identity from being picked up
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-vite build && npx electron-builder --mac --${{ matrix.arch }}
+
       - name: Upload installer artifact (Windows)
         uses: actions/upload-artifact@v4
-        if: matrix.os == 'windows-latest'
+        if: matrix.platform == 'win'
         with:
           name: MemorySQL-Windows-${{ github.sha }}
           path: |
@@ -76,7 +106,7 @@ jobs:
 
       - name: Upload installer artifact (Linux)
         uses: actions/upload-artifact@v4
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'linux'
         with:
           name: MemorySQL-Linux-${{ github.sha }}
           path: |
@@ -85,3 +115,17 @@ jobs:
             dist/*.tar.gz
             dist/latest-linux.yml
           if-no-files-found: warn
+
+      # dmg = installer for humans, zip = the payload electron-updater replaces
+      # on macOS. latest-mac.yml is the update index; without it mac users get
+      # no automatic updates at all even though everything else works.
+      - name: Upload installer artifact (macOS)
+        uses: actions/upload-artifact@v4
+        if: matrix.platform == 'mac'
+        with:
+          name: MemorySQL-macOS-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/latest-mac.yml
+          if-no-files-found: error
