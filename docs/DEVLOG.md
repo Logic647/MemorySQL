@@ -4,6 +4,77 @@
 
 ---
 
+## 2026-09-30 · 契约指纹 + 隐私披露 + macOS 清单合并(发版前抓到的三个坑)
+
+### ① 契约指纹:「台账版本差」与「上游漂移」原来长得一模一样
+
+看板有两条独立证据链,白盒在**云端**用服务器自己那份 `upstream/ledger.json` 算,
+黑盒在**开发机**用本机那份算再 POST 上来。两份是各自 git checkout 的文件,
+而服务器靠手动 `git pull`(那条链路实测反复超时)。**所以它们真的可能不一致**,
+一旦不一致就会出现「白盒说一切正常 / 黑盒说布局不匹配」,
+而**你无法分辨这是上游改了格式还是两边台账版本不同** —— 这个判断直接触发一次适配发版。
+
+两边各算一个指纹(`tools/upstream-watch/fingerprint.mjs`,只覆盖会改结论的字段,
+`note`/`name` 明确排除),不一致时面板红条点名两个指纹 + 「结论不可比」+ 修复步骤。
+
+**上线当天就抓到一个真实的**:部署后本机 `20bd187c` / 服务器 `ec173348`。
+途中还验证了三态设计真的有用 —— 部署后、探针重跑前是 `unknown` 而不是误报的 `mismatch`
+(上一次探针是功能上线前跑的,没带这个字段)。**两态实现此刻就会误报一个不存在的冲突。**
+
+### ② 隐私披露:四条里有四条我第一遍就写错了
+
+msftbot 以 `outdatedSensitiveVersion` 退回 winget PR,要求公开披露。写政策文件时
+**逐条回源码核对,而不是照抄 bot 的话**(bot 说的对,但我自己写的不对):
+
+| 我第一遍写的 | 实际 |
+|---|---|
+| provider = OpenAI/Anthropic/DeepSeek/MiMo | **只有 `openai \| anthropic \| ollama`** —— DeepSeek/MiMo 是**看板那个工具**的 provider,和本应用无关。用户会去找不存在的设置项 |
+| vault 在 `memorysql/vault\` | 在 **`data/vault\`**;设置文件是 `data/settings.json`(我凭空编了个 `config.json`) |
+| 「可在设置里关闭 MCP 服务」 | `plugin.mcp-server.enabled` 开关**存在**、设置页甚至有 `mcp disabled` 分支,但**界面只有端口输入框,没有开关**。安全文件里这么写是最糟的错法 —— 改成「已知产品缺口 + 真实办法是退出应用」 |
+| 存了 thinking 块 | `RawMessage` 有 `meta`,改说「解析器保留的原始附加数据」(没确认任何 parser 抓 thinking) |
+
+bot 说的**对**的两条也核实了才敢写:MCP 端点**确实无鉴权**
+(`server.listen(port, '127.0.0.1')` + Host 白名单 + Origin 检查,防的是 DNS rebinding 与跨源,
+**不是身份认证**)。另:文件夹同步有 `plaintextAck` 门禁(不勾选配不了目录),
+停用**不删**已写出的文件。
+
+### ③ macOS 清单合并:一个会真的发出去的坏更新
+
+macOS 拆两个 runner 是因为 `macos-13`(Intel)**排了 86 分钟仍未分配到 runner**。
+但代价是**两个 job 各产出一份 `latest-mac.yml`**,一个 release 只能放一个同名文件,后传的覆盖先传的。
+
+用**装好的 electron-updater 自己的函数** `MacUpdater.filterFilesForArch`
+(`out/MacUpdater.js:30`)实测:updater 读**这一份**清单,再从 `files:` 按架构过滤。
+
+| 清单内容 | arm64 Mac 装到 | Intel Mac 装到 |
+|---|---|---|
+| 只有 arm64 | ✅ arm64 | `[]` → `ERR_UPDATER_ZIP_FILE_NOT_FOUND` |
+| 只有 x64 | ⚠️ **Intel 版** | ✅ x64 |
+
+**第二行是要命的**:Apple Silicon 会下载装上 **Intel 版**,而 `sqlite-vec` / `onnxruntime` /
+`tokenizers` 全是按架构编译的原生模块 —— 换架构即损坏,**且不报任何错**,直到某个功能用到才崩。
+CI 不会红,发版也不会报错。
+
+`scripts/merge-mac-manifest.mjs` 合并两份 `files:`,然后**用 electron-updater 自己的函数**
+校验两个架构都能解析到 zip(不是复述它的规则 —— 升级改了行为,校验跟着变),
+单架构清单**拒绝输出**。版本不一致在**写盘前**抛错(实测退出码 1 且不生成输出文件)。
+
+> 脚本第一版在 `assertBothArchesResolve(merged)` 里写成了 `m.files`,被新测试当场抓到;
+> 另外单架构的情况实际报的是「arm64 与 x64 解析到了同一个包」,比「某架构取不到包」更准,改成锁这条信息。
+
+**arm64 产物核对通过**(没整包下载 —— 374 MB 会超时,改用 Range 读 zip 尾部中央目录列条目、
+再按偏移定点取 `latest-mac.yml`):`dmg` + `zip` + `latest-mac.yml` 三件套齐,**无 blockmap**
+(只影响差分下载,清单里 `sha512` 仍校验完整性)。
+
+### 状态
+
+typecheck 0 / vitest **320:320**。`macos-13 x64` 仍是 GitHub runner 供给问题(两个 run 分别排了
+86 / 17 分钟,**都没分配到 runner**,`runner_name` 为空),与代码无关。
+**v0.5.6 仍不打 tag**,等 x64 产物出来以便验证合并后的清单。
+winget 需等发布(要真实 SHA256)→ 用 `PRIVACY.md` 的 URL 改 manifest。
+
+---
+
 ## 2026-09-30 · macOS 打包上线(第三平台)
 
 ### 先验证可行性,再动手
