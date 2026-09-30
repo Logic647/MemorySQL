@@ -12,8 +12,20 @@
  *
  * 退出码:0=通,1=不通(打印原因与排查建议)
  */
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { evaluate, llmEnhance } from '../tools/upstream-watch/evaluate.mjs'
-import { AGENTS } from '../src/shared/upstream-agents.ts'
+
+/**
+ * 台账读 ledger.json(导出件)而非 TS 源 —— 这个脚本要在**服务器(Node 20)**上跑,
+ * 而 Node 20 不支持 --experimental-strip-types,import .ts 会直接
+ * ERR_UNKNOWN_FILE_EXTENSION。ledger.json 与 TS 源的一致性由
+ * test/upstream-contract.test.ts 在 CI 断言。
+ */
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+const LEDGER = path.join(HERE, '..', 'upstream', 'ledger.json')
+const { agents: AGENTS } = JSON.parse(fs.readFileSync(LEDGER, 'utf-8'))
 
 /**
  * provider 预置 —— 信息取自各家官方文档,核对日期 2026-09-30。

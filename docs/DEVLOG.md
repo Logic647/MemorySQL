@@ -70,6 +70,14 @@ typecheck 0 / vitest **199:199**(26 文件)/ build 通过 / 零新增依赖。�
 
 测试 5 → **14** 个。过程中还纠正了自己的一个错误假设:我最初以为「不设 BASE_URL 走通用分支」,实际**默认端点就是 Anthropic 官方**,走的是 `x-api-key` 分支——测试如实反映真实行为。
 
+### 又一个只在真机暴露的 bug:`check-llm.mjs` 在服务器上跑不起来
+
+用户在服务器(Node **20.20.2**)执行时报 `ERR_UNKNOWN_FILE_EXTENSION: Unknown file extension ".ts"`。根因:该 `.mjs` 脚本 `import` 了 TS 台账却没加 `--experimental-strip-types`,**而 Node 20 根本不支持该 flag**(22.6+ 才有)——加 flag 也救不了。
+
+修法:**改读 `upstream/ledger.json`**(云端本来就在用它),脚本变成纯 `.mjs` + `.json` 依赖,Node 20 可跑。台账一致性仍由 `upstream-contract.test.ts` 在 CI 保证。
+
+**教训:云端/服务器侧脚本一律不许 import `.ts`。** 顺手给探针加了 Node ≥22.6 前置检查(它要执行 TS 检查器,只有本机 Node 24 才行),失败给中文提示而不是让人看一堆 ESM 栈。
+
 ---
 
 ## 2026-09-30 · 看板部署上线(阿里云)+ 四个部署坑

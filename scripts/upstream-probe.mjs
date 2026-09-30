@@ -35,6 +35,18 @@ function log(...a) {
   console.log(`[probe] ${a.join(' ')}`)
 }
 
+// 探针通过子进程跑 TS 检查器,需要 Node ≥22.6(strip-types)。
+// 提前给明确提示,而不是让用户看一堆 ERR_UNKNOWN_FILE_EXTENSION 栈
+const [major, minor] = process.versions.node.split('.').map(Number)
+if (major < 22 || (major === 22 && minor < 6)) {
+  console.error(
+    `[probe] 需要 Node ≥22.6(当前 ${process.versions.node})——` +
+      `本机探针要执行 TypeScript 检查器。\n` +
+      `        升级 Node 后重跑,或改在装有 agent 数据的机器上执行。`
+  )
+  process.exit(2)
+}
+
 /** 跑黑盒检查,拿 JSON。用子进程而非 import,避免工具与生产代码耦合 */
 function runBlackbox() {
   const out = execFileSync(
