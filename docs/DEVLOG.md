@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-09-30 · v0.5.5 装机验收 + 全量会话对账(无代码增量)
+
+用户要求「读取 memorysql 相关会话更新当前项目情况」。走 MCP 拉会话时踩到两个坑,顺带查清并留档;**代码零改动**,`main` @ `4396ed6` 工作树干净,typecheck 0 / vitest **130:130**(20 文件)。
+
+**坑 1:MCP 索引与真库不是同一个。** 仓库内 `data/memory.db`(62MB)是开发副本且**已过期**——里面 opencode/zcode 的 id 只到 #221,而 9/22 之后的新会话一条都没有。实跑的应用读的是 `%APPDATA%\memorysql\data\memory.db`(**95MB**,236 会话)。**教训:查历史会话一律走 MCP 或 `%APPDATA%` 真库,别信仓库里的 `data/`。**
+
+**坑 2:`started_at` 是「秒」,`updated_at` 是「毫秒」。** 直查库按毫秒解读 `started_at` 会全部显示 1970-01-21,极易误判成时间戳损坏。实为**刻意设计且全链路自洽**:写入侧每个 parser 都 `Math.floor(t/1000)`(`claude-/codex-/qwencode-/zcode-parser` + `_lib/agent-db-parser.ts:47` 的 `epoch()`),读取侧 `App.tsx:42 fmtTime` 统一 `new Date(ts*1000)`,MCP 工具亦同。**但这个约定没写进 `docs/architecture.md`,是文档缺口**——新写查询的人一定会踩(本次即踩)。建议后续在数据模型章节补一行单位说明。
+
+**v0.5.5 装机验收(对应上一条列的三个验收点):**
+- ①**自动更新链路真实验收通过** —— `%LOCALAPPDATA%\memorysql-updater\pending\` 存有完整下载的 `MemorySQL-Setup-0.5.5.exe`(**177,318,979 字节**,与 `latest.yml` 声明 size 逐字节一致)+ `current.blockmap` + `update-info.json`(sha512 齐全)。装机时间线也对得上:应用 11:42 重启、更新包 11:56:53 下载、11:57:15 落盘。**0.5.4 → 0.5.5 走的是 electron-updater 自动收取,不是手动装**——这正是 v0.5.3 加的「进度条 + 立即重启安装/稍后」链路的首次真实闭环。
+- ②**OpenCode 2.x 捕获在装机版确认可用** —— 当前这次会话(#233)正由 `D:\MemorySQL\MemorySQL.exe`(ProductVersion `0.5.5`)实时摄入,消息数随对话增长,cwd 识别为 `F:/桌面/MemorySQL`。v2 schema 适配在真实运行环境下无回归。
+- ③WorkBuddy/Qoder 无法本地验收(本机未装,合成样本已覆盖,维持 0.5.4 原判)。
+
+**捕获矩阵健康(以 `updated_at` 为准,真库 236 会话):** opencode 20(最新 09-30 02:59)/ codex 25(09-30 02:50)/ zcode 39(09-29 03:55)/ hermes 49(09-22)/ claudecode 103(09-11)。memories 38、notes 36。**claudecode 自 9/11 起 19 天无新会话**——需确认是 Claude Code 本机已停用,还是 Desktop 元数据源路径失效(下条待办)。
+
+**对账结论:无未落地的代码增量。** 9/22–9/23 的 opencode 会话 #216/#213/#214(启动更新)已随 v0.5.3 落地、#217(capture 插件模式)已随 v0.5.4 落地,与 AGENTS.md 既有结论一致;本轮无新增结论需要改写。
+
+**下一步(优先级重排):** ①查 claudecode 19 天无新会话的原因 ②用户过目真实库截图 02-07 → 按 `docs/promo/checklist.md` 发帖 ③winget 0.5.x 版 PR(盯 microsoft/winget-pkgs#426778)④mcp.so 催收录 ⑤评估 Comate Zulu 适配。
+
+---
+
 ## 2026-09-29 · **v0.5.5 已发版**:OpenCode 2.x 适配 + 更新进度条/安装询问
 
 内容 = 本日两条:OpenCode 2.x schema 适配 + 更新下载进度条/完成后询问安装。流程:bump → 本地 dist 烟测(unpacked `--hidden` 起活)→ tag 直连推送一次成功 → 双矩阵 CI 全绿(4 job)→ **本次 electron-builder 把 7 资产一次传齐**(0.4.x 时代只传上 blockmap 的坑未复发),latest.yml 声明 size 与 exe 实际一致(177318979 字节)→ `publish-release.mjs` 转正(单草稿无需删重)。https://github.com/Logic647/MemorySQL/releases/tag/v0.5.5 `latest.yml` 公网已指向 0.5.5。
