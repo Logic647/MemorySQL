@@ -11,26 +11,67 @@
 
 两者互补:云端告诉你「可能变了」,黑盒告诉你「真的变了」。**对 4 家闭源 agent(qoder/codebuddy/workbuddy/zcode)只有黑盒可用**,看板会给它们一个「仅黑盒」行 + 手动粘贴 changelog 的入口。
 
+## ⚠️ 这套东西跑在两台机器上
+
+这是最容易搞混的地方,先记住这张表:
+
+| | 在哪跑 | 入口 | 产出 |
+|---|---|---|---|
+| **白盒**(抓 changelog + LLM 评估) | **云端服务器** | 服务端的定时任务 / `POST /api/refresh` | `state.results` |
+| **黑盒**(探真实数据) | **你的开发机** | `npm run upstream:check`(只看) / `npm run upstream:probe`(并上报) | POST 到云端 `/api/probe` → `state.probe` |
+
+**黑盒只能在本机跑** —— 因为它要去读 `~/.claude`、`~/.local/share/opencode/*.db` 这些真实 agent 数据,云端上根本没有。`scripts/upstream-probe.mjs` 就是这条链路的接头:本机跑黑盒 → POST 给云端 → 云端合并进 `state.probe` → 看板显示双栏。
+
+所以两台机器都要有这份代码,各自 `git pull`:
+
+```bash
+# 开发机(Windows)
+npm run upstream:check        # 只想看结果,不写云端
+npm run upstream:probe        # 跑黑盒 + 上报云端(需要云端 token)
+
+# 云端服务器(Linux,零依赖)
+pm2 start tools/upstream-watch/server.mjs --name msql-upstream-watch
+```
+
+**`npm run upstream:probe` 需要 Node ≥22.6** —— 它要执行 TS 检查器 `upstream/check.ts`(Node 20 不支持 `--experimental-strip-types`)。这是唯一必须在开发机跑、不能在云端跑的原因。
+
 ## 部署到阿里云(实测环境)
 
 实测:Node v20.20.2 / linux-x64,`api.github.com` 直连可用(200,成功率 100%,均 310ms),**无需代理**。
 
 ```bash
-# 1. 只取需要的两个目录(不 clone 整个仓库)
-git clone --depth 1 https://github.com/Logic647/MemorySQL.git
+# 1. 完整 clone —— 不要用 --depth 1!
+#    后面「台账变了怎么办」要靠 git pull 拿新提交,浅克隆 pull 会直接报错,
+#    只能 git fetch --unshallow 补救。
+git clone https://github.com/Logic647/MemorySQL.git
 cd MemorySQL
 
 # 2. 起服务(零依赖,无需 npm install —— 不要装,那是给产品用的)
-PORT=8788 AUTH_TOKEN='<换成你自己的长随机串>' \
-  node tools/upstream-watch/server.mjs
+set -a; . /root/.msql-watch-env; set +a
+node tools/upstream-watch/server.mjs
 
-# 3. 常驻
-pm2 start tools/upstream-watch/server.mjs --name msql-upstream-watch \
-  --env PORT=8788 --env AUTH_TOKEN='<同上>'
+# 3. 常驻。**不要用 pm2 --env**,它会静默丢掉你传的变量(见下文)。
+pm2 start tools/upstream-watch/server.mjs --name msql-upstream-watch
 pm2 save
 ```
 
 **不需要 `npm install`**:服务只用 Node 18+ 内置的 `http` / `fetch` / `fs`。
+
+**推荐直接用 `setup-watch.sh`**(见下文「一键配置脚本」),它把这套流程连同 `GITHUB_TOKEN` 持久化一起做掉,省得手工拼环境变量。
+
+## HTTP 端点
+
+全部端点都在鉴权之后(`server.mjs` 的 handler 第一行就是 `if (!auth(req, res)) return`),**包括 `/` 这个静态页**——所以浏览器直接访问裸 IP 会 401,必须靠 nginx 注入 header(见下文)。
+
+| 端点 | 方法 | 干什么 | 谁调用 |
+|---|---|---|---|
+| `/` | GET | 返回看板 HTML | 浏览器 |
+| `/api/state` | GET | 当前全量状态(白盒 results + 黑盒 probe) | 前端轮询 |
+| `/api/refresh` | POST | **立刻**跑一轮抓取 + LLM 评估,同步返回结果 | 前端「立即刷新」按钮、`setup-watch.sh --refresh` |
+| `/api/probe` | POST | 本机黑盒探针上报,合并进 `state.probe` | `scripts/upstream-probe.mjs` |
+| `/api/manual` | POST | 手动粘贴 changelog(给 4 家闭源 agent 用) | 前端输入框 |
+
+`/api/refresh` 一次要打 GitHub API 约 9~20 次,**实测耗时 107 秒**(同步阻塞返回),期间页面「立即刷新」按钮会置灰。
 
 ## 环境变量
 
@@ -115,6 +156,51 @@ ssh root@<server> 'chmod +x /root/setup-watch.sh'
 - **每次写入前自动备份** `~/.msql-watch-env.bak.<时间戳>`,verify 失败会打印回滚命令
 - **体检同时看 401 和 200**,缺一即判失败
 - 脚本是**纯 ASCII**,因为它要经 PowerShell 管道送到 Linux 执行(中文/多字节字符会让远端 `sed` 引号失配)
+
+## 本机探针(`npm run upstream:probe`)
+
+黑盒这条腿在开发机上跑,跑完把结果送到云端:
+
+```bash
+# 先看一眼,不碰云端
+npm run upstream:check
+
+# 跑完顺便上报云端
+PROBE_ENDPOINT=https://watch.logic-yjb.top \
+PROBE_TOKEN=$(cat ~/.msql-watch-token) \
+  npm run upstream:probe
+
+# 只在本地试跑、不上报
+PROBE_ENDPOINT=https://watch.logic-yjb.top PROBE_TOKEN=xxx npm run upstream:probe -- --dry-run
+```
+
+**`PROBE_ENDPOINT` 不用带 `/api/probe`**,脚本会自动补全(L132-134)。`PROBE_ENDPOINT` 不设时脚本只打印提示、不上报。
+
+上报是**双向确认**的:`res.ok` 之后还要 `ack.ok === true` 才算成功(`L145` + `L151`)。这层校验是有来历的——早期版本只查 `res.ok`,而服务端 `/` 分支对 POST 也照返 `index.html` + **200**,于是打印「上报成功」而 `state.probe` 始终是 `null`。**假成功比直接失败更糟**,改这块前先读 `docs/DEVLOG.md` 2026-09-30「第 3 期」。
+
+会额外生成一份 Markdown 报告到 `docs/upstream-reports/<日期>.md`,进 git 可 review。
+
+**探针刻意不直接写 `memories` 表** —— 那是应用的数据目录,CLI 直写有并发风险;结论落库仍由 agent 收工时用 `memory_log_progress` 做。
+
+探针的失败模式都当心过(它们都属于本项目的"静默失败"家族):POST 到站点根地址而非 `/api/probe`、服务端 `/` 分支不检查 method 导致返回 HTML+200 造成**假成功**、检查器自身 import 失败被误判成**上游漂移**(已单列为 `checker_error` 判定)。改这块前先读 `docs/DEVLOG.md` 2026-09-30「第 3 期」。
+
+## 线上现状(2026-09-30 实测)
+
+| 项 | 值 |
+|---|---|
+| 地址 | `https://watch.logic-yjb.top` |
+| 服务器 | 阿里云,Node v20.20.2,pm2 7.0.3 |
+| 监听 | `127.0.0.1:8788`(公网只经 nginx) |
+| pm2 应用名 | `msql-upstream-watch`(**不要动 `qa-server`,不是我们的**) |
+| 配置 | `/root/.msql-watch-env`(600,由 `setup-watch.sh` 维护) |
+| 看板 token | `/root/.msql-watch-token`(600) |
+| GitHub token | 同上文件,`github_pat_` 开头(fine-grained,读公开仓库) |
+
+体检一句就够:
+
+```bash
+/root/setup-watch.sh --verify
+```
 
 ## 反向代理与 HTTPS
 
