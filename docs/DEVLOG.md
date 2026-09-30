@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-09-30 · macOS 打包上线(第三平台)
+
+### 先验证可行性,再动手
+
+**没有假设原生模块支持 darwin,而是逐个查了** —— 其中三个靠 per-platform 可选依赖分发二进制,少一个就会做出「能装但语义检索静默失效」的包:
+
+| 模块 | macOS 产物 |
+|---|---|
+| better-sqlite3 v13.0.3 | `prebuilds/darwin-{arm64,x64}.node` |
+| onnxruntime-node v1.21.0 | `bin/napi-v3/darwin/{arm64,x64}/` |
+| sqlite-vec v0.1.9 | 可选包 `sqlite-vec-darwin-{arm64,x64}` |
+| @anush008/tokenizers | 可选包 `tokenizers-darwin-universal` |
+
+**先扫了 `src/` 有没有写死的 Windows 假设**(这是加平台最容易被跳过、但事后最难查的一步):
+唯一一处注册表调用**已被 `process.platform !== 'win32'` 守住**;无 powershell/cmd;
+`setLoginItemSettings` / `showOpenDialog` / `shell.openPath` 都是 Electron 跨平台 API;
+写死的 `D:\Hermes Agent CN Desktop\` 在 macOS 上不命中,而那正是应有结果(Windows-only 的 agent)。
+**结论:不需要为 macOS 改任何业务代码。**
+
+### 三个容易踩的坑
+
+**① 图标只有 256x256,而 electron-builder 生成 .icns 要求 >=512**
+macOS 会直接用 Electron 默认图标。已放大到 1024x1024(HighQualityBicubic + 轻量 unsharp mask)。
+**unsharp 只作用 RGB 不动 alpha** —— 对 alpha 也锐化会在透明边缘产生白边。
+(踩到的 GDI+ 坑:保存时源图仍被 `Bitmap` 占用会报「A generic error occurred in GDI+」,必须先 Dispose 源图。)
+
+**② dmg 之外必须有 zip**
+dmg 是给人装的,**zip 才是 electron-updater 在 macOS 上替换用的载荷**,`latest-mac.yml` 是它读的索引。
+只发 dmg 的话 mac 用户装上之后再也不会收到自动更新,**且没有任何报错** —— 又是本项目的老朋友。
+
+**③ 未签名 = Gatekeeper 拦首次启动**
+没有 Apple Developer ID,`mac.identity: null` + CI 里 `CSC_IDENTITY_AUTO_DISCOVERY=false`。
+代价是用户要点一次「右键 -> 打开」,或 `xattr -dr com.apple.quarantine`。
+**这条写在 README 顶部而不是让用户自己撞。** 转签名的五个 secret 与三处配置已记进 RELEASE.md。
+
+### 两个架构分开出包,不做 universal
+`macos-14`(arm64)与 `macos-13`(x64)各出一个。universal 要合并两套 per-arch 可选依赖
+外加 onnxruntime 的 dylib,而用**真实对应架构的 runner** 能让 `npm ci` 直接装对的可选包,无需跨架构技巧。
+
+### 诚实的验证边界
+**本地无法验证 mac 构建** —— electron-builder 硬性要求在 macOS 上构建,`--mac` 在 Windows 上
+直接报 "supported only on macOS"。配置能解析、CI 矩阵能展开,但**真正的证明是 mac runner 变绿**。
+
+---
+
 ## 2026-09-30 · 看板总体情况(LLM 叙述)+ 顺带挖出三个静默失败
 
 ### 总体情况面板
