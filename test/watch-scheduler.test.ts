@@ -71,6 +71,47 @@ describe('/api/refresh 忙碌时必须回 409', () => {
   })
 })
 
+/**
+ * 摘要陈旧回归 —— 实测踩到:探针上报成功后,置顶面板仍写「黑盒尚未上报」,
+ * 盲区里还列着刚被验证掉的那几家,而它正下方就是刚更新的黑盒数据。
+ * **两个互相矛盾的结论同屏显示,而人只会读最上面那个。**
+ *
+ * 根因:摘要原本只在 runOnce() 里算,而 runOnce 每 24h 才跑一次。
+ */
+describe('任何改动 results / probe 的路径都要重算摘要', () => {
+  const serverSrc = fs.readFileSync(
+    new URL('../tools/upstream-watch/server.mjs', import.meta.url), 'utf-8')
+
+  it('有统一的 recomputeSummary 入口', () => {
+    expect(serverSrc).toMatch(/async function recomputeSummary/)
+    // 摘要失败绝不能让上报本身失败 —— 必须吞在 recomputeSummary 内部
+    const fn = serverSrc.slice(serverSrc.indexOf('async function recomputeSummary'))
+    expect(fn.slice(0, 500)).toMatch(/try\s*\{/)
+    expect(fn.slice(0, 500)).toMatch(/catch/)
+  })
+
+  it('/api/probe 合并后重算 —— 否则上报完摘要还是旧的', () => {
+    const h = serverSrc.slice(serverSrc.indexOf("url.pathname === '/api/probe'"))
+    const seg = h.slice(0, 2000)
+    expect(seg).toMatch(/recomputeSummary\(\)/)
+    // 必须在 state.probe 赋值之后
+    const setIdx = seg.indexOf('state.probe =')
+    const reIdx = seg.indexOf('recomputeSummary()')
+    expect(setIdx).toBeGreaterThan(-1)
+    expect(reIdx).toBeGreaterThan(setIdx)
+  })
+
+  it('/api/manual 改完 results 后重算', () => {
+    const h = serverSrc.slice(serverSrc.indexOf("url.pathname === '/api/manual'"))
+    expect(h.slice(0, 2000)).toMatch(/recomputeSummary\(\)/)
+  })
+
+  it('runOnce 仍然自己算摘要(定时刷新的主路径)', () => {
+    const h = serverSrc.slice(serverSrc.indexOf('async function runOnce'))
+    expect(h.slice(0, 2000)).toMatch(/summarize\(out, state\.probe\)/)
+  })
+})
+
 // ─────────────────────────────────────────── 3. JSON 提取
 /** 断言能抠出 JSON 并返回 data,省得每条都写 if (r.ok) throw */
 function parsed(candidates: Array<string | null | undefined>) {

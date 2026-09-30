@@ -70,6 +70,22 @@ function saveState() {
   fs.renameSync(tmp, STATE)
 }
 
+/**
+ * 重算总体摘要。任何改变了 results / probe 的路径都必须走这里,否则置顶面板会
+ * 停在上一次计算的结果上,和它正下方的新数据自相矛盾。
+ * 永远不抛 —— 摘要坏了也不能影响上报本身的成功与否。
+ */
+async function recomputeSummary() {
+  try {
+    state.summary = await summarize(state.results, state.probe)
+  } catch (e) {
+    state.summary = {
+      ...(state.summary ?? {}),
+      error: `摘要重算失败:${e?.message ?? e}`
+    }
+  }
+}
+
 async function runOnce() {
   if (state.running) return
   state.running = true
@@ -88,8 +104,7 @@ async function runOnce() {
     // 放在 for 循环之后 —— 它要看完全部 12 家才有意义。
     // 失败只记进 summary.error,绝不让整轮刷新失败(否则这功能一挂看板就空白)。
     state.summary = await summarize(out, state.probe)
-    state.lastRunAt = new Date().toISOString()
-  } catch (e) {
+    state.lastRunAt = new Date().toISOString()  } catch (e) {
     state.error = String(e?.message ?? e)
   } finally {
     state.running = false
@@ -134,8 +149,16 @@ const server = http.createServer((req, res) => {
           checkedAt: data.checkedAt ?? new Date().toISOString(),
           results: data.results.slice(0, 64) // 防御:别让人往 state 里灌垃圾
         }
-        saveState()
-        json(res, 200, { ok: true, accepted: state.probe.results.length })
+        // **探针到达后必须重算摘要。**
+        // 摘要原本只在 runOnce() 里算,而 runOnce 每 24h 才跑一次 —— 于是探针上报后,
+        // 置顶面板会继续说「黑盒尚未上报」、盲区仍列着刚被验证掉的 agent,
+        // 而它正下方的新数据明明就在那儿。**两个互相矛盾的结论同屏显示,
+        // 而人只会读最上面那个。** 探针是低频动作(手动或每日计划任务),
+        // 多花一次 LLM 调用换一致性,划算。
+        void recomputeSummary().finally(() => {
+          saveState()
+          json(res, 200, { ok: true, accepted: state.probe.results.length })
+        })
       } catch (e) {
         json(res, 400, { error: String(e?.message ?? e) })
       }
@@ -170,8 +193,11 @@ const server = http.createServer((req, res) => {
         if (!agent) return json(res, 400, { error: 'unknown agent' })
         const r = evaluate(agent, { notes, version: '手动提供', notesProvided: true })
         state.results = state.results.filter((x) => x.agentId !== agentId).concat(r)
-        saveState()
-        json(res, 200, state)
+        // 手动补的 changelog 会改变该 agent 的判定 → 摘要同样要重算,理由同 /api/probe
+        void recomputeSummary().finally(() => {
+          saveState()
+          json(res, 200, state)
+        })
       } catch (e) {
         json(res, 400, { error: String(e?.message ?? e) })
       }
