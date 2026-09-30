@@ -100,8 +100,29 @@ describe('buildBrief — 纯函数,不联网', () => {
   })
 
   it('抓取失败单独收集,不混进"无风险"', () => {
-    const b = buildBrief([R({ agentId: 'a', risk: 'unknown', fetchError: '限流 (HTTP 403)' })])
+    const b = buildBrief([R({ agentId: 'a', risk: 'medium', fetchError: '限流 (HTTP 403)' })])
     expect(b.fetchErrors).toEqual([{ id: 'a', error: '限流 (HTTP 403)' }])
+  })
+
+  it('闭源的"无公开更新日志"不算抓取失败 —— 它是预期状态,标红是误报', () => {
+    // 实测踩过:页面上出现红色「抓取失败 4 家」,而那 4 家是闭源 agent,
+    // 它们的 fetchError 恒为「闭源,无公开更新日志」,不是故障。
+    // 而且它紧挨着「黑盒尚未上报」,两者自相矛盾。
+    const b = buildBrief([
+      R({ agentId: 'qoder', risk: 'unknown', blackboxOnly: true, fetchError: '闭源,无公开更新日志' }),
+      R({ agentId: 'zcode', risk: 'unknown', blackboxOnly: true, fetchError: '闭源,无公开更新日志' }),
+      R({ agentId: 'opencode', risk: 'low' })
+    ])
+    expect(b.fetchErrors).toEqual([])
+    // 它们仍应在闭源名单里,不能被顺手抹掉
+    expect(b.closedSource.map((c) => c.id).sort()).toEqual(['qoder', 'zcode'])
+  })
+
+  it('已评估的 agent 抓取失败仍要报(不能把真故障一起过滤掉)', () => {
+    const b = buildBrief([
+      R({ agentId: 'claudecode', risk: 'medium', fetchError: 'GitHub 主限流,配额 42 分钟后重置' })
+    ])
+    expect(b.fetchErrors.map((f) => f.id)).toEqual(['claudecode'])
   })
 
   it('空输入不炸', () => {

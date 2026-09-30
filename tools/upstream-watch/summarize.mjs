@@ -101,7 +101,14 @@ export function buildBrief(results, probe) {
     }
   })
 
-  const fetchErrors = R.filter((r) => r.fetchError).map((r) => ({ id: r.agentId, error: r.fetchError }))
+  /**
+   * 真正的抓取失败 —— **必须排除闭源 agent**。
+   * 闭源那 4 家的 fetchError 恒为「闭源,无公开更新日志」,那是**预期状态**不是故障;
+   * 混进来会显示成红色「抓取失败 4 家」,而且紧挨着「黑盒尚未上报」自相矛盾。
+   * 它们由 closedSource 单独呈现,不进这里。
+   */
+  const fetchErrors = R.filter((r) => r.fetchError && !r.blackboxOnly && r.risk !== 'unknown')
+    .map((r) => ({ id: r.agentId, error: r.fetchError }))
 
   return {
     total: R.length,
