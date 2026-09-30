@@ -39,9 +39,25 @@ pm2 save
 | `AUTH_TOKEN` | 公网必填 | 鉴权 token。`Authorization: Bearer <token>` 或 `?token=<token>`。**不设则任何人都能看** |
 | `PORT` | 否 | 默认 8788 |
 | `GITHUB_TOKEN` | 强烈建议 | 匿名 API 限流 60 次/小时,带 token 提到 5000。12 家一天一次其实够用,但建议配上 |
-| `LLM_API_KEY` | 否 | 启用 LLM 增强。**不设就纯规则**;调用失败/超时也会自动降级,绝不阻塞看板 |
-| `LLM_BASE_URL` | 否 | 默认 `https://api.anthropic.com/v1/messages` |
+| `LLM_API_KEY` | 否 | 启用 LLM 增强。**不设就纯规则**(功能完备,只是少一层语义判断)。调用失败/超时/返回非 JSON 一律自动降级,绝不阻塞看板 |
+| `LLM_BASE_URL` | 否 | 默认 `https://api.anthropic.com/v1/messages`。**填非 Anthropic 官方地址时自动改用 OpenAI 兼容格式**(Bearer 认证 + `choices[].message.content` 解析),所以第三方 provider / 自建网关也能直接用 |
 | `LLM_MODEL` | 否 | 默认 `claude-sonnet-4-5` |
+
+### 启用 LLM 后请先自检
+
+`llmEnhance` 的单元测试全是 mock(离线、不花钱),但 **mock 证明不了你的 key/端点/模型名真的能用**。真调一次才算数:
+
+```bash
+export LLM_API_KEY=sk-...
+export LLM_BASE_URL=https://api.anthropic.com/v1/messages   # 可选
+node scripts/check-llm.mjs
+```
+
+它会打印规则判定 → LLM 判定 → 合并结果,并在失败时给出排查方向(退出码 1)。
+
+**LLM 的两个设计约束**(改代码前务必知道):
+- 只对规则判为 `medium`/`high` 的条目调用,`low`/`none` 直接跳过(省钱省延迟)
+- **只能加严,不能放松** —— LLM 说「没事」不会把规则判的 `high` 降级,但它的理由仍会保留在看板里给人看
 | `LEDGER_PATH` | 否 | 台账 JSON 路径,默认 `upstream/ledger.json` |
 | `REFRESH_HOURS` | 否 | 定时抓取间隔,默认 **24**(你定的「一天一次」足够) |
 

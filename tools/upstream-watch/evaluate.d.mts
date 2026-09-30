@@ -29,6 +29,13 @@ export interface EvalResult {
   llmError?: string
 }
 
+export interface LlmVerdict {
+  affectsCapture: boolean
+  affectsMcp: boolean
+  severity: 'none' | 'low' | 'medium' | 'high'
+  reason: string
+}
+
 export function ruleEvaluate(changelog: unknown, agent: { riskKeywords?: string[] }): RuleResult
 
 export function evaluate(
@@ -39,6 +46,7 @@ export function evaluate(
     upstream?: { kind: string; repo?: string }
     riskKeywords?: string[]
     mcp?: { file: string; jsonpath: string; requiredKeys: string[] }
+    source?: { kind: string; sqlite?: { tablesAnyOf: string[][] }; jsonl?: { fileMatch: string; parser: string } }
   },
   upstream: {
     version?: string | null
@@ -51,4 +59,7 @@ export function evaluate(
   }
 ): EvalResult
 
-export function llmEnhance(result: EvalResult, agent: unknown): Promise<EvalResult>
+export function llmEnhance(
+  result: EvalResult,
+  agent: unknown
+): Promise<EvalResult & { llm?: LlmVerdict | null; llmError?: string }>

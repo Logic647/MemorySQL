@@ -13,6 +13,8 @@
     "test": "vitest run",
     "upstream:check": "vitest run test/upstream-contract.test.ts --reporter=verbose",
     "ledger:export": "node --experimental-strip-types scripts/export-ledger.ts",
+    "upstream:probe": "node scripts/upstream-probe.mjs",
+    "upstream:llm-check": "node scripts/check-llm.mjs",
     "import:scan": "electron-vite build && electron . --scan",
     "dist": "electron-vite build && electron-builder --win",
     "dist:linux": "electron-vite build && electron-builder --linux"

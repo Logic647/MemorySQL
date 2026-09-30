@@ -41,7 +41,17 @@ CLI 直跑立刻暴露:动态 import parser 失败(`Cannot find module`)被判�
 
 ### 验证
 
-typecheck 0 / vitest **190:190**(25 文件)/ build 通过 / 零新增依赖。端到端实测:探针写盘 + 上报「已接收 12 条」,云端 `/api/state` 返回白盒 12 + 黑盒 12,双栏逐项对齐。
+typecheck 0 / vitest **199:199**(26 文件)/ build 通过 / 零新增依赖。端到端实测:探针写盘 + 上报「已接收 12 条」,云端 `/api/state` 返回白盒 12 + 黑盒 12,双栏逐项对齐。
+
+### 补做:LLM 评估(此前是未验证交付)
+
+用户追问「LLM 评估没做吗」——**代码写了但从未实际跑过**(服务器没配 `LLM_API_KEY`),等于交付了一条没验证过的代码路径。补做:
+
+- **9 个 mock 测试**覆盖全部分支:无 key 跳过 / low-none 不调用(省 token)/ 正常解析 / **只能加严不能放松** / HTTP 错误降级 / 网络异常降级 / 非 JSON 降级 / prompt 必带依赖摘要
+- **mock 当场抓出真 bug**:响应解析硬编码 Anthropic 格式(`content[0].text`),换成 OpenAI 兼容端点直接解析失败。已修:端点非 `anthropic.com` 时自动改用 Bearer 认证 + `choices[].message.content`,**第三方 provider / 自建网关无需改代码**
+- **`scripts/check-llm.mjs` 真调自检**:`node scripts/check-llm.mjs`。**mock 证明不了 key/端点/模型名真的能用**,真调一次才算数;失败会打印四步排查方向。本机无 key,该脚本已验证「无 key 优雅跳过、退出码 0」,**真实调用待用户在服务器上跑一次**
+
+**LLM 的两个设计约束**(别改坏):只对规则判 medium/high 调用;**只能加严,不能放松** —— LLM 说「没事」不会把规则判的 high 降级,但它的理由仍保留在看板里给人看。
 
 ---
 

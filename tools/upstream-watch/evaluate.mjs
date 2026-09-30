@@ -201,25 +201,33 @@ export async function llmEnhance(result, agent) {
   try {
     const ctl = new AbortController()
     const timer = setTimeout(() => ctl.abort(), 20000)
+    // 端点不是 Anthropic 官方域名时,按 OpenAI 兼容格式发 —— 大多数第三方
+    // provider(含各类自建网关)都吃这套,不必为每家改代码
+    const isAnthropic = /anthropic\.com/.test(endpoint)
+    const headers = { 'Content-Type': 'application/json' }
+    if (isAnthropic) {
+      headers['x-api-key'] = process.env.LLM_API_KEY
+      headers['anthropic-version'] = '2023-06-01'
+    } else {
+      headers.Authorization = `Bearer ${process.env.LLM_API_KEY}`
+    }
+    const body = isAnthropic
+      ? { model, max_tokens: 300, messages: [{ role: 'user', content: prompt }] }
+      : { model, max_tokens: 300, messages: [{ role: 'user', content: prompt }] }
+
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.LLM_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 300,
-        messages: [{ role: 'user', content: prompt }]
-      }),
+      headers,
+      body: JSON.stringify(body),
       signal: ctl.signal
     })
     clearTimeout(timer)
     if (!res.ok) return { ...result, llmError: `LLM HTTP ${res.status}` }
     const data = await res.json()
-    const text = data?.content?.[0]?.text ?? ''
-    const m = text.match(/\{[\s\S]*\}/)
+    // 兼容两种响应形态:Anthropic content[].text / OpenAI choices[].message.content
+    const text =
+      data?.content?.[0]?.text ?? data?.choices?.[0]?.message?.content ?? ''
+    const m = String(text).match(/\{[\s\S]*\}/)
     if (!m) return { ...result, llmError: 'LLM 未返回 JSON' }
     const parsed = JSON.parse(m[0])
     // 规则优先级更高:LLM 只能在规则之上「加严」,不能把 high 降级
