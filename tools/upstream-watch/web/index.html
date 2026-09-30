@@ -165,6 +165,18 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .attn .r .id{font-family:var(--mono);font-weight:600;font-size:12px}
 .attn .r .rs{color:#b54708;font-size:11.5px}
 
+/* 契约一致性警告:白盒在云端算、黑盒在开发机算,两边各带一份台账副本。
+   不一致时「漂移」结论可能只是台账版本差 —— 而那个判断会直接触发一次发版,
+   所以用最高一档的警示样式,不容错过。 */
+.ledger-warn{
+  margin:0 16px 14px;padding:12px 14px;border-radius:9px;
+  background:var(--high-soft);border:1px solid #fecdca;color:#912018;
+  font-size:13px;line-height:1.65;
+}
+.ledger-warn .k{font-weight:700;display:block;margin-bottom:4px;font-size:13.5px}
+.ledger-warn code{background:#fee4e2;padding:1px 5px;border-radius:3px;font-family:var(--mono);font-size:11.5px;font-weight:600}
+.ledger-ok{font-size:11.5px;color:var(--fg-3);font-family:var(--mono);padding:0 16px 10px}
+
 /* 黑盒条 */
 .probe{
   margin:0 16px 12px;padding:9px 12px;background:var(--surface-2);
@@ -399,10 +411,36 @@ function summaryPanel() {
       <span class="stamp">${b.total} 家已适配</span></div>
     <div class="sb">
       <div class="facts">${facts.join('')}</div>
+      ${ledgerBlock(b.ledger)}
       ${attn}
       ${llmPart}
     </div>
   </div>`;
+}
+
+/**
+ * 契约一致性条。
+ *
+ * mismatch → 红色警示,因为此时白盒与黑盒是用**不同的适配契约**算的,
+ *   「漂移」结论不可比;而这个判断会直接触发一次适配发版。
+ * unknown → 弱提示。旧版探针不上报指纹,那是**未知**不是**冲突**,
+ *   报成冲突会让人去排查一个不存在的问题(误报比漏报更消耗信任)。
+ * match → 一行灰字,平时不该抢注意力,但出事时能对照。
+ */
+function ledgerBlock(lg) {
+  if (!lg) return '';
+  if (lg.state === 'mismatch') {
+    return `<div class="ledger-warn">
+      <span class="k">⚠ 白盒与黑盒基于不同的适配契约,结论不可比</span>
+      云端台账 <code>${esc(lg.server || '未知')}</code> · 上报探针台账 <code>${esc(lg.probe || '未知')}</code>。
+      下面的「漂移」可能只是两边台账版本不同,而非上游真的改了格式。
+      请先在本机 <code>git pull</code> 同步台账再跑一次 <code>npm run upstream:probe</code>。
+    </div>`;
+  }
+  if (lg.state === 'unknown') {
+    return `<div class="ledger-ok">契约指纹:${esc(lg.server || lg.probe || '—')}(另一侧未上报,无法校验是否同源)</div>`;
+  }
+  return `<div class="ledger-ok">契约指纹 ${esc(lg.server || '')} · 白盒与黑盒同源</div>`;
 }
 
 function card(r) {

@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 import { fetchUpstream } from './fetch.mjs'
 import { evaluate, llmEnhance } from './evaluate.mjs'
 import { summarize } from './summarize.mjs'
+import { ledgerFingerprint, compareFingerprints } from './fingerprint.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const STATE = path.join(HERE, 'state.json')
@@ -30,6 +31,27 @@ const REFRESH_HOURS = Number(process.env.REFRESH_HOURS ?? 24)
 const TOKEN = process.env.AUTH_TOKEN ?? ''
 
 let state = { results: [], probe: null, summary: null, lastRunAt: null, running: false, error: null }
+
+/**
+ * 本机(云端)这份台账的契约指纹。
+ *
+ * 白盒在这里算,黑盒在开发机算,两边指纹一比就知道**是否在用同一套适配契约**。
+ * 不一致的后果不是"数据脏了",而是「漂移」结论可能只是台账版本差 —— 而这个
+ * 判断会直接触发一次发版,是整个工具最不该出错的一处。
+ * 每次现算而不是缓存:台账可能被 `git pull` 换掉,缓存会让指纹变成谎言。
+ */
+function currentLedgerHash() {
+  try {
+    return ledgerFingerprint(JSON.parse(fs.readFileSync(LEDGER, 'utf-8')))
+  } catch {
+    return null
+  }
+}
+
+/** 探针上报的指纹 vs 本机指纹。三态,见 compareFingerprints 的说明。 */
+function ledgerAgreement() {
+  return compareFingerprints(currentLedgerHash(), state.probe?.ledgerHash ?? null)
+}
 
 function loadLedger() {
   const raw = JSON.parse(fs.readFileSync(LEDGER, 'utf-8'))
@@ -77,7 +99,7 @@ function saveState() {
  */
 async function recomputeSummary() {
   try {
-    state.summary = await summarize(state.results, state.probe)
+    state.summary = await summarize(state.results, state.probe, ledgerAgreement())
   } catch (e) {
     state.summary = {
       ...(state.summary ?? {}),
@@ -103,7 +125,7 @@ async function runOnce() {
     // 总体情况:brief 由代码算(永远可信),LLM 只负责把 brief 组织成人话。
     // 放在 for 循环之后 —— 它要看完全部 12 家才有意义。
     // 失败只记进 summary.error,绝不让整轮刷新失败(否则这功能一挂看板就空白)。
-    state.summary = await summarize(out, state.probe)
+    state.summary = await summarize(out, state.probe, ledgerAgreement())
     state.lastRunAt = new Date().toISOString()  } catch (e) {
     state.error = String(e?.message ?? e)
   } finally {
@@ -147,6 +169,9 @@ const server = http.createServer((req, res) => {
         if (!Array.isArray(data.results)) return json(res, 400, { error: 'bad payload' })
         state.probe = {
           checkedAt: data.checkedAt ?? new Date().toISOString(),
+          // 探针带上的是**开发机**那份台账的指纹;没有这个字段(旧版探针)时为 null,
+          // 面板会显示"未知"而不是"冲突" —— 见 compareFingerprints
+          ledgerHash: typeof data.ledgerHash === 'string' ? data.ledgerHash : null,
           results: data.results.slice(0, 64) // 防御:别让人往 state 里灌垃圾
         }
         // **探针到达后必须重算摘要。**

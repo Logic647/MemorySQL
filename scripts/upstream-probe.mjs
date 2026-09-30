@@ -21,10 +21,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { ledgerFingerprint } from '../tools/upstream-watch/fingerprint.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.join(HERE, '..')
 const REPORTS = path.join(REPO, 'docs', 'upstream-reports')
+const LEDGER = path.join(REPO, 'upstream', 'ledger.json')
 
 const argv = process.argv.slice(2)
 const dryRun = argv.includes('--dry-run')
@@ -134,13 +136,23 @@ async function report(blackbox) {
     : endpoint.replace(/\/+$/, '') + '/api/probe'
 
   try {
+    // 带上**本机**台账的契约指纹。服务器拿它和自己的那份比:不一致时,白盒与黑盒
+    // 就是在用两套不同的适配契约评判,那些「漂移」结论不可比。
+    // 不带也能上报(旧版服务端会忽略),但那样就失去了这条校验。
+    let hash = null
+    try {
+      hash = ledgerFingerprint(JSON.parse(fs.readFileSync(LEDGER, 'utf-8')))
+    } catch (e) {
+      log(`读不到本机台账,契约指纹留空: ${e?.message ?? e}`)
+    }
+    const payload = { ...blackbox, ledgerHash: hash }
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
-      body: JSON.stringify(blackbox)
+      body: JSON.stringify(payload)
     })
     if (!res.ok) {
       log(`云端上报失败 HTTP ${res.status}(${url})`)

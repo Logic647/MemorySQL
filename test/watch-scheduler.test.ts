@@ -108,7 +108,15 @@ describe('任何改动 results / probe 的路径都要重算摘要', () => {
 
   it('runOnce 仍然自己算摘要(定时刷新的主路径)', () => {
     const h = serverSrc.slice(serverSrc.indexOf('async function runOnce'))
-    expect(h.slice(0, 2000)).toMatch(/summarize\(out, state\.probe\)/)
+    // 第三个参数是契约一致性:定时刷新时也要重新比一次指纹
+    expect(h.slice(0, 2000)).toMatch(/summarize\(out, state\.probe, ledgerAgreement\(\)\)/)
+  })
+
+  it('两处 summarize 调用都带上契约一致性参数', () => {
+    // 漏掉任何一处都会让摘要里的 ledger 字段永远是默认值
+    const calls = serverSrc.match(/summarize\([^)]*\)/g) ?? []
+    expect(calls.length).toBeGreaterThanOrEqual(2)
+    for (const c of calls) expect(c).toMatch(/ledgerAgreement\(\)/)
   })
 })
 

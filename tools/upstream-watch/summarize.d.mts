@@ -32,6 +32,13 @@ export interface AttentionItem {
   blackboxDetail: string | null
 }
 
+export interface LedgerAgreement {
+  /** match = 两边一致;mismatch = 契约不同,结论不可比;unknown = 有一边没带指纹 */
+  state: 'match' | 'mismatch' | 'unknown'
+  server: string | null
+  probe: string | null
+}
+
 export interface Brief {
   total: number
   whitebox: { high: number; medium: number; lowOrNone: number; unknown: number }
@@ -45,6 +52,8 @@ export interface Brief {
     absent: number
     blackboxOnly: number
   }
+  /** 白盒(云端台账)与黑盒(开发机台账)是否基于同一版适配契约 */
+  ledger: LedgerAgreement
   attention: AttentionItem[]
   closedSource: Array<{ id: string; blackbox: string; detail: string }>
   fetchErrors: Array<{ id: string; error: string | null }>
@@ -60,6 +69,14 @@ export interface Summary {
   llmInvoked: boolean
 }
 
-export function buildBrief(results: EvalLike[], probe?: ProbeLike | null): Brief
+export function buildBrief(
+  results: EvalLike[],
+  probe?: ProbeLike | null,
+  ledger?: LedgerAgreement
+): Brief
 
-export function summarize(results: EvalLike[], probe?: ProbeLike | null): Promise<Summary>
+export function summarize(
+  results: EvalLike[],
+  probe?: ProbeLike | null,
+  ledger?: LedgerAgreement
+): Promise<Summary>

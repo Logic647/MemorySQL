@@ -29,8 +29,9 @@ function verdictOf(probe, id) {
  * 纯函数:算出全部事实。**不联网、不读环境变量**,因此可完整单测。
  * @param results evaluate() 逐条结果(含 llm / llmError)
  * @param probe   本机探针上报的 { checkedAt, results: [{id, verdict, detail}] }
+ * @param ledger  契约一致性 { state, server, probe } —— 见 fingerprint.mjs
  */
-export function buildBrief(results, probe) {
+export function buildBrief(results, probe, ledger = { state: 'unknown', server: null, probe: null }) {
   const R = results ?? []
 
   const whitebox = { high: 0, medium: 0, lowOrNone: 0, unknown: 0 }
@@ -115,6 +116,7 @@ export function buildBrief(results, probe) {
     whitebox,
     llm,
     blackbox,
+    ledger,
     attention,
     closedSource,
     fetchErrors
@@ -138,6 +140,17 @@ function renderBrief(brief) {
       ? `黑盒(本机真实数据探测,上报于 ${brief.blackbox.checkedAt}):漂移 ${brief.blackbox.drift} · 匹配 ${brief.blackbox.ok} · 本机未装/仅黑盒 ${brief.blackbox.absent} · 检查器故障 ${brief.blackbox.checkerError}`
       : '黑盒:本机探针**尚未上报** —— 闭源那几家的漂移目前无人看守'
   )
+  if (brief.ledger?.state === 'mismatch') {
+    L.push('')
+    L.push(
+      `!! 契约不一致:白盒用 ${brief.ledger.server},黑盒用 ${brief.ledger.probe} ——` +
+        '两栏是用**不同的适配契约**算出来的,下面的"漂移"结论不可比,' +
+        '先同步台账再判断是否需要适配'
+    )
+  } else if (brief.ledger?.state === 'unknown') {
+    L.push('')
+    L.push('契约指纹:有一侧未提供(旧版探针不带上报),无法校验白盒与黑盒是否同源')
+  }
   if (brief.attention.length) {
     L.push('')
     L.push('需要处理(下列理由已由系统判定,非你推断):')
@@ -182,8 +195,8 @@ const PROMPT = [
  * @returns {Promise<{brief, headline, actions, blindspot, error, generatedAt, llmInvoked}>}
  *          **永不抛异常**。brief 无论 LLM 成功与否都会产出。
  */
-export async function summarize(results, probe) {
-  const brief = buildBrief(results, probe)
+export async function summarize(results, probe, ledger) {
+  const brief = buildBrief(results, probe, ledger)
   const base = {
     brief,
     headline: null,
