@@ -7,6 +7,22 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 取消被取代的 run —— 缺这一段的后果是排队,不是变慢。
+#
+# macos-13(Intel)是 GitHub 托管 runner 里最抢手的一个,实测**排 93 分钟仍未分配到
+# runner**(runner_name 为空)。没有 concurrency 时,每次推 main 都会新建一个排队的
+# macos-13 job,于是 N 个 run 抢同一个稀缺 runner —— 推得越多越排不上,是个正反馈。
+# 之前就有 4 个 macos-13 同时在队列里。
+#
+# 分两种情况:
+#   main 推送   cancel-in-progress: true —— 只保留最新的那次,旧的自动让位
+#   tag 推送    cancel-in-progress: false —— **发版构建绝不能取消**,四个平台(含 mac
+#               两个架构)必须全部跑完才能打 release
+# tag 的 group 单独用 tag 名,否则 v0.5.6 的构建会被下一次 main 推送连带取消。
+concurrency:
+  group: ci-${{ github.ref_type }}-${{ github.ref_name }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+
 jobs:
   # typecheck + tests + renderer/main build on both Windows and Linux.
   ci:
