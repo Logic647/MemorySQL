@@ -90,6 +90,29 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .b-ok{color:var(--ok);background:var(--ok-soft);border-color:#abefc6}
 .b-checker{color:#6941c6;background:#f4f3ff;border-color:#d9d6fe}
 .b-bb{color:#667085;background:var(--surface-2);border-color:var(--border-strong)}
+/* LLM 判定:与白盒(关键词)/黑盒(schema)视觉上区分开 —— 它是「语义判断」,
+   权威性低于黑盒,配色刻意更轻,避免看起来比黑盒更可信 */
+.b-llmhit{color:#b54708;background:#fff6ed;border-color:#f9dbaf}
+.b-llmok{color:#475467;background:var(--surface-2);border-color:var(--border)}
+.b-err{color:var(--high);background:var(--high-soft);border-color:#fecdca}
+
+/* LLM 详情条 —— 和 .probe(黑盒条)同一套结构,视觉对称 */
+.llmbar{
+  margin:0 16px 12px;padding:9px 12px;border-radius:8px;font-size:12.5px;
+  display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;
+  background:var(--surface-2);border:1px solid var(--border);
+}
+.llmbar .tag{font-weight:650;font-size:11px;color:var(--fg-2);letter-spacing:.02em}
+.llmbar .txt{color:var(--fg-2);flex:1;min-width:180px}
+.llmbar .sev{color:var(--fg-3);font-size:11px;font-family:var(--mono)}
+.llmbar.hit{background:#fffcf5;border-color:#f9dbaf}
+.llmbar.err{background:var(--high-soft);border-color:#fecdca}
+.llmbar.err .txt{color:#912018}
+.llmbar.muted{background:transparent;border-style:dashed}
+.llmbar.muted .txt{color:var(--fg-3);font-size:12px}
+.pill{font-size:11px;font-weight:600;padding:1px 7px;border-radius:4px;border:1px solid}
+.pill.good{color:var(--ok);background:var(--ok-soft);border-color:#abefc6}
+.pill.bad{color:var(--high);background:var(--high-soft);border-color:#fecdca}
 
 /* 黑盒条 */
 .probe{
@@ -140,6 +163,7 @@ textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
   <span class="chip" data-f="attention" aria-pressed="false">只看需处理</span>
   <span class="chip" data-f="drift" aria-pressed="false">黑盒漂移</span>
   <span class="chip" data-f="bb" aria-pressed="false">闭源</span>
+  <span class="chip" data-f="llm" aria-pressed="false">LLM 判有影响</span>
   <span class="chip" data-f="absent" aria-pressed="false">本机未装</span>
   <span class="spacer"></span>
   <span id="probetime" style="font-size:12px;color:var(--fg-3)"></span>
@@ -177,14 +201,17 @@ async function load() {
 
 function stats() {
   const R = STATE.results || [], P = STATE.probe?.results || [];
-  const pmap = new Map(P.map(x => [x.id, x]));
+  const L = R.map(llmState);
   const counts = {
     high: R.filter(x => x.risk === 'high').length,
     med:  R.filter(x => x.risk === 'medium').length,
     ok:   R.filter(x => x.risk === 'low' || x.risk === 'none').length,
     unk:  R.filter(x => x.risk === 'unknown').length,
     drift:P.filter(x => x.verdict === 'drift').length,
-    broken: P.filter(x => x.verdict === 'checker_error').length
+    broken: P.filter(x => x.verdict === 'checker_error').length,
+    llmHit: L.filter(s => s.kind === 'hit').length,
+    llmErr: L.filter(s => s.kind === 'err').length,
+    llmOn:  L.filter(s => s.kind === 'hit' || s.kind === 'clear').length
   };
   const cells = [
     ['high', counts.high, '白盒高风险', 'high'],
@@ -194,11 +221,16 @@ function stats() {
     ['drift',counts.drift,'黑盒漂移', 'high'],
     ['broken',counts.broken,'检查器故障','broken']
   ];
-  $('#stats').innerHTML = cells
+  let html = cells
     .filter(c => c[0] !== 'drift' && c[0] !== 'broken' || P.length)
     .map(c => `<div class="stat ${c[3]}"><div class="n">${c[1]}</div><div class="l">${c[2]}</div></div>`)
     .join('');
-  void pmap;
+  // LLM 统计:未启用时不显示这一组,避免"0"被误读成"跑了但没问题"
+  if (counts.llmOn || counts.llmErr) {
+    html += `<div class="stat ${counts.llmHit ? 'med' : ''}"><div class="n">${counts.llmHit}</div><div class="l">LLM 判有影响</div></div>`;
+    if (counts.llmErr) html += `<div class="stat high"><div class="n">${counts.llmErr}</div><div class="l">LLM 调用失败</div></div>`;
+  }
+  $('#stats').innerHTML = html;
 }
 
 function probeBar(id) {
@@ -212,6 +244,52 @@ function probeBar(id) {
   </div>`;
 }
 
+/**
+ * LLM 判定块 —— 必须区分**四种状态**,混在一起会让人误读:
+ *   1. 有判定        LLM 认为有影响
+ *   2. 有判定但无害  LLM 认为无影响
+ *   3. 调用失败      已自动降级为纯规则(不影响看板工作)
+ *   4. 未调用        规则判 low/none 时按设计跳过(省 token)
+ *   5. 未启用        服务端没配 LLM_API_KEY
+ * 3/4/5 长得不一样,因为它们对使用者的含义完全不同。
+ */
+function llmState(r) {
+  if (r.llm) {
+    const hit = r.llm.affectsCapture || r.llm.affectsMcp;
+    return { kind: hit ? 'hit' : 'clear', label: hit ? 'LLM 有影响' : 'LLM 无影响', v: r.llm }
+  }
+  if (r.llmError) return { kind: 'err', label: 'LLM 失败' }
+  if (r.risk === 'low' || r.risk === 'none') return { kind: 'skip', label: 'LLM 未调用' }
+  return { kind: 'off', label: 'LLM 未启用' }
+}
+
+function llmBlock(r) {
+  const s = llmState(r);
+  if (s.kind === 'off' || s.kind === 'skip') {
+    // 弱提示,不占版面 —— 但要能区分「没配」和「按设计跳过」
+    return `<div class="llmbar muted"><span class="tag">LLM</span><span class="txt">${
+      s.kind === 'off' ? '服务端未配置 LLM_API_KEY,纯规则模式' : '规则判为低风险,按设计不调用(省 token)'
+    }</span></div>`;
+  }
+  if (s.kind === 'err') {
+    return `<div class="llmbar err"><span class="tag">LLM</span>
+      <span class="badge b-err">调用失败</span>
+      <span class="txt">${esc(r.llmError)} —— 已自动降级为纯规则,看板其余部分不受影响</span></div>`;
+  }
+  const v = s.v;
+  const bits = [
+    `<span class="pill ${v.affectsCapture ? 'bad' : 'good'}">捕获${v.affectsCapture ? '受影响' : '无影响'}</span>`,
+    `<span class="pill ${v.affectsMcp ? 'bad' : 'good'}">MCP${v.affectsMcp ? '受影响' : '无影响'}</span>`
+  ].join('');
+  return `<div class="llmbar ${s.kind}">
+    <span class="tag">LLM</span>
+    <span class="badge ${s.kind === 'hit' ? 'b-llmhit' : 'b-llmok'}">${s.label}</span>
+    ${bits}
+    <span class="txt">${esc(v.reason || '(无理由)')}</span>
+    ${v.severity ? `<span class="sev">严重度 ${esc(v.severity)}</span>` : ''}
+  </div>`;
+}
+
 function card(r) {
   const p = (STATE.probe?.results || []).find(x => x.id === r.agentId);
   const pb = p ? VERDICT[p.verdict] : null;
@@ -219,10 +297,15 @@ function card(r) {
   const attention = r.risk === 'high' || (p && p.verdict === 'drift');
   const warnish = r.risk === 'medium' || (p && p.verdict === 'checker_error');
 
-  const cls = attention ? 'attention' : warnish ? 'warnish' : (r.risk === 'unknown' ? 'dimmed' : '');
+  const cls = attention || ls.kind === 'hit' ? 'attention' : warnish ? 'warnish' : (r.risk === 'unknown' ? 'dimmed' : '');
   const riskBadge = `<span class="badge b-${r.risk}">白盒 ${RISK_LABEL[r.risk] ?? r.risk}</span>`;
   const bbBadge = bb ? `<span class="badge b-bb">闭源</span>` : '';
   const pbBadge = pb ? `<span class="badge ${pb[0]}">黑盒 ${pb[1]}</span>` : '';
+  // LLM 徽章:只在真有结论或有异常时出现,「未调用/未启用」不占头部
+  const ls = llmState(r);
+  const llmBadge = (ls.kind === 'hit' || ls.kind === 'clear' || ls.kind === 'err')
+    ? `<span class="badge ${ls.kind === 'hit' ? 'b-llmhit' : ls.kind === 'err' ? 'b-err' : 'b-llmok'}">${ls.label}</span>`
+    : '';
 
   const ver = r.version ? `v${esc(r.version)}` : '—';
   const when = r.publishedAt ? new Date(r.publishedAt).toLocaleDateString('zh-CN') : '';
@@ -234,9 +317,7 @@ function card(r) {
   const hits = (r.hits && r.hits.length)
     ? `<div class="hits">命中 ${r.hits.slice(0, 10).map(h => `<code>${esc(h)}</code>`).join('')}</div>` : '';
   const notes = r.notes ? `<div class="notes">${esc(r.notes.slice(0, 1200))}</div>` : '';
-  const llm = r.llm
-    ? `<div class="hits" style="color:var(--fg-2)">LLM:${r.llm.affectsCapture ? ' 捕获受影响' : ' 捕获无影响'} · MCP${r.llm.affectsMcp ? ' 受影响' : ' 无影响'} —— ${esc(r.llm.reason || '')}</div>`
-    : (r.llmError ? `<div class="hits" style="color:var(--fg-3)">${esc(r.llmError)}</div>` : '');
+  const llm = llmBlock(r);
   const reason = r.risk === 'unknown' ? `<div class="act"><span class="hint">${esc(r.reason || '')}</span></div>` : '';
 
   const manual = r.risk === 'unknown' ? `
@@ -248,7 +329,7 @@ function card(r) {
   return `<div class="card ${cls}">
     <div class="rw">
       <div>
-        <div class="name">${esc(r.agentId)} ${riskBadge} ${pbBadge} ${bbBadge}</div>
+        <div class="name">${esc(r.agentId)} ${riskBadge} ${pbBadge} ${llmBadge} ${bbBadge}</div>
         <div class="meta">${bits.filter(Boolean).join('<span class="dot">·</span>')} ${link}</div>
       </div>
     </div>
@@ -259,10 +340,12 @@ function card(r) {
 
 function match(r) {
   const p = (STATE.probe?.results || []).find(x => x.id === r.agentId);
+  const s = llmState(r);
   if (FILTER === 'all') return true;
-  if (FILTER === 'attention') return r.risk === 'high' || r.risk === 'medium' || (p && (p.verdict === 'drift' || p.verdict === 'checker_error'));
+  if (FILTER === 'attention') return r.risk === 'high' || r.risk === 'medium' || s.kind === 'hit' || (p && (p.verdict === 'drift' || p.verdict === 'checker_error'));
   if (FILTER === 'drift') return p && p.verdict === 'drift';
   if (FILTER === 'bb') return r.risk === 'unknown';
+  if (FILTER === 'llm') return s.kind === 'hit' || s.kind === 'err';
   if (FILTER === 'absent') return p && (p.verdict === 'absent' || p.verdict === 'blackbox_only');
   return true;
 }
@@ -274,6 +357,7 @@ function render() {
     : '尚无数据,点「立即刷新」抓一轮';
   $('#probetime').textContent = STATE.probe?.checkedAt
     ? '黑盒上报于 ' + STATE.probe.checkedAt.slice(0, 16).replace('T', ' ') : '';
+  void R;
   stats();
   const list = R.filter(match);
   $('#list').innerHTML = list.length
