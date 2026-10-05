@@ -110,17 +110,33 @@ describe('任何改动 results / probe 的路径都要重算摘要', () => {
     expect(h.slice(0, 2000)).toMatch(/recomputeSummary\(\)/)
   })
 
-  it('runOnce 仍然自己算摘要(定时刷新的主路径)', () => {
+  it('runOnce 也会重算摘要(定时刷新的主路径)', () => {
     const h = serverSrc.slice(serverSrc.indexOf('async function runOnce'))
-    // 第三个参数是契约一致性:定时刷新时也要重新比一次指纹
-    expect(h.slice(0, 2000)).toMatch(/summarize\(out, state\.probe, ledgerAgreement\(\)\)/)
+    // 走队列而不是自己算 —— 这样 state.summary 全服务只有一个写入者,
+    // 探针触发的重算与定时刷新不会互相覆盖(见 server.mjs 里 runOnce 的注释)。
+    expect(h.slice(0, 2600)).toMatch(/await refreshSummarySoon\(\)/)
+    // 不再直接算。**必须先剥注释**:源码里解释历史实现的注释恰好写着
+    // `state.summary = await summarize(out, …)`,不剥就会被这条断言匹配到 ——
+    // 这个坑今天在三个文件里各踩了一次。
+    const bare = h
+      .slice(0, 2600)
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+      .join('\n')
+    expect(bare).not.toMatch(/state\.summary = await summarize/)
   })
 
-  it('两处 summarize 调用都带上契约一致性参数', () => {
-    // 漏掉任何一处都会让摘要里的 ledger 字段永远是默认值
-    const calls = serverSrc.match(/summarize\([^)]*\)/g) ?? []
-    expect(calls.length).toBeGreaterThanOrEqual(2)
-    for (const c of calls) expect(c).toMatch(/ledgerAgreement\(\)/)
+  it('任何 summarize 调用都带契约一致性参数', () => {
+    // 漏掉 ledgerAgreement() 会让摘要里的 ledger 字段永远是默认值
+    // —— 面板上表现为契约那一栏空白,而没人知道是漏传了参数。
+    // 先剥注释:源码里解释历史实现的注释会包含 summarize(...) 字样。
+    const bare = serverSrc
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+      .join('\n')
+    const calls = bare.match(/summarize\([^)]*\)/g) ?? []
+    expect(calls.length, '应至少有一处直接调用 summarize').toBeGreaterThanOrEqual(1)
+    for (const c of calls) expect(c, `缺 ledgerAgreement(): ${c}`).toMatch(/ledgerAgreement\(\)/)
   })
 })
 

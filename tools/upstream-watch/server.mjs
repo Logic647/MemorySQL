@@ -22,6 +22,7 @@ import { fetchUpstream } from './fetch.mjs'
 import { evaluate, llmEnhance } from './evaluate.mjs'
 import { summarize } from './summarize.mjs'
 import { ledgerFingerprint, compareFingerprints } from './fingerprint.mjs'
+import { mapLimit } from './map-limit.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 // STATE 可用环境变量覆盖,默认仍在 service 目录里。
@@ -145,19 +146,58 @@ async function runOnce() {
   state.error = null
   try {
     const { agents } = loadLedger()
-    const out = []
-    for (const agent of agents) {
-      const upstream = await fetchUpstream(agent)
-      let r = evaluate(agent, upstream)
-      r = await llmEnhance(r, agent)
-      out.push(r)
+
+    // 单项失败**不中止整轮**:12 家里挂 1 家不该让另外 11 家从面板上消失。
+    // 但失败必须可见 —— 收进 failed 列表,最后写进 state.error。
+    // 否则就是"看起来有结论,其实缺了几家",而缺的偏偏是出问题的那几家。
+    const failed = []
+    const note = (stage) => (e, _agent, i) => {
+      failed.push(`${stage} 第${i + 1}家(${agents[i]?.id ?? '?'}):${e?.message ?? e}`)
+    }
+
+    // ── 并发是有依据的,不是"感觉慢" ──
+    // 实测一轮刷新的时间构成(2026-10-05,MiMo):
+    //   12 次串行 GitHub 抓取   ≈ 15-25s
+    //   3 次 llmEnhance(medium) ≈ 3 × 25s = 75s   ← 串行时
+    //   1 次 summarize           ≈ 25s
+    // 也就是 LLM 占了 120s 里的 100s。两段因此用不同的上限:
+    //
+    // 抓取 4 路:纯 GET,彼此无关,GitHub 配额本来就在 5000/小时(GITHUB_TOKEN)。
+    // LLM 只给 2 路:一轮实际只有 3 家需要调用(llmEnhance 对非 medium/high 直接返回),
+    // 2 路把它们从 3 轮压到 2 轮。**不上更高的并发**是因为撞服务商限流的表现
+    // 是零散的 llmError,面板上看起来像"LLM 判断不出影响",很容易被当成结论忽略。
+    // 这是本项目最在意的一类故障:看起来有结论,其实那个结论是缺失造成的。
+    const upstreams = await mapLimit(agents, 4, (a) => fetchUpstream(a), note('抓取'))
+    const out = await mapLimit(
+      agents,
+      2,
+      async (agent, i) => llmEnhance(evaluate(agent, upstreams[i]), agent),
+      note('评估')
+    )
+    // 评估失败的槽位没有结果,补一条占位,保证 results 与台账**逐项对齐** ——
+    // 否则面板按下标渲染时会张冠李戴,比缺一家更糟。
+    for (let i = 0; i < out.length; i++) {
+      if (out[i] === undefined) out[i] = { agentId: agents[i].id, risk: 'unknown', failed: true }
     }
     state.results = out
-    // 总体情况:brief 由代码算(永远可信),LLM 只负责把 brief 组织成人话。
-    // 放在 for 循环之后 —— 它要看完全部 12 家才有意义。
-    // 失败只记进 summary.error,绝不让整轮刷新失败(否则这功能一挂看板就空白)。
-    state.summary = await summarize(out, state.probe, ledgerAgreement())
-    state.lastRunAt = new Date().toISOString()  } catch (e) {
+    state.error = failed.length ? failed.join('; ') : null
+    // 摘要**不在这里算** —— 统一走 refreshSummarySoon()。
+    //
+    // 原实现是 `state.summary = await summarize(out, state.probe, …)`,直接写、
+    // 绕过队列;而探针触发的重算走队列。两条路径互不串行,于是探针撞上抓取时会这样:
+    //   1. runOnce 算完摘要 → 写盘
+    //   2. 期间探针到达 → 队列用**新**的黑盒数据算 → 写盘
+    //   3. runOnce 的 finally 再写一次 → 把探针那份更新的覆盖回旧的
+    // 结果:置顶面板说「黑盒尚未上报」,而黑盒数据就在它正下方。
+    // **不报错、不掉线,只是两个互相矛盾的结论同屏显示** —— 而人只会读最上面那个。
+    //
+    // 删掉这次直接计算后,state.summary 在整个服务里只有一个写入者,这一整类竞态消失。
+    // 顺带省掉一次重复的 LLM 调用(原先这里算一遍、队列里又算一遍)。
+    // 代价:running 会一直 true 到摘要写完(原先摘要是在 finally 之前算的,差别不大),
+    // 期间点「立即刷新」会拿到 409 —— 那是准确的,不是坏了。
+    await refreshSummarySoon()
+    state.lastRunAt = new Date().toISOString()
+  } catch (e) {
     state.error = String(e?.message ?? e)
   } finally {
     state.running = false
