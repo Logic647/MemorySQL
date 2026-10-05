@@ -4,6 +4,80 @@
 
 ---
 
+## 2026-10-05 · 公网入口曾对写端点完全敞开(nginx 注入 token 的副作用)
+
+### 怎么发现的:一个"不可能成功"的成功
+
+跑完探针,输出里**缺了「云端上报成功」那一行**,而 `PROBE_TOKEN` 被设成了字面量
+占位符 `<token>`(是我上条消息里的示例,被照抄了)。**带着错 token 却上传成功,不合理。**
+
+查 nginx 配置,`/etc/nginx/sites-enabled/msql-watch` 第 9 行:
+
+```nginx
+location / {                                                            # 一个 location 罩住全部路径
+    proxy_set_header Authorization "Bearer <真 token>";                 # 无条件覆盖客户端的头
+}
+```
+
+nginx 用自己的值**覆盖**客户端发来的 `Authorization`,所以服务里的 `auth()`
+(L154,路由之前全局生效)永远看到正确的 token —— **等于所有请求都认证通过**。
+
+实测(从服务器上打,本机网络不稳不可靠):
+
+| | 改前 |
+|---|---|
+| 公网经 nginx `GET /api/state` 无 token | **200** |
+| 内网绕过 nginx `:8788` 无 token | 401 |
+
+**读公开可能是有意的**(页面本来就要匿名能开),问题在**写**:
+
+| 端点 | 谁能调 | 后果 |
+|---|---|---|
+| `POST /api/probe` | **任何人** | 伪造黑盒结果,面板显示假的「0 漂移」 |
+| `POST /api/manual` | **任何人** | 伪造 changelog,白盒结论整个失真 |
+
+更糟的是探针上报的 `ledgerHash` 也在这条路径里 —— **任何人都能伪造它,把真正的契约不一致
+掩盖掉,或反过来凭空造一条红条**。这正好绕过了契约指纹校验存在的唯一理由:
+指纹比较的是数据,而数据本身可以被人随便改。
+
+### 修法:按读/写拆开
+
+`location = <精确路径>` 优先级高于 `location /`,把两个写端点摘出来透传客户端自己的
+`Authorization`(探针本来就持有 `PROBE_TOKEN`)。nginx 在值为空时**省略该头**,
+于是不带 token 的请求落到服务自己的 `auth()` → 401。
+
+`/api/refresh` **保持公开**:页面上的「立即刷新」按钮要用,而页面不该持有密钥。
+它只触发一次抓取(运行中返 409)、不改已存数据 —— 小风险,已在配置注释里写明代价。
+
+实测通过(备份在 `/root/nginx-backups/`,`nginx -t` 先过再 reload):
+
+| 请求 | 改后 |
+|---|---|
+| `GET /api/state` 无 token | 200(页面仍匿名可开) |
+| `GET /api/probe` 无 token | **401** |
+| `GET /api/probe` 有 token | 404 ← 期望值,证明头确实透传(否则探针会一直 401) |
+| `GET /api/manual` 无 token | **401** |
+
+### 第二次踩坑:备份放错目录
+
+第一次应用时把备份 `msql-watch.bak-xxx` 放在 `sites-enabled/` 里 ——
+**nginx 会 include 该目录下每一个文件**,于是备份被当成第二份 `server` 块,
+报 `duplicate listen options for [::]:443`,`nginx -t` 一直红、之后任何 reload 都会挂。
+回滚了配置但校验仍红,得再跑一次把备份挪到 `/root/nginx-backups/`。
+**好在全程没执行 reload**(校验失败就退出),内存里还是旧配置,线上没受影响。
+已写进 `DEPLOY.md`:备份目录不在 `includes` 范围内。
+
+### 教训
+
+**"带着错凭据却成功"是这类洞的典型暴露方式。** 当时如果只看「云端上报成功」就收工,
+这个洞会一直开着 —— 而且从面板上完全看不出来(数据看着挺正常,只是内容是别人写的)。
+同一晚上我还犯了两个同类错:PowerShell 的 `Get-Content -Raw` 按 GBK 解码弄坏 AGENTS.md、
+把 U+FE4E(私有区)当成 `个`。**三个错都是"看起来做完了"的那种。**
+
+DEPLOY.md 原来推荐的正是那个有洞的配置,已重写为按读/写拆开 + 四条实测清单。
+
+---
+
 ## 2026-10-05 · ZCode 开源,黑盒升白盒(契约从推测变成源码确认)
 
 台账里 zcode 原是 `upstream: { kind: 'none' }` + `monitor: 'blackbox_only'`(4 家闭源之一)。

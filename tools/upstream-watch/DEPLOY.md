@@ -215,23 +215,82 @@ PROBE_ENDPOINT=https://watch.logic-yjb.top PROBE_TOKEN=xxx npm run upstream:prob
 
 ## 反向代理与 HTTPS
 
-服务默认只监听 `127.0.0.1`,公网访问走 nginx:
+服务默认只监听 `127.0.0.1`,公网访问走 nginx。
+
+### ⚠️ 不要对所有路径注入 token
+
+下面这种写法(早期的文档就是这么写的)**会把写端点也一起敞开**:
 
 ```nginx
-location / {
+location / {                              # ← 错:一个 location 罩住全部
     proxy_pass http://127.0.0.1:8788;
-    proxy_set_header Host $host;
+    proxy_set_header Authorization "Bearer <token>";   # 无条件覆盖客户端的头
 }
 ```
 
-**注意:query-string 里的 `?token=` 会留在 nginx access log 里**。更稳妥的做法是让 nginx 注入 header:
+nginx 会用它自己的值**覆盖**客户端发来的 `Authorization`,于是服务自己的 `auth()` 永远看到
+正确的 token —— **等于对所有请求都认证通过,包括 `POST /api/probe`**。
+
+后果不是"页面被公开"(那可能是有意的),而是**任何拿到网址的人都能改看板的数据**:
+
+- 伪造黑盒结果,让面板显示「🔴 0 漂移」
+- 伪造 `ledgerHash`,**把真正的契约不一致掩盖掉**,或反过来凭空造一条红条
+  —— 这正好绕过了契约指纹校验存在的理由
+
+实测踩过:探针带着一个**错的** token 上传却返回成功,才暴露了这个洞。
+
+### 正确写法:按读/写拆开
 
 ```nginx
-location / {
-    proxy_pass http://127.0.0.1:8788;
-    proxy_set_header Authorization "Bearer <你的token>";
+server {
+    server_name watch.example.com;
+
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+
+    # 写端点:不注入,透传客户端自己的 Authorization
+    # 不带 token 时 nginx 会省略该头(空值不传给上游),服务自己的 auth() 返 401
+    location = /api/probe  { proxy_pass http://127.0.0.1:8788; proxy_set_header Authorization $http_authorization; proxy_set_header Host $host; }
+    location = /api/manual { proxy_pass http://127.0.0.1:8788; proxy_set_header Authorization $http_authorization; proxy_set_header Host $host; }
+
+    # 读路径:继续注入,页面才能匿名打开
+    location / {
+        proxy_pass http://127.0.0.1:8788;
+        proxy_set_header Authorization "Bearer <token>";
+        proxy_set_header Host $host;
+    }
 }
 ```
+
+`location = <精确路径>` 优先级高于 `location /`,所以写端点会先命中。客户端调用方
+(探针、手动粘贴)本来就持有 token,用 `PROBE_TOKEN` 传即可。
+
+**为什么不把 `/api/refresh` 也关上**:页面上的「立即刷新」按钮要用它,而页面不该持有密钥。
+它只能触发一次抓取(运行中返 409),不改变已存数据,属可接受的小风险 —— 代价是被反复触发
+会消耗 GitHub 配额。哪天要收紧,应改成先让用户粘贴 token,而不是把 token 塞进页面。
+
+### 改完必须实测这四条
+
+```bash
+code() { curl -s -o /dev/null -w '%{http_code}' --max-time 25 "$@"; }
+code https://watch.example.com/api/state                      # 期望 200(页面匿名可开)
+code https://watch.example.com/                               # 期望 200
+code https://watch.example.com/api/probe                      # 期望 401 ← 关键
+code -H "Authorization: Bearer $TOKEN" https://watch.example.com/api/probe   # 期望 404
+```
+
+最后一条期望 **404 而不是 200**:该端点只接受 POST,GET 应该在通过鉴权之后落到 404,
+这就证明了客户端的 header 确实透传到了服务(否则探针会一直 401)。
+
+### 备份别放在 sites-enabled/ 里
+
+nginx 会 include 该目录下的**每一个文件**。把备份 `msql-watch.bak-xxx` 放在那里,
+它会被当成第二份 `server` 块解析,报 `duplicate listen options for [::]:443`,
+于是 `nginx -t` 一直失败、之后任何 reload 都会挂。备份放 `/root/nginx-backups/`。
+
+### 仍然不要把 token 放进 URL
+
+`auth()` 也接受 `?token=`,但 **query-string 会留在 nginx access log 里**。
+优先用 header(上面的 `$http_authorization` 或固定注入)。
 
 ## 台账变了怎么办
 
