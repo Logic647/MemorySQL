@@ -130,6 +130,19 @@ export const api = {
       toolCount: number
       portNote?: string | null
     }>,
+  /**
+   * 立刻重启 MCP 监听。
+   *
+   * 存在的意义是让「关闭/开启端点」这个开关**当场生效**,而不必重启应用 ——
+   * 插件里 `startServer()` 本来就尊重 `mcp-server:enabled`,而 ipc 早有
+   * stop+start 的 restart 通道,只是从来没被界面用上。
+   *
+   * 关闭时:restart 先 stopServer,startServer 再读到 enabled=false 而拒绝启动,
+   * 于是端口不再监听 —— 这才是这个开关的意义(本机任何进程都读不到你的记忆库)。
+   * 插件本身仍加载着,所以还能再打开。
+   */
+  mcpRestart: (): Promise<{ ok: boolean; running: boolean }> =>
+    window.memorysql.invoke('mcp-server:restart') as Promise<{ ok: boolean; running: boolean }>,
   // memory-core
   memoriesSave: (input: { id?: number; kind: string; content: string }): Promise<{ id: number }> =>
     window.memorysql.invoke('memory-core:save', input) as Promise<{ id: number }>,

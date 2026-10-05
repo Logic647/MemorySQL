@@ -49,6 +49,18 @@ export default function SettingsView() {
   const [syncInfo, setSyncInfo] = useState<{ deviceId: string; lastSyncAt: number; plaintextAck: boolean } | null>(null)
   const [msg, setMsg] = useState('')
   const [mcpPort, setMcpPort] = useState('')
+  /**
+   * MCP 端点是否对外服务。
+   *
+   * 这个开关以前**不存在**,而隐私披露里不得不写"目前没有关闭路径,只能退出应用" ——
+   * 一份安全文档承认自己的控制缺失,比缺这个控件更糟。
+   *
+   * 写的是 `mcp-server:enabled` 而不是 `plugin.mcp-server.enabled`,这是刻意的:
+   * 后者会让插件宿主整个跳过 mcp-server,于是 /status 与 /restart 通道消失,
+   * 用户在界面里**再也打不开**(只能改文件重启)。前者只让端口不再监听,
+   * 插件仍在、开关可逆。`startServer()` 本来就尊重这个键(见 mcp-server/index.ts)。
+   */
+  const [mcpOn, setMcpOn] = useState(true)
   const [dataDir, setDataDir] = useState('')
   const [pluginList, setPluginList] = useState<Array<{ id: string; name: string; version: string; enabled: boolean; external: boolean }>>([])
   const [loadErrors, setLoadErrors] = useState<string[]>([])
@@ -71,8 +83,10 @@ export default function SettingsView() {
     try {
       const m = await api.mcpStatus()
       setMcpPort(String(m.requestedPort ?? m.port))
+      setMcpOn(m.enabled !== false)
     } catch {
-      /* mcp disabled */
+      // 注意:这里捕的是 **host 通道不可用**(如开发环境下部分通道未注册),
+      // 不是"MCP 被禁用"。旧注释写成后者会误导排查方向。
     }
   }, [])
 
@@ -153,8 +167,64 @@ export default function SettingsView() {
 
             <section>
               <h3>MCP 服务</h3>
+              {/*
+                端点开关。这个端点**故意不做鉴权**(免去本机 agent 的凭据交换),
+                代价是本机任何进程都能读走全部记忆与会话 —— 隐私披露里写明了这一点。
+                既然如此,「关掉它」就必须是一个**用户点得到**的控件,而不是
+                「去改 settings.json 或退出应用」。缺这个控件时,披露文档只能写
+                「目前没有关闭路径」,那是产品缺陷,不是诚实。
+              */}
+              <div className="field-row">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={mcpOn}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                      const prev = mcpOn
+                      // 先改 UI 再等 IPC:开关的手感不能等一次磁盘写
+                      setMcpOn(next)
+                      void api
+                        .hostPluginSetting('mcp-server', 'enabled', next)
+                        // restart 让它当场生效 —— 插件的 startServer 本来就尊重这个键,
+                        // 而 ipc 早就有 stop+start 通道,只是界面从没用过
+                        .then(() => api.mcpRestart())
+                        .then((r) => {
+                          setMsg(
+                            next
+                              ? r.running
+                                ? 'MCP 端点已开启'
+                                : '已开启设置,但服务没能监听(看侧栏端口提示)'
+                              : 'MCP 端点已关闭:本机进程读不到你的记忆库,agent 也无法续接上下文'
+                          )
+                        })
+                        .catch((err) => {
+                          // 失败必须回滚,不能让界面显示一个并未生效的状态
+                          setMcpOn(prev)
+                          setMsg(`操作失败: ${String(err)}`)
+                        })
+                    }}
+                  />
+                  <span className="slider" />
+                </label>
+                <span className="mono-tag">{mcpOn ? '已开启 · agent 可连' : '已关闭 · 本机进程也读不到'}</span>
+              </div>
               <p className="hint">
-                agent 连接端点 http://127.0.0.1:端口/mcp。端口被占用时自动向后顺延并在侧栏提示。
+                <strong>对外提供 MCP 端点</strong>
+                :agent 连接端点 http://127.0.0.1:端口/mcp。端口被占用时自动向后顺延并在侧栏提示。
+                {' '}
+                端点<strong>故意不做鉴权</strong>(免去本机 agent 的凭据交换),
+                所以关闭开关会真的让本机任何进程都读不到你的记忆与会话,
+                代价是 agent 无法自动续接上下文。详见
+                <a
+                  href="https://github.com/Logic647/MemorySQL/blob/main/PRIVACY.md"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  {' '}
+                  隐私与安全说明
+                </a>
+                。
               </p>
               <div className="mcp-guide">
                 <div className="guide-title">使用指引</div>
