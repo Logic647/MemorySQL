@@ -547,7 +547,23 @@ $('#refresh').onclick = async () => {
   // 这里若不判断,就会把陈旧数据当成本次刷新成功展示 —— 看起来一切正常,其实根本没刷新。
   try {
     const res = await fetch(U('/api/refresh'), { method: 'POST', headers: H });
-    b.textContent = res.status === 409 ? '已有抓取在进行' : (res.ok ? '立即刷新' : '刷新失败');
+    if (res.status === 409) {
+      b.textContent = '已有抓取在进行';
+    } else if (res.status === 202) {
+      // 服务端立刻回执、抓取在后台跑(一次要串行 12 家 + 可能多次 LLM,可达几分钟)。
+      // 这里轮询到 running=false 为止 —— **不能只 await 那个 POST**:
+      // 几分钟后连接多半被中间层掐掉,页面会报「刷新失败」而抓取其实成功了,
+      // 那种「成功看起来像失败」最难判断。
+      b.textContent = '抓取中…';
+      for (let i = 0; i < 300; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const s = await fetch(U('/api/state'), { headers: H }).then((x) => x.json()).catch(() => null);
+        if (!s) continue;              // 单次轮询失败就再试,别把整轮判死
+        if (!s.running) { b.textContent = '立即刷新'; break; }
+      }
+    } else {
+      b.textContent = res.ok ? '立即刷新' : '刷新失败';
+    }
   } catch {
     b.textContent = '连接失败';
   }

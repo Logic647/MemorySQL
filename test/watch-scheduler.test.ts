@@ -66,8 +66,12 @@ describe('/api/refresh 忙碌时必须回 409', () => {
     const web = fs.readFileSync(
       new URL('../tools/upstream-watch/web/index.html', import.meta.url), 'utf-8')
     const h = web.slice(web.indexOf("$('#refresh').onclick"))
-    expect(h.slice(0, 700)).toMatch(/res\.status\s*===\s*409/)
-    expect(h.slice(0, 700)).toMatch(/!res\.ok|res\.ok\s*\?/)
+    // 窗口给足:这个 handler 里塞了 202 的轮询分支(约 1.1 KB),早前按 700 字符切片时
+    // `res.ok ?` 被挤出窗口,测试红了而行为并没有变。固定小窗口等于给实现设了个
+    // 看不见的长度上限,以后再往里加分支就会重演。
+    const win = h.slice(0, 2500)
+    expect(win).toMatch(/res\.status\s*===\s*409/)
+    expect(win).toMatch(/!res\.ok|res\.ok\s*\?/)
   })
 })
 

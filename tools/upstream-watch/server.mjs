@@ -24,7 +24,11 @@ import { summarize } from './summarize.mjs'
 import { ledgerFingerprint, compareFingerprints } from './fingerprint.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
-const STATE = path.join(HERE, 'state.json')
+// STATE 可用环境变量覆盖,默认仍在 service 目录里。
+// 可覆盖不是为了部署方便(生产一直用默认),而是**为了能被测试**:
+// 冒烟测试要真起一个服务,若状态文件写死在仓库里,跑一次测试就会污染
+// 开发机上的 state.json —— 而那正是"测试动了真实数据"最容易被忽略的一种。
+const STATE = process.env.STATE_PATH ?? path.join(HERE, 'state.json')
 const LEDGER = process.env.LEDGER_PATH ?? path.join(HERE, '..', '..', 'upstream', 'ledger.json')
 const PORT = Number(process.env.PORT ?? 8788)
 const REFRESH_HOURS = Number(process.env.REFRESH_HOURS ?? 24)
@@ -108,6 +112,33 @@ async function recomputeSummary() {
   }
 }
 
+/**
+ * 排队重算摘要并落盘,**不阻塞调用方**。
+ *
+ * 为什么要排队而不是直接 `void recomputeSummary()`:
+ * recomputeSummary 与 saveState 都会写同一个 state.json。两个请求同时到达
+ * (比如探针上报撞上「立即刷新」)就会各自算一次,然后各写一次盘 —— 后写的
+ * 可能带着**上一轮**的 summary 覆盖掉新数据。那种丢失不会报错,只会让面板
+ * 停在旧结论上,而探针明明刚报上来。串行化把这种丢失变成不可能。
+ */
+let summaryQueue = Promise.resolve()
+function refreshSummarySoon() {
+  // `.catch` 不是可选的:summaryQueue 一旦 reject,后续所有 `.then` 都挂在
+  // 一个已 reject 的 promise 上,**再也不会执行** —— 摘要就此永久冻结,
+  // 而面板看起来只是"数据有点旧",不报任何错。
+  // 这与之前 `running` 被写进 state.json 导致服务永久锁死是同一族:
+  // 一个瞬时故障变成永久失效,而且症状不像故障。
+  summaryQueue = summaryQueue
+    .then(async () => {
+      await recomputeSummary()
+      saveState()
+    })
+    .catch((e) => {
+      console.error('摘要重算落盘失败(后续重算仍会继续):', e?.message ?? e)
+    })
+  return summaryQueue
+}
+
 async function runOnce() {
   if (state.running) return
   state.running = true
@@ -174,16 +205,23 @@ const server = http.createServer((req, res) => {
           ledgerHash: typeof data.ledgerHash === 'string' ? data.ledgerHash : null,
           results: data.results.slice(0, 64) // 防御:别让人往 state 里灌垃圾
         }
-        // **探针到达后必须重算摘要。**
-        // 摘要原本只在 runOnce() 里算,而 runOnce 每 24h 才跑一次 —— 于是探针上报后,
-        // 置顶面板会继续说「黑盒尚未上报」、盲区仍列着刚被验证掉的 agent,
-        // 而它正下方的新数据明明就在那儿。**两个互相矛盾的结论同屏显示,
-        // 而人只会读最上面那个。** 探针是低频动作(手动或每日计划任务),
-        // 多花一次 LLM 调用换一致性,划算。
-        void recomputeSummary().finally(() => {
-          saveState()
-          json(res, 200, { ok: true, accepted: state.probe.results.length })
-        })
+        // 探针到达后必须重算摘要 —— 但**回执不等它**。
+        //
+        // 原实现在 `recomputeSummary().finally()` 里回 200,于是每次上报都要等
+        // summarizer 跑完一次 LLM。实测空 results 也要 26 秒,带 12 条更久;
+        // nginx 的 proxy_read_timeout 是 30 秒,于是探针稳定吃到 **504**。
+        // 而数据其实**已经存好了** —— 调用方只看到一个超时,合理地以为失败、
+        // 于是重试、再超时。「失败要看起来像失败」在这里反过来了:
+        // **成功看起来像失败**,而且从面板上看不出数据其实是好的。
+        //
+        // 所以顺序改成:先落盘、先回执,摘要随后自己追上。
+        // 代价是那 26 秒内面板显示的是上一轮的结论,所以回执里明说
+        // summary:'pending',不假装已经一致。
+        saveState()
+        json(res, 200, { ok: true, accepted: state.probe.results.length, summary: 'pending' })
+        // 刻意不 await:探针方要的是「收下了」,不是「顺便帮我算完摘要」。
+        // 串行化在 refreshSummarySoon 里,这里不阻塞响应。
+        void refreshSummarySoon()
       } catch (e) {
         json(res, 400, { error: String(e?.message ?? e) })
       }
@@ -202,8 +240,19 @@ const server = http.createServer((req, res) => {
     if (state.running) {
       return json(res, 409, { error: '正在抓取中,请稍候再试', running: true, state })
     }
-    void runOnce().then(() => json(res, 200, state))
-    return
+    // **立刻回执,抓取在后台跑。**
+    //
+    // 旧实现在 `runOnce().then(...)` 里回 200,而 runOnce 是**串行**遍历 12 家、
+    // 每家都可能调一次 LLM —— 实测这一轮要几十秒到几分钟,稳稳超过 nginx 的
+    // proxy_read_timeout。于是页面等来一个网关超时,显示「刷新失败」,
+    // 而抓取其实完成了:又是一次**成功看起来像失败**,而且用户没有任何办法
+    // 判断该不该再点一次(再点会撞上 409「已有抓取在进行」,更像坏了)。
+    //
+    // 改回 202 + 页面轮询 `running` 之后,这个请求的时长与抓取时长解耦,
+    // 中间层掐断连接也不会让一次成功的抓取变成"失败"。
+    // running 由 runOnce 自己维护(进入 true、finally 里 false),页面据此判断结束。
+    void runOnce()
+    return json(res, 202, { started: true })
   }
 
   // 闭源 agent:手动粘贴 changelog,让「无法评估」变成「可评估」
@@ -244,11 +293,25 @@ const server = http.createServer((req, res) => {
 
 loadState()
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`上游监控看板 → http://127.0.0.1:${PORT}`)
+  // 打**实际绑定的端口**,不是 PORT 变量。PORT=0(让系统分配)或将来做端口顺延时,
+  // 打变量会输出一个谁也连不上的地址 —— 而日志看起来完全正常。
+  const actual = server.address()?.port ?? PORT
+  console.log(`上游监控看板 → http://127.0.0.1:${actual}`)
   console.log(`台账: ${LEDGER}`)
   console.log(`鉴权: ${TOKEN ? '已启用(Bearer / ?token=)' : '未设 AUTH_TOKEN(仅本机可访问)'}`)
 })
 
 // 启动即抓一次,之后按 REFRESH_HOURS 定时(用户定的一天一次)
 void runOnce()
-setInterval(() => void runOnce(), REFRESH_HOURS * 3600 * 1000).unref()
+// setInterval 的延时是 32 位有符号毫秒,超过 2147483647 会被**静默截断成 1ms**
+// (Node 只打一条 TimeoutOverflowWarning)—— 实测 REFRESH_HOURS=9999 会变成
+// 每毫秒抓一次,把 GitHub 配额和自己的 CPU 一起烧光。夹到上限即可:
+// 反正是"约等于永不",语义没丢。
+const MAX_INTERVAL_MS = 2147483647
+const intervalMs = Math.min(REFRESH_HOURS * 3600 * 1000, MAX_INTERVAL_MS)
+if (REFRESH_HOURS * 3600 * 1000 > MAX_INTERVAL_MS) {
+  console.warn(
+    `REFRESH_HOURS=${REFRESH_HOURS} 超过 setInterval 上限,已夹到 ${Math.round(MAX_INTERVAL_MS / 3600000)} 小时`
+  )
+}
+setInterval(() => void runOnce(), intervalMs).unref()
