@@ -29,7 +29,7 @@ export type MonitorMode = 'tracked' | 'blackbox_only'
 export type SourceKind =
   | 'sqlite' /** SQLite 权威库 —— 用 schema 探测漂移 */
   | 'jsonl' /** JSON Lines —— 用真实 parser 解析样本 */
-  | 'json' /** 单个/多�� JSON 文件 */
+  | 'json' /** 单个/多个 JSON 文件 */
 
 export interface SqliteExpect {
   /** 期望存在的表(任一命中即可,用于支持多代布局) */
@@ -391,6 +391,7 @@ export const AGENTS: AgentContract[] = [
   },
 
   // ───────────────────── 闭源:无任何公开 changelog,仅黑盒守 ─────────────────────
+  // (不写家数:每有一家开源就要改一次注释,迟早会忘 —— 同 note 不进指纹一个道理)
   {
     id: 'qoder',
     name: 'Qoder / Qoder CN',
@@ -466,8 +467,8 @@ export const AGENTS: AgentContract[] = [
     id: 'zcode',
     name: 'ZCode',
     agentType: 'zcode',
-    upstream: { kind: 'none', note: '智谱闭源桌面应用,无公开仓库/更新日志' },
-    monitor: 'blackbox_only',
+    upstream: { kind: 'github', repo: 'zai-org/ZCode' },
+    monitor: 'tracked',
     localRoots: ['.zcode/cli/db/db.sqlite', '.zcode/cli/rollout'],
     source: {
       kind: 'sqlite',
@@ -478,12 +479,22 @@ export const AGENTS: AgentContract[] = [
           session: ['id', 'directory', 'title', 'time_created', 'time_updated']
         },
         note:
+          '2026-10 已按上游源码逐条核对(不再是黑盒推测):' +
+          'db 路径 = apps/zcode-cli/packages/adapters/src/storage/session-store/paths.ts 的 getDefaultSessionDbPath();' +
+          '表结构 = 同目录 migrations.ts 里 0001_base_session_store 的建表 SQL' +
+          '(session/message/part 三表均在,上面 5 个必需列逐个核对通过)。' +
           '与 opencode 同源(共享 _lib/agent-db-parser.ts);rollout 目录仅剩 model-io 日志,作 watcher 信号不作权威源'
       }
     },
     mcp: {
       file: '.zcode/config.json',
       jsonpath: '$.mcp.servers.memorysql',
+      // 必填,依据上游 adapters/src/config/schema.ts:
+      //   mcpServerSchema = z.discriminatedUnion("type", [stdio, http, sse])
+      // `type` 是**判别式**,缺它整条 server 会被 strict 校验丢弃且不报错 ——
+      // 与 opencode ≥2.0 那个 bug 同一类,连接器必须写 `type: 'http'`。
+      // http 分支 = z.object({ type: z.literal("http"), url: z.string().min(1) }).strict()
+      // 外层是 mcpSchema = z.object({ servers: z.record(z.string(), ...) }),故 jsonpath 是 $.mcp.servers.*
       requiredKeys: ['type', 'url'],
       valueHints: { type: 'http' }
     },

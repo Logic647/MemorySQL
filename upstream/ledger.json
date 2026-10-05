@@ -641,10 +641,10 @@
       "name": "ZCode",
       "agentType": "zcode",
       "upstream": {
-        "kind": "none",
-        "note": "智谱闭源桌面应用,无公开仓库/更新日志"
+        "kind": "github",
+        "repo": "zai-org/ZCode"
       },
-      "monitor": "blackbox_only",
+      "monitor": "tracked",
       "localRoots": [
         ".zcode/cli/db/db.sqlite",
         ".zcode/cli/rollout"
@@ -668,7 +668,7 @@
               "time_updated"
             ]
           },
-          "note": "与 opencode 同源(共享 _lib/agent-db-parser.ts);rollout 目录仅剩 model-io 日志,作 watcher 信号不作权威源"
+          "note": "2026-10 已按上游源码逐条核对(不再是黑盒推测):db 路径 = apps/zcode-cli/packages/adapters/src/storage/session-store/paths.ts 的 getDefaultSessionDbPath();表结构 = 同目录 migrations.ts 里 0001_base_session_store 的建表 SQL(session/message/part 三表均在,上面 5 个必需列逐个核对通过)。与 opencode 同源(共享 _lib/agent-db-parser.ts);rollout 目录仅剩 model-io 日志,作 watcher 信号不作权威源"
         }
       },
       "mcp": {

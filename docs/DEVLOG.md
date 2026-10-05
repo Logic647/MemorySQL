@@ -4,6 +4,60 @@
 
 ---
 
+## 2026-10-05 · ZCode 开源,黑盒升白盒(契约从推测变成源码确认)
+
+台账里 zcode 原是 `upstream: { kind: 'none' }` + `monitor: 'blackbox_only'`(4 家闭源之一)。
+ZCode 公开了仓库 **`zai-org/ZCode`**(Z.ai 的 coding agent harness,7.4k star,客户端/后端/Agent CLI 源码齐全),
+于是从"黑盒推测"升级成"逐条查源码"。
+
+### 查源码逐条核对,结论是台账本来就对
+
+| 声明 | 依据 | |
+|---|---|---|
+| `.zcode/cli/db/db.sqlite` | `adapters/src/storage/session-store/paths.ts` 的 `getDefaultSessionDbPath()` | ✅ |
+| 表 `session`/`message`/`part` | 同目录 `migrations.ts` 的 `0001_base_session_store` 建表 SQL | ✅ |
+| `session` 的 5 个必需列 | 同上,实际 20 列,5 个逐一核对 | ✅ |
+| `mcp.requiredKeys: ['type','url']` | `adapters/src/config/schema.ts` | ✅ |
+
+**交叉验证**:源码里数出 23 张表,本机黑盒实测也是 **23 张**(`布局 [session,message,part] 与列均匹配(共 23 张表)`)。
+上游源码与实际安装完全一致 → 本机没有私有分叉,源码推出的契约可信。
+
+### 顺带发现:和 opencode 那个 bug 是同一类
+
+```ts
+const mcpServerSchema = z.preprocess(normalizeMcpServerConfigInput,
+  z.discriminatedUnion("type", [stdio, http, sse]));
+// http 分支 = z.object({ type: z.literal("http"), url: z.string().min(1) }).strict()
+```
+
+`type` 是**判别式** —— 缺它整条 server 被 strict 校验丢弃且不报错。
+**这正是 v0.5.6 修的 opencode `type:remote` 那个 bug 的同构版本**。
+好在连接器当初就写了 `type: 'http'`(`valueHints.type='http'`),存量用户没踩到。
+已把依据写进台账注释 —— 免得以后有人当"多余字段"清掉它。
+
+ZCode 源码自己也留了同类教训的注释:*"配置入口漏掉该字段会因 strict 校验丢弃整个 server"*。
+
+### 两处顺手治理
+
+1. **闭源小节标题里的家数删掉了**(原写"4 家")。每有一家开源就要改一次注释,迟早会忘 ——
+   和 `note` 不进契约指纹是同一个道理。
+2. `ledger.json` 是**手工同步**的(当时跑不了 `npm run ledger:export`),事后本机跑导出确认一致。
+
+### 会看到红条,那是功能在工作
+
+`upstream` 与 `monitor` 都在契约指纹的覆盖范围内,**这次改动必然改变指纹**。
+服务器还没 pull 时,面板会显示红色「契约不一致」——**不是故障**,是昨天做的指纹校验在正确报警。
+服务器 pull + 本机重跑 `npm run upstream:probe` 后自动变 `match`。
+
+闭源从 4 家降到 **3 家**(qoder / codebuddy / workbuddy)。
+zcode 现有白盒,当前仅 1 个 release(`v3.14.3`),内容是 workflow 并发与复用逻辑 ——
+**不命中任何风险关键词**(schema/migration/table/…),判 low/none 是对的:
+那些表(`workflow_run`/`dwf_*`)与 `session/message/part` 无关。
+
+typecheck 0 / vitest **320:320** / 黑盒 🟢4 🔴0 🟣0。
+
+---
+
 ## 2026-10-01 · v0.5.6 已发版(Windows + Linux + macOS arm64)
 
 `96ea687` / tag `v0.5.6`。**12 个资产,三平台必传件全齐**,一次性传到齐(未复现 blockmap 缺件坑):
