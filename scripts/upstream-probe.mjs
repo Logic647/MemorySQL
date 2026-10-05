@@ -22,6 +22,7 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { ledgerFingerprint } from '../tools/upstream-watch/fingerprint.mjs'
+import { shouldRetryUpload, uploadBackoffMs } from '../tools/upstream-watch/retry.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.join(HERE, '..')
@@ -146,16 +147,49 @@ async function report(blackbox) {
       log(`读不到本机台账,契约指纹留空: ${e?.message ?? e}`)
     }
     const payload = { ...blackbox, ledgerHash: hash }
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      },
-      body: JSON.stringify(payload)
-    })
+
+    // ── 分类型重试(分类逻辑在 tools/upstream-watch/retry.mjs,可单测)──
+    // 为什么要重试:本机到云端的链路**实测约一半的时候会 `fetch failed`**
+    // (出口走透明代理,长连接被掐)。每日跑一次的探针如果 50% 失败,
+    // 平均两天才落一次数据 —— 而这个功能存在的意义就是**尽快发现漂移**。
+    // 加了重试后实测 4/4 成功,其中一次连挂两次后第三次成功。
+    const MAX_ATTEMPTS = 4
+    let res = null
+    let lastErr = null
+    let lastWhy = ''
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify(payload)
+        })
+        lastErr = null
+      } catch (e) {
+        // 传输层失败:请求根本没拿到响应
+        res = null
+        lastErr = e?.message ?? String(e)
+      }
+      const verdict = shouldRetryUpload(res?.status)
+      lastWhy = verdict.why
+      if (!verdict.retry) break
+      if (attempt === MAX_ATTEMPTS) break
+      const wait = uploadBackoffMs(attempt)
+      log(`上报第 ${attempt} 次失败(${res ? `HTTP ${res.status}` : lastErr}),${wait / 1000}s 后重试`)
+      await new Promise((r) => setTimeout(r, wait))
+    }
+
+    if (!res) {
+      log(`云端上报失败(不影响本地报告):${lastErr}`)
+      return
+    }
     if (!res.ok) {
-      log(`云端上报失败 HTTP ${res.status}(${url})`)
+      // 日志里带上"该不该重试"的判断:凭据错时不该让人以为是网络抖动
+      log(`云端上报失败 HTTP ${res.status}(${url}) —— ${lastWhy}`)
       return
     }
     // 必须校验响应体 —— 只看 status 会被「返回 HTML 但状态 200」骗过去

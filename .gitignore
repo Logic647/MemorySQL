@@ -21,3 +21,6 @@ tools/upstream-watch/state.json.tmp
 .eslintcache
 *.tsbuildinfo
 *.msqlv
+
+# 探针凭据(勿提交)
+scripts/upstream-probe.env
