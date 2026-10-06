@@ -4,6 +4,52 @@
 
 ---
 
+## 2026-10-06 · macOS x64 不再作为发版阻塞项(已决定不等)
+
+### 事实
+
+`v0.5.6` tag run 从 2026-09-30 挂到现在 **8049 分钟(5.6 天)**,5 个 job 都拿到 runner 成功,
+只有 `package (macos-13, mac, x64)` 一直 `queued`、**runner_name 为空**。
+GitHub 托管的 Intel macOS runner 是最抢手的类型之一,拿不到不是偶然,也不会自己好。
+
+### 决定:不等,但**保留那个 job**
+
+发布本身早已完成(12 资产、三平台必传件齐全),**x64 从来没有阻塞过任何东西** ——
+那个 job 只是停在 `queued` 而**不是失败**,run 因此不呈现 completed,仅此而已。
+
+所以两条路都选了「不做」:
+
+| 选项 | 决定 | 理由 |
+|---|---|---|
+| 从 `ci.yml` 删掉 `macos-13` | **不删** | 等于**永久放弃** x64 支持;而留着几乎零成本 |
+| 继续等它 | **不等** | 等下去不会让代码更好,也不会让 mac 用户更多 |
+
+**留着的价值**:哪天 GitHub 容量松动,它自己就跑出来了。届时按已写好的流程补:
+
+```bash
+# 1. 下载 x64 artifact,与 arm64 的清单一起合并
+node scripts/merge-mac-manifest.mjs latest-mac.yml arm64.yml x64.yml
+# 2. 补传三个文件(x64 的 dmg / zip / blockmap 各就各位)
+gh release upload v0.5.6 x64.dmg x64.zip x64.blockmap merged-latest-mac.yml --clobber
+```
+
+**注意顺序**:合并后的清单**必须 `--clobber` 覆盖**现有那份 arm64-only 的,
+否则 arm64 Mac 会解析到 x64 包 —— 那是本季度修过的最危险的一个 bug
+(`filterFilesForArch` 在「没有 arm64 条目」时会退回到不过滤)。
+
+### 为什么 Intel Mac 可以先放一放
+
+苹果 2020 年就完成了 M1 转型,现在仍能升级 macOS 的 Intel 机都是五年前以上的旧机器。
+x64 的缺失影响的是自动更新(手动下载仍可用),不是产品可用性。
+
+### 交接时请注意
+
+**这个 job 不在"待办"里。** 看到 `macos-13` 长期 queued **不要**当成构建失败、
+也不要当成阻塞发版 —— v0.5.6 早已 `draft: false` 发布完毕。
+真正的触发条件只有一个:**该 job 变成 success**。
+
+---
+
 ## 2026-10-05 · 四件事:摘要竞态、抓取并发、每日探针、MCP 端点开关
 
 ### ① 摘要只有一个写入者(修一个"两个矛盾结论同屏"的竞态)
