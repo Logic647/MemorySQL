@@ -64,6 +64,7 @@ FTS: sessions_fts(title, summary) · messages_fts(content)  — contentless + �
 
 - 所有业务表带 `updated_at / device_id / deleted`(tombstone),为 sync-folder 增量同步预留;会话原始数据 append-only 天然免冲突,记忆/笔记 LWW 合并
 - DB 文件:`<dataDir>/memory.db`;数据目录自包含(vault/ + memory.db + settings.json)→ 整夹拷贝即迁移
+- **时间单位(混用,勿误判为时间戳损坏)**:`sessions.started_at / ended_at` 与 `session_messages.ts` 存 **Unix 秒**(写侧各 parser `Math.floor(t/1000)`,如 `_lib/agent-db-parser.ts` 的 `epoch()`;读侧 `App.tsx fmtTime` 统一 `new Date(ts*1000)`);各表 `updated_at` 存 **毫秒**。直查库时按秒解读 `started_at`,否则全显示 1970
 
 ## 5. 适配器(捕获层)
 
