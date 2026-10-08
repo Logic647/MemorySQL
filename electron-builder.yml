@@ -5,10 +5,24 @@ directories:
   buildResources: build
   output: dist
 
-# 只打包构建产物 + 生产依赖(主进程三件套);渲染层依赖已由 vite 打进 bundle
-files:
-  - out/**
-  - "!**/.vite"
+# ⚠ files 必须写在 win/mac/linux 段里各写一份,**根目录不能放 files** ——
+# 实测踩坑(2026-10-08):根 files 与平台 files 并存时,electron-builder 把根 files
+# 规范化成 {filter:[...]} FileSet 推入独立 matcher,而平台 files 字符串进 defaultMatcher
+# 并被 unshift 到 matchers[0];getMainFileMatchers 见 matchers[0] 只有排除项
+# (containsOnlyIgnore)就自动补 `**/*` → 整个仓库(含 data/ 184MB)打进 asar。
+# 另两条写法约束:
+#   1. 排除 node_modules 内文件的模式必须**相对包根**(`**/deps/**`);
+#      写 `**/node_modules/<pkg>/deps/**` 对包内文件不生效 ——
+#      getNodeModuleFileMatcher 把 `!` 排除挂到 per-dep matcher,其 from = 包根。
+#   2. electron-builder 只对配置里出现的 `!` 排除做 node_modules 侧收集,
+#      正向模式(out/** 等)留在平台 files 里供主拷贝用。
+#
+# 只保留中文 + 英文语言包(55 个 .pak → 2 个,-47MB)。放在根级对三平台都生效
+# (electronLanguages: platformSpecificBuildOptions.electronLanguages || config.*)。
+# 代价:其他语言的 Chromium 内建 UI(右键菜单等)回落英文;应用自身文案不受影响。
+electronLanguages:
+  - zh-CN
+  - en-US
 
 # 原生模块不能从 asar 内加载(better-sqlite3 + 语义检索三件套:
 # onnxruntime-node 推理库、sqlite-vec 的 vec0.dll、tokenizers 的 .node)
@@ -36,6 +50,19 @@ publish:
 
 win:
   icon: build/icon.ico
+  # files: 每平台完整清单(正向 out/** 与排除项同列,根 files 见文件头注释)。
+  # 轻量化:onnxruntime-node 一个包装了 6 个平台的二进制(207.8MB),win 构建只用 win32/x64;
+  # better-sqlite3 的 8 平台 prebuilds 同理只用 win32-x64;deps/ 是 SQLite C 源码(9.8MB)。
+  # ⚠ 若将来启用 GPU/DML 推理,删掉 DirectML.dll 那行(fastembed 现默认 CPU EP,
+  #   已实测:移除 DirectML.dll 后 bge-small-zh CPU 推理照常)。
+  files:
+    - out/**
+    - "!**/.vite"
+    - "!**/deps/**"
+    - "!**/bin/napi-v3/{darwin,linux}/**"
+    - "!**/bin/napi-v3/win32/arm64/**"
+    - "!**/bin/napi-v3/win32/x64/DirectML.dll"
+    - "!**/prebuilds/{darwin-*,linux*,win32-arm64}.node"
   target:
     - target: nsis
     - target: dir
@@ -51,6 +78,15 @@ linux:
   icon: build/icon.png
   category: Development
   maintainer: Logic647
+  # 轻量化:同 win —— 只留 linux 二进制。CI 仅 x64 runner,arm64 一并排除;
+  # ⚠ 若新增 linux/arm64 构建 job,删掉下面两处 arm64 行。
+  files:
+    - out/**
+    - "!**/.vite"
+    - "!**/deps/**"
+    - "!**/bin/napi-v3/{win32,darwin}/**"
+    - "!**/bin/napi-v3/linux/arm64/**"
+    - "!**/prebuilds/{darwin-*,win32*,linux-arm64,linuxmusl-arm64}.node"
   target:
     - target: AppImage
     - target: deb
@@ -65,6 +101,15 @@ mac:
   icon: build/icon.png
   category: public.app-category.developer-tools
   darkModeSupport: true
+  # 轻量化:只留 darwin 二进制。两个 darwin arch 都保留 —— CI 两个 runner 各自
+  # `--arm64`/`--x64` 单架构构建,单份 yml 表达不了「排除另一 arch」(无反向宏),
+  # 多留 ~34MB 可接受。
+  files:
+    - out/**
+    - "!**/.vite"
+    - "!**/deps/**"
+    - "!**/bin/napi-v3/{win32,linux}/**"
+    - "!**/prebuilds/{linux*,win32*}.node"
   # 未签名:没有 Apple Developer ID 就签不了。CI 上把 identity 显式置 null,
   # 免得 electron-builder 去翻钥匙串里不存在的证书。
   # 代价是首次启动 Gatekeeper 会拦,用户需「右键 -> 打开」或

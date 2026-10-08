@@ -4,6 +4,46 @@
 
 ---
 
+## 2026-10-08 · 安装包轻量化:169.1→105.5MB(-37.6%);顺带踩出 electron-builder「根 files + 平台 files」整仓打包坑
+
+### 体积解剖(改动前基线:win-unpacked 639.9MB / NSIS 169.1MB)
+
+| 大头 | 体积 | 判定 |
+|---|---|---|
+| onnxruntime-node 6 平台二进制 | 207.8MB(unpacked) | win 构建只用 win32/x64 33.2 → 其余 174.6 死重 |
+| └ DirectML.dll(win32/x64 内) | 17.7MB | fastembed 默认 CPU EP,从不加载 → 死重 |
+| Electron 运行时(exe/locales/dxcompiler/LICENSES 等) | ~366MB | 上游固定,动不了 |
+| better-sqlite3 prebuilds 8 平台 + deps/ SQLite C 源码 | 16.1 + 9.8MB | 只用 win32-x64;deps 运行时不用 |
+| app.asar 内 lucide-react | 19.2MB | 渲染层依赖进了 dependencies |
+| locales 55 个 .pak | 48.3MB | 只留 zh-CN/en-US |
+
+### 改动与结果(实测)
+
+- `win/mac/linux.files` 各写完整清单做**平台级排除**(onnx foreign 平台、DirectML、bs3 deps+异平台 prebuild);`electronLanguages: [zh-CN, en-US]`;`lucide-react` 移入 devDependencies(渲染层由 vite 打 bundle,asar 内 0 条)。
+- **win-unpacked 639.9→356.5MB(-44%),NSIS 169.1→105.5MB(-37.6%)**;app.asar 35.2→15.0,asar.unpacked 238.9→22.7(仅 win32/x64 onnx 15.6 + tokenizers 4.7 + bs3 2.1 + vec 0.3),locales 1.12MB/2 pak。
+- 验证:vitest 385:385 + typecheck 0;**headless 真机冒烟** `--reindex` 清空 `semantic_refs` 后全量重建 → `embedded: 268, ok: true`(fastembed→onnxruntime 无 DirectML→tokenizers→vec0 全链路);`--scan` 正常(MCP 7 工具、捕获 watcher、vault 37 notes)。GUI 冒烟被单实例锁挡死(用户实例在跑,Chromium 的 userData 走 SHGetFolderPath,**设 `APPDATA` 环境变量无效**、temp profile 建不出来)→ 渲染层依赖 `electron-vite build` 成功 + 与已发版 v0.5.6 同管线兜底。mac/linux 排除配置与 win 同构,push 后看 CI 验证。
+
+### 坑一(本轮最大):根 `files` 与平台 `files` 并存 → 整个仓库打进 asar
+
+`--dir` 首验时 app.asar 从 35.2 暴涨到 **201.9MB**,里面是 `data/` 184.6MB + 整个仓库(src/docs/design/test/upstream…)。机制(读 app-builder-lib 源码 + DEBUG 日志 effective config 实证):
+
+1. `doMergeConfigs→normalizeFiles` **只规范化根 `files`**,字符串全部变成 `{filter:[…]}` FileSet → `getFileMatchers` 把 FileSet 推成独立 matcher;
+2. 平台 `files`(字符串)进 defaultMatcher,又因 `!isEmpty()` 被 **unshift 到 matchers[0]**;
+3. `getMainFileMatchers` 只对 matchers[0] 做默认逻辑 → 见到「全是排除项」(`containsOnlyIgnore`)→ 自动补 `**/*` → **主拷贝全量打包**。
+
+修复:**根目录不放 `files`,正向(`out/**`)+排除在 win/mac/linux 三处各写一份**(每处 matchers[0] 都含正向模式 → 不触发 `**/*`)。yml 文件头有完整注释。**注意 node_modules 侧不受影响**:`getNodeModuleFileMatcher` 对 FileSet 取 `filter` 全量(含正向),对平台字符串只取 `!` 再 prepend `**/*` —— 这条路径本来就对。
+
+### 坑二:排除 node_modules 内文件的模式必须写成相对包根(`**/deps/**`)
+
+`getNodeModuleFileMatcher` 把 `!` 排除挂到 **per-dep matcher**(`from = 包根`),写 `**/node_modules/<pkg>/deps/**` 对包内文件**永不生效**;正向模式对包文件也不该出现。yml 注释里固化了这条 + win prebuilds 排除必须带 `.node` 后缀(`{darwin-*,linux*,win32-arm64}{,/**}` 这种写法对 win32-arm64 失效)。
+
+### 遗留 / 下一步
+
+- CI 双矩阵(mac arm64/x64 + linux)push 后确认平台 files 排除生效;`macos-13` 长期 queued 不是失败(既有记录)。
+- CI 发版时若复检体积,以本次 win 实测为准;GPU/DML 需求回归时删 DirectML 排除行(有注释)。
+
+---
+
 ## 2026-10-08 · 看板复核:3 条 attention 均无需适配;顺带修两个真问题(计划任务丢失 + HTTP 200 被当失败)
 
 ### 看板复核结论(用户问「有没有要跟进适配的地方」)
