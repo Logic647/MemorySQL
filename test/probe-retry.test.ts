@@ -64,6 +64,14 @@ describe('凭据 / 请求问题:重试无用', () => {
     }
   })
 
+  it('2xx → 不重试(2026-10-08:曾经落到默认 retry:true,成功被当失败、重复 POST 4 次)', () => {
+    for (const s of [200, 201, 202, 204]) {
+      const r = shouldRetryUpload(s)
+      expect(r.retry, `HTTP ${s} 是成功,绝不该重试`).toBe(false)
+      expect(r.why).toMatch(/成功/)
+    }
+  })
+
   it('2xx 不该出现在失败路径上,但也不该崩', () => {
     expect(() => shouldRetryUpload(200)).not.toThrow()
   })

@@ -27,6 +27,12 @@ export function shouldRetryUpload(status) {
   if (status === null || status === undefined) {
     return { retry: true, why: '传输层失败(连接被重置/超时/DNS 抖动)' }
   }
+  if (status >= 200 && status < 300) {
+    // 成功。曾经缺这个分支,200 落到最后的默认 retry:true —— 结果每次成功上报
+    // 都被当失败,日志连写 3 条「失败(HTTP 200)」、同一 payload 重复 POST 4 次
+    // (2026-10-08 实测日志)。「成功看起来像失败」是本项目反复踩的坑族,必须显式。
+    return { retry: false, why: `HTTP ${status} 成功,无需重试` }
+  }
   if (RETRYABLE_STATUS.has(status)) {
     return { retry: true, why: `HTTP ${status} 是暂时性状态` }
   }

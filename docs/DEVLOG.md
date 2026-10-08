@@ -4,6 +4,45 @@
 
 ---
 
+## 2026-10-08 · 看板复核:3 条 attention 均无需适配;顺带修两个真问题(计划任务丢失 + HTTP 200 被当失败)
+
+### 看板复核结论(用户问「有没有要跟进适配的地方」)
+
+拉 `https://watch.logic-yjb.top/api/state` + 本机 `npm run upstream:check`(🟢5 🔴0 🟣0 🟡7 未验),
+3 条 attention 逐条查完,**没有需要写代码的适配项**:
+
+| 项 | 白盒判定 | 复核结论 |
+|---|---|---|
+| opencode v1.18.35 | 高风险(`data format`) | **误报**。原文是 stats 接口的 JSON/Markdown 输出格式,与会话存储无关;LLM 判无影响;本机黑盒 `[session,message,part]` 布局匹配(20 表)→ 捕获正常 |
+| hermes v2026.9.24 | 中风险(MCP tab→Connectors 页) | 黑盒捕获匹配(`[sessions,messages]`,20 表)。本机 config.yaml **无 `mcp_servers` 条目**(MCP 从未配置,没有会被改坏的东西);且本机 hermes 是旧版 0.19.0-cn.7,收不到该上游版本。**连接器格式已核对仍有效**:`native-mcp.md` 官方文档确认 `~/.hermes/config.yaml` 的 `mcp_servers.<name>.url` 键就是现行写法 → MemorySQL 写入格式无需改。待本机升级后顺手验证 Connectors 页面兼容即可 |
+| qwencode v0.25.0-nightly | 中风险 | LLM 判无影响;本机未装(🟡)→ 无黑盒可测,不动 |
+
+### 问题一:计划任务 `MemorySQL-UpstreamProbe` 丢了(黑盒断供 3 天)
+
+看板 action #4「确认探针下次按时上报」查实:**任务根本不存在**(`schtasks /query` 报找不到,
+全量 390 个任务无匹配)→ 黑盒数据停在 10-05。已重建(每日 10:07,交互式令牌,与原注册一致),
+`schtasks /run` 实测 Last Result **0**,云端 `probe.checkedAt` 刷新到 `2026-10-08T10:51:27Z`,
+ledger 指纹双边 `5412e4c2` 匹配。**遗留风险:非管理员注册只在登录态运行**;任务为何消失未查明
+(手动重建已恢复,不再追查)。
+
+### 问题二:`shouldRetryUpload(200)` 落到默认 `retry:true` —— 成功被当失败
+
+`tools/upstream-watch/retry.mjs` 缺 2xx 分支,200 走到最后的 `return { retry: true }`。
+后果(实测日志 10-05 / 10-08 两次都出现):每次成功上报被当失败,连写 3 条
+「上报第 N 次失败(HTTP 200)」,**同一 payload 重复 POST 4 次**(服务端幂等才没写坏数据)。
+这正是本项目反复踩的「失败要看起来像失败 / 成功不能看起来像失败」坑族。
+
+修复:2xx 显式返回 `retry:false` + `why:'HTTP 2xx 成功'`;`test/probe-retry.test.ts`
+补 200/201/202/204 四断言(原用例只断言不抛错,所以漏网)。探针调用方逻辑不变
+(`if (!verdict.retry) break` 天然吃到新分支)。**vitest 385:385,typecheck 0 错**。
+
+### 看板自身的两个观察(不改代码)
+
+- 白盒 strong signal `data format` 在 opencode 这里产生误报,但 LLM 层正确兜住了 —— 与既有设计一致(白盒粗筛 + LLM 只加严),不调。
+- 服务器每日白盒自抓正常;黑盒唯一数据源就是本机计划任务,任务丢失 = 看板单侧失明 —— 未来可考虑「黑盒数据龄超过 N 天」的看板自检。
+
+---
+
 ## 2026-10-06 · macOS x64 不再作为发版阻塞项(已决定不等)
 
 ### 事实
