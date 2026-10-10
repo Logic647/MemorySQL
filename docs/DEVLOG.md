@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-10-10 · v0.5.7 发版(安装包瘦身版):Setup 105.5MB,12 资产,自动更新已生效
+
+### 发版结果
+
+- https://github.com/Logic647/MemorySQL/releases/tag/v0.5.7 `draft=false`,**12 资产一次传齐**(与 v0.5.6 同构):win Setup 105.5MB+blockmap+latest.yml / linux AppImage 347.6+deb 242.5+tar.gz 335.3+latest-linux.yml / mac arm64 dmg 137.0+zip 136.5+blockmap×2+latest-mac.yml(仅 arm64,macos-13 按 10-06 决定不等)
+- 公网验收:`latest.yml` 200,`version: 0.5.7`,`size: 110614721`(=105.5MB)→ 0.5.6 及更早可自动更新
+- CI:main 推送 run(38025918674)与 tag run(38025918527)**双双 5/5 绿**(ci×2 + package win/linux/macos-14,~9 分钟;macos-13 排队挂起不影响收尾)
+- `publish-release.mjs` 按预期删掉 main 推送产生的重复草稿(4 资产),保留 tag 草稿转正
+- 流程:`npm version 0.5.7 --no-git-tag-version` → `docs/releases/v0.5.7-notes.md` → commit `chore(release): v0.5.7` → tag → push → 等两个 run 的 5 关键 job → `node scripts/publish-release.mjs v0.5.7 "MemorySQL v0.5.7" docs/releases/v0.5.7-notes.md`
+
+### 本轮网络状况(影响发版但未阻塞)
+
+GitHub 链路再次间歇性不通:push 重试 7 次才成功(约 3 分钟窗口);`latest.yml` 验收重试 6 次(注意 curl 要 `-L`,否则只看到 302 重定向就误判失败)。CI 期间 gh CLI 一直可用。与 10-08 同病:本机到 github.com/api.github.com 抖动是常态,发版脚本与验收都按「重试是正常路径」设计即可。
+
+### 遗留
+
+- docs 提交推送会再触发一次 main CI + package → 按 v0.5.6 先例可能留一个 v0.5.7 草稿,无害,下次发版脚本会顺手清
+- winget/scoop 未更新版本(自 v0.4.x 后未跟进,是否维护待定)
+
+---
+
 ## 2026-10-08 · 安装包轻量化:169.1→105.5MB(-37.6%);顺带踩出 electron-builder「根 files + 平台 files」整仓打包坑
 
 ### 体积解剖(改动前基线:win-unpacked 639.9MB / NSIS 169.1MB)
