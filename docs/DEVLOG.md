@@ -25,10 +25,10 @@
 
 **三、体积(实测)**
 - renderer 产物 **2,789,563 → 677,529 字节(-75.7%)**;`out/renderer` 整目录 2.8MB → 725KB
-- 打包体积相应减少约 2MB(win NSIS 105.5MB → 约 103.5MB,待发版实测)
+- **实测安装包(同版本号 0.5.7,CI artifact):Setup 110,614,721 → 110,208,111 字节(105.49 → 105.10 MiB,-0.39 MiB / -0.37%)** —— 比 2.11MB 的原始降幅小,因为 NSIS 安装包对 payload 做了 LZMA 压缩,2.1MB 的 JS 只压出 ~0.4MB。**结论:删这两个功能省下的安装包体积有限(-0.4MB),真正的收益是界面与代码的收缩,别把它当成瘦身主力**
 - 注:笔记/图谱两个功能本身是纯 TS 代码,**体积大头其实是它们拖进来的 CodeMirror + cytoscape**(Vite 会把 devDependencies 打进 renderer bundle)——这才是删掉它们真正省下来的部分
 
-**验证:** typecheck 零错 / vitest **385:385**(36 文件;新增 `test/last-activity.test.ts` 6 例,删除 `test/note-parser.test.ts`)/ 真实库副本跑迁移 v7 成功:**264 个会话全部回填,0 个 NULL,212 个「最后 > 开始」**;`import:scan` 12 个捕获插件无回归;**真机 GUI 验收**(隔离 profile 启动 dev 构建)——导航只剩两个入口、会话行两个时间都在、详情页「开始/最后」并列,截图确认无错位
+**验证:** typecheck 零错 / vitest **385:385**(36 文件;新增 `test/last-activity.test.ts` 6 例,删除 `test/note-parser.test.ts`)/ 真实库副本跑迁移 v7 成功:**264 个会话全部回填,0 个 NULL,212 个「最后 > 开始」**;`import:scan` 12 个捕获插件无回归;**真机 GUI 验收**(隔离 profile 启动 dev 构建)——导航只剩两个入口、会话行两个时间都在、详情页「开始/最后」并列,截图确认无错位;CI 双矩阵全绿(ci win/linux + package win/linux/mac-arm64),macos-13 仍排队(既有现象,不阻塞)
 
 **遗留:**
 - `notes` / `notes_fts` 表仍留在用户库里(不主动删数据);如需彻底清空可在后续版本加一次性 DROP
