@@ -58,8 +58,27 @@ if (remoteSha === localHead) {
 }
 
 // files that differ from the remote tree, as a flat list (no submodule/nested
-// dir handling: this repo is shallow enough that a flat tree is fine)
-const changed = git('diff', '--name-status', remoteSha, localHead).split('\n').filter(Boolean)
+// dir handling: this repo is shallow enough that a flat tree is fine).
+// The remote sha may be a commit this repo has never seen (a previous API push
+// created it, and github.com:443 is down so we cannot fetch it) — diff against
+// its parent instead, and take the parent from the API when the object is absent.
+const hasRemote = (() => {
+  try {
+    git('cat-file', '-e', remoteSha)
+    return true
+  } catch {
+    return false
+  }
+})()
+
+let diffBase = remoteSha
+if (!hasRemote) {
+  const parent = (await call('GET', `/commits/${remoteSha}`)).parents[0].sha
+  console.log(`本地没有远端提交 ${remoteSha.slice(0, 7)}(早前由 API 推送),改用其父提交 ${parent.slice(0, 7)} 做差异基线`)
+  diffBase = parent
+}
+
+const changed = git('diff', '--name-status', diffBase, localHead).split('\n').filter(Boolean)
 const tree = []
 for (const line of changed) {
   const [status, ...rest] = line.split('\t')
