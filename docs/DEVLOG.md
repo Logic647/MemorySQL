@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-10-22 · 笔记/图谱下线的代码审查整改:13 条发现,其中 3 条是真缺陷
+
+**背景:** 同日「下线笔记与图谱 + 新增最后一次对话时间」的改动(`20bb9bd`/`40fb619`)交给四个只读审查员(数据层与迁移 / MCP 与检索 / 前端展示 / 删除面与残留引用)+ 逐条独立复核。共提出 13 条发现,**独立复核后全部成立**,其中 3 条是会真出错的缺陷:
+
+**缺陷一:ingest 短路分支不刷新 `last_message_at`**(medium)
+`hashSession` 只哈希 role+content、**不含 ts**,所以「消息内容没变但活动时间变新」的会话永远走短路分支,而短路的 `stmtSessionMeta` 根本不写这一列。最明确的触发者是 Claude Desktop 元数据(`parseDesktopMeta` 恒定返回 `messages: []`、`endedAt = 文件 lastActivityAt`)——它的 content_hash 恒为定值,用户继续聊也不会更新。已改为短路前就算出本次时间并**单调递增**写入,并补 3 个回归用例。
+
+**缺陷二:MCP 的「最近 N 天」仍按 `started_at`**(medium)
+`memory_list_sessions` 的 `since`、`memory_search` 的 `sinceSec`、`recentSessions` 的排序、「最近活跃项目」全都还在用 `COALESCE(started_at, updated_at)` —— 新列加上了,但读它的地方一个都没接。后果与本次变更的意图正好相反:`memory_list_sessions({since:7})` 会把「3 周前开始、昨天还在聊」的会话排除掉。全部改为 `COALESCE(last_message_at, started_at, updated_at)`,新增 `test/recency-since.test.ts` 4 例锁死这个语义。
+
+**缺陷三:会话行标题被两个时间戳挤到 ~65px**(medium)
+两个 `.session-time` 各带 `margin-left:auto`,标题可用宽度从约 141px 掉到约 65px(≈5 个汉字),列表里几乎每行都以省略号开头;而那句「否则 flexbox 会把剩余空间分给两个时间戳」的 CSS 注释与实际 flex 行为**正好相反**(`.session-title` 有 `flex:1`,自由空间早被标题吃掉)。改为单个 `.session-times` 容器(一次计算宽度)+ 小号「开始/最后」前缀区分,删掉错误注释。
+
+**其余修正**(低危/一致性):`ts=0` 在三处(ingest / sync-merge / v7 回填)都当作有效时间戳,与「不写 0」的自述矛盾,改为 `NULLIF`/`> 0` 判断;「打开日志目录」按钮被 4 秒 toast 门控,生成完就点不到,改为独立 state 并补 `.catch`;`fmtRelative` 负 diff(未来时间)显示「刚刚」,改为「时间异常」;`fmtShort` 跨年时补年份;续接弹窗的时间戳补「开始」前缀;README / `docs/plugins.md` / `docs/promo/*` 仍在承诺「笔记 + 图谱」与「CodeMirror 6」,一并清理。
+
+**界面(用户提出):** 侧栏只剩两个入口后,「会话 / 记忆」两个 tag 撑满导航列并加文字标签,不再上面大片留空。
+
+**验证:** typecheck 0 / vitest **393:393**(37 文件)/ 真实库副本 282 会话:回填后 0 NULL、0 个 0 值 / 真机截图确认标题完整、两个 tag 撑满。
+
+**推送(踩坑):** `git push` 连不上 `github.com:443`(连接被拒/重置,连续 5 次失败),而 `api.github.com` 一直稳定。改用 REST API 重放提交(`scripts/push-via-api.mjs`:本地 diff → 建 blob → 平铺 tree → commit → 更新 ref),并用 `scripts/verify-remote-tree.mjs` 逐 blob 校验 **201 个文件全部一致**。注意两点:①API 建的是**平铺 tree**,提交 SHA 与本地 git 的嵌套 tree 不同(内容相同),所以本地 `git fetch` 永远拿不到这个对象,再次推送时要用**祖先回溯**找本地已有的基线;②这套脚本只在 git 端点不通时用,链路正常时 `git push` 仍是首选。
+
+---
+
 ## 2026-10-22 · 下线「笔记」与「知识图谱」+ 新增「最后一次对话时间」
 
 **背景:** 用户长期使用后判断这两个功能实用性不高,要求去掉,并顺带减体积;同时要求「在每个会话的开始时间处再添加一个最后一次对话时间,方便用户分辨」。

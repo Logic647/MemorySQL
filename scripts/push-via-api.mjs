@@ -59,23 +59,29 @@ if (remoteSha === localHead) {
 
 // files that differ from the remote tree, as a flat list (no submodule/nested
 // dir handling: this repo is shallow enough that a flat tree is fine).
-// The remote sha may be a commit this repo has never seen (a previous API push
-// created it, and github.com:443 is down so we cannot fetch it) — diff against
-// its parent instead, and take the parent from the API when the object is absent.
-const hasRemote = (() => {
+// The remote sha may be a commit this repo has never seen (earlier API pushes
+// created it, and github.com:443 is down so we cannot fetch it) — walk back
+// through its parents until one exists locally, and diff against that.
+const existsLocally = (sha) => {
   try {
-    git('cat-file', '-e', remoteSha)
+    git('cat-file', '-e', sha)
     return true
   } catch {
     return false
   }
-})()
+}
 
 let diffBase = remoteSha
-if (!hasRemote) {
-  const parent = (await call('GET', `/commits/${remoteSha}`)).parents[0].sha
-  console.log(`本地没有远端提交 ${remoteSha.slice(0, 7)}(早前由 API 推送),改用其父提交 ${parent.slice(0, 7)} 做差异基线`)
-  diffBase = parent
+if (!existsLocally(diffBase)) {
+  let cursor = remoteSha
+  for (let depth = 0; depth < 10 && !existsLocally(cursor); depth++) {
+    cursor = (await call('GET', `/commits/${cursor}`)).parents[0].sha
+  }
+  if (!existsLocally(cursor)) {
+    throw new Error(`找不到本地存在的祖先提交(从 ${remoteSha} 起回溯 10 层)`)
+  }
+  console.log(`本地没有远端提交 ${remoteSha.slice(0, 7)}(早前由 API 推送),回溯到本地已有的 ${cursor.slice(0, 7)} 做差异基线`)
+  diffBase = cursor
 }
 
 const changed = git('diff', '--name-status', diffBase, localHead).split('\n').filter(Boolean)
