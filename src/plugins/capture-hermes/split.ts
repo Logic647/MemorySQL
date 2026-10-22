@@ -30,6 +30,8 @@ export function splitHermesMemoryFile(content: string): string[] {
  * longer appear in the file, including the legacy whole-file row.
  */
 export function segmentSource(rel: string, content: string): string {
-  const hash = crypto.createHash('sha1').update(content).digest('hex').slice(0, 10)
+  // 内容寻址用 sha256(不用 md5/sha1 —— 弱哈希可被构造碰撞,会让两段不同内容
+  // 共用同一个 source key,记忆去重就会误判)
+  const hash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 10)
   return `hermes:${rel}#${hash}`
 }

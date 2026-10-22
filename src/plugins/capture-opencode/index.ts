@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createCapturePlugin } from '../_lib/capture-factory'
 import { parseAgentSqliteSessions } from '../_lib/agent-db-parser'
+import { userDataDir } from '../../main/core/safe-path'
 import { findOpencodeStorage, parseOpencodeStorage } from './opencode-parser'
 
 /**
@@ -14,8 +15,8 @@ import { findOpencodeStorage, parseOpencodeStorage } from './opencode-parser'
 function findOpencodeDb(): string | null {
   const candidates = [
     path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db'),
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'opencode', 'opencode.db') : ''
-  ].filter(Boolean)
+    path.join(userDataDir('local'), 'opencode', 'opencode.db')
+  ]
   return candidates.find((c) => fs.existsSync(c)) ?? null
 }
 
@@ -28,8 +29,8 @@ function watchPaths(): string[] {
   // db not created yet — watch existing candidate parents so a later create fires
   const dirs = [
     path.join(os.homedir(), '.local', 'share', 'opencode'),
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'opencode') : ''
-  ].filter(Boolean)
+    path.join(userDataDir('local'), 'opencode')
+  ]
   return dirs.filter((d) => fs.existsSync(d))
 }
 
@@ -39,11 +40,11 @@ export default createCapturePlugin({
   agentType: 'opencode',
   defaultRoot: os.homedir(),
   sourceExists: (home) =>
-    findOpencodeDb() !== null || findOpencodeStorage(home, process.env.LOCALAPPDATA) !== null,
+    findOpencodeDb() !== null || findOpencodeStorage(home, userDataDir('local')) !== null,
   collect: (home) => {
     const dbPath = findOpencodeDb()
     if (dbPath) return parseAgentSqliteSessions(dbPath, 'opencode')
-    const storage = findOpencodeStorage(home, process.env.LOCALAPPDATA)
+    const storage = findOpencodeStorage(home, userDataDir('local'))
     return storage ? parseOpencodeStorage(storage) : []
   },
   // db-backed: any write to opencode.db(-wal) re-reads the whole (small) store —

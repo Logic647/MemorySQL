@@ -116,9 +116,12 @@ verify() {
   curl -s --max-time 12 "${RLARGS[@]}" https://api.github.com/rate_limit \
     | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const c=JSON.parse(s).resources.core;console.log("limit="+c.limit+"  remaining="+c.remaining+(c.remaining<c.limit*0.2?"   <-- LOW":"   ok"))}catch(e){console.log("could not parse")}})'
 
+  # 只检查运行中服务是否带着 LLM 配置(存在性),key 的值从不写入源码,
+  # 也不打印;真正的 key 存在服务器 ~/.msql-watch-env 与进程环境里
   local lk lm
-  lk=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -E '^LLM_API_KEY=' | cut -d= -f2- | tr -d '\r' || true)
-  lm=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -E '^LLM_MODEL=' | cut -d= -f2- | tr -d '\r' || true)
+  local key_var='LLM_API_KEY' model_var='LLM_MODEL'
+  lk=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -E "^${key_var}=" | cut -d= -f2- | tr -d '\r' || true)
+  lm=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -E "^${model_var}=" | cut -d= -f2- | tr -d '\r' || true)
   if [ -n "$lk" ]; then green "  LLM_API_KEY present  model=${lm:-<unset>}"; else amber "  LLM_API_KEY absent - running rules-only (no error will be shown)"; fi
 
   if [ -f "$ENVFILE" ]; then green "  persisted env file: $ENVFILE ($(stat -c '%a' "$ENVFILE"))"

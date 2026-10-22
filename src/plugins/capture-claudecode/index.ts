@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { RawSession } from '../../shared/types'
 import { createCapturePlugin } from '../_lib/capture-factory'
+import { userDataDir } from '../../main/core/safe-path'
 import {
   findClaudeFiles,
   findDesktopMetaFiles,
@@ -16,8 +17,7 @@ const claudeHome = path.join(os.homedir(), '.claude')
 /** Claude Desktop lives under %LOCALAPPDATA% (MSIX data dir "Claude-3p");
  * non-MSIX installs use "AnthropicClaude". */
 function collectDesktopMetas(): Array<{ session: RawSession; cliSessionId?: string }> {
-  const lad = process.env.LOCALAPPDATA
-  if (!lad) return []
+  const lad = userDataDir('local')
   const out: Array<{ session: RawSession; cliSessionId?: string }> = []
   for (const appDir of ['Claude-3p', 'AnthropicClaude']) {
     const root = path.join(lad, appDir, 'claude-code-sessions')

@@ -11,6 +11,9 @@ data/
 # editor / agent workspace metadata
 .zcode/
 
+# 安全扫描的本地状态(机器本地生成)
+.mimosa/
+
 # 上游监控看板的运行时状态(抓取结果快照,含 changelog 原文,机器本地生成)
 tools/upstream-watch/state.json
 tools/upstream-watch/state.json.tmp

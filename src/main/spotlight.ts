@@ -1,6 +1,7 @@
 import { app, BrowserWindow, globalShortcut, Menu, nativeImage, screen, Tray } from 'electron'
 import path from 'node:path'
 import type { SettingsStore } from './core/settings'
+import { withinRoot } from './core/safe-path'
 
 export interface SpotlightController {
   toggle(): void
@@ -70,7 +71,11 @@ export function setupSpotlight(deps: {
       title: 'MemorySQL 秒搜',
       backgroundColor: '#101418',
       webPreferences: {
-        preload: path.join(import.meta.dirname, '../preload/index.cjs'),
+        preload: withinRoot(
+          path.dirname(import.meta.dirname),
+          path.join(path.dirname(import.meta.dirname), 'preload', 'index.cjs'),
+          '预加载脚本'
+        ),
         contextIsolation: true,
         sandbox: true,
         nodeIntegration: false
@@ -78,9 +83,29 @@ export function setupSpotlight(deps: {
     })
     spotlight.setAlwaysOnTop(true, 'screen-saver')
     if (process.env.ELECTRON_RENDERER_URL) {
-      void spotlight.loadURL(`${process.env.ELECTRON_RENDERER_URL}/?spotlight=1`)
+      // 开发模式的渲染服务地址来自环境变量:必须是 http/https,且不能指向
+      // 环回/私网地址(只允许本机开发端口)
+      const url = process.env.ELECTRON_RENDERER_URL
+      let parsed: URL
+      try {
+        parsed = new URL(url)
+      } catch {
+        throw new Error(`ELECTRON_RENDERER_URL 不是合法 URL: ${url}`)
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error(`ELECTRON_RENDERER_URL 只允许 http/https: ${parsed.protocol}`)
+      }
+      void spotlight.loadURL(`${parsed.origin}/?spotlight=1`)
     } else {
-      void spotlight.loadFile(path.join(import.meta.dirname, '../renderer/index.html'), {
+      // 渲染层入口在构建产物目录内(out/renderer/index.html),以模块所在目录
+      // 为基准校验,不做任何用户输入拼接
+      const outDir = path.dirname(import.meta.dirname)
+      const indexFile = withinRoot(
+        outDir,
+        path.join(outDir, 'renderer', 'index.html'),
+        '渲染层入口'
+      )
+      void spotlight.loadFile(indexFile, {
         query: { spotlight: '1' }
       })
     }

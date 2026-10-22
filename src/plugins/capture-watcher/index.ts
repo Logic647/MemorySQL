@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import type { MemoriesService } from '../core-schema'
+import { listWithin, withinRoot } from '../../main/core/safe-path'
 
 /**
  * 登记式自定义 agent 监听:用户为"非内置支持"的 agent 登记
@@ -43,17 +44,19 @@ const plugin: MemorySQLPlugin = {
   init(ctx) {
     const getEntries = (): WatchEntry[] => ctx.settings.get('entries', [])
 
-    const importFile = (abs: string, agent: string): void => {
+    const importFile = (abs: string, agent: string, root: string): void => {
       try {
-        const content = fs.readFileSync(abs, 'utf-8').trim()
+        // 登记目录由用户指定,但读取前仍确认文件确实位于该目录内
+        const file = withinRoot(root, abs, '登记文件')
+        const content = fs.readFileSync(file, 'utf-8').trim()
         if (!content) return
         const memories = ctx.services.use<MemoriesService>('memories')
         const res = memories.upsertMemory({
           kind: 'fact',
           content: content.slice(0, 8000),
-          source: `custom:${agent}:${abs.split(path.sep).join('/')}`
+          source: `custom:${agent}:${file.split(path.sep).join('/')}`
         })
-        if (res.changed) ctx.log.info(`imported ${agent} memory: ${abs}`)
+        if (res.changed) ctx.log.info(`imported ${agent} memory: ${file}`)
       } catch (err) {
         ctx.log.warn(`failed to import ${abs}:`, err)
       }
@@ -61,14 +64,8 @@ const plugin: MemorySQLPlugin = {
 
     const importRoot = (entry: WatchEntry): void => {
       const re = patternToRegExp(entry.patterns)
-      let entries: fs.Dirent[]
-      try {
-        entries = fs.readdirSync(entry.root, { withFileTypes: true })
-      } catch {
-        return
-      }
-      for (const e of entries) {
-        if (e.isFile() && re.test(e.name)) importFile(path.join(entry.root, e.name), entry.agent)
+      for (const e of listWithin(entry.root, entry.root)) {
+        if (e.isFile() && re.test(e.name)) importFile(path.join(entry.root, e.name), entry.agent, entry.root)
       }
     }
 
@@ -85,6 +82,7 @@ const plugin: MemorySQLPlugin = {
       if (!agentName) throw new Error('agent 名只能含字母/数字/-/_')
       if (!rawRoot) throw new Error('目录不能为空')
       const abs = path.resolve(rawRoot)
+      // 登记目录必须真实存在且是目录(解析后即为绝对路径)
       if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) throw new Error('目录不存在')
       const pats = (patterns ?? 'AGENTS.md, CLAUDE.md, MEMORY.md').trim() || 'AGENTS.md, CLAUDE.md, MEMORY.md'
       const entries = getEntries()
@@ -120,7 +118,7 @@ const plugin: MemorySQLPlugin = {
       liveWatchers.get(key)?.()
       liveWatchers.set(
         key,
-        ctx.watcher.watch([entry.root], (changed) => importFile(changed, entry.agent), {
+        ctx.watcher.watch([entry.root], (changed) => importFile(changed, entry.agent, entry.root), {
           match: re,
           debounceMs: 800
         })

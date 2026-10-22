@@ -2,6 +2,7 @@ import path from 'node:path'
 import type Database from 'better-sqlite3'
 import type { RawMessage, RawSession } from '../../shared/types'
 import { openForeignDb } from '../../main/core/sqlite-ro'
+import { listWithin, safeDir, withinRoot } from '../../main/core/safe-path'
 
 /**
  * Cursor chat history. Primary store (verified against community parsers:
@@ -17,19 +18,25 @@ import { openForeignDb } from '../../main/core/sqlite-ro'
 const COMPOSER_TEXT_MAX = 6000
 
 export function findCursorDbs(home: string, appData?: string): string[] {
+  // home / appData 来自环境变量,先收口校验为真实存在的目录
+  const homeRoot = safeDir(home)
+  if (!homeRoot) return []
+  const appRoot = appData ? safeDir(appData) : null
   const userDirs = [
-    appData ? path.join(appData, 'Cursor', 'User') : path.join(home, 'AppData', 'Roaming', 'Cursor', 'User'),
-    path.join(home, '.config', 'Cursor', 'User')
+    appRoot ? path.join(appRoot, 'Cursor', 'User') : path.join(homeRoot, 'AppData', 'Roaming', 'Cursor', 'User'),
+    path.join(homeRoot, '.config', 'Cursor', 'User')
   ]
   const dbs: string[] = []
   for (const userDir of userDirs) {
-    const global = path.join(userDir, 'globalStorage', 'state.vscdb')
+    // 目录来自环境变量,先解析并确认仍在预期根目录内,再逐个文件校验边界
+    const dir = withinRoot(homeRoot, userDir, 'Cursor 数据目录')
+    const global = withinRoot(dir, path.join(dir, 'globalStorage', 'state.vscdb'), 'Cursor 库文件')
     if (fsExists(global)) dbs.push(global)
     try {
-      const wsDir = path.join(userDir, 'workspaceStorage')
-      for (const e of fs.readdirSync(wsDir, { withFileTypes: true })) {
+      const wsDir = withinRoot(dir, path.join(dir, 'workspaceStorage'), 'Cursor 工作区目录')
+      for (const e of listWithin(wsDir, wsDir)) {
         if (!e.isDirectory()) continue
-        const db = path.join(wsDir, e.name, 'state.vscdb')
+        const db = withinRoot(wsDir, path.join(wsDir, e.name, 'state.vscdb'), 'Cursor 库文件')
         if (fsExists(db)) dbs.push(db)
       }
     } catch {

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
+import { listWithin, withinRoot } from '../../main/core/safe-path'
 import { mergeBundle, type SyncBundle } from './sync-merge'
 
 /**
@@ -52,8 +53,10 @@ const plugin: MemorySQLPlugin = {
       }
       const folder = getFolder()
       if (!folder) throw new Error('请先在设置中配置同步文件夹')
-      const root = path.join(folder, 'memorysql-sync')
-      const ownDir = path.join(root, deviceId)
+      // 同步目录来自设置,解析后所有读写都限制在该目录内
+      const syncRoot = path.resolve(folder)
+      const root = withinRoot(syncRoot, path.join(syncRoot, 'memorysql-sync'), '同步根目录')
+      const ownDir = withinRoot(root, path.join(root, deviceId), '本机同步目录')
       fs.mkdirSync(ownDir, { recursive: true })
 
       const lastSyncAt = Number(ctx.settings.get('lastSyncAt', 0))
@@ -117,7 +120,7 @@ const plugin: MemorySQLPlugin = {
       }
       const bundleName = `bundle-${Date.now()}.json`
       fs.writeFileSync(
-        path.join(ownDir, bundleName),
+        withinRoot(ownDir, path.join(ownDir, bundleName), '同步包文件'),
         JSON.stringify(bundle),
         'utf-8'
       )
@@ -134,14 +137,15 @@ const plugin: MemorySQLPlugin = {
         projectsUpdated: 0
       }
       if (fs.existsSync(root)) {
-        for (const deviceDir of fs.readdirSync(root, { withFileTypes: true })) {
+        for (const deviceDir of listWithin(root, root)) {
           if (!deviceDir.isDirectory() || deviceDir.name === deviceId) continue
-          const absDir = path.join(root, deviceDir.name)
+          const absDir = withinRoot(root, path.join(root, deviceDir.name), '同步设备目录')
           for (const file of fs.readdirSync(absDir).filter((f) => f.endsWith('.json')).sort()) {
             const marker = `${deviceDir.name}/${file}`
             if (importedSet.has(marker)) continue
             try {
-              const remote = JSON.parse(fs.readFileSync(path.join(absDir, file), 'utf-8')) as SyncBundle
+              const bundlePath = withinRoot(absDir, path.join(absDir, file), '同步包文件')
+              const remote = JSON.parse(fs.readFileSync(bundlePath, 'utf-8')) as SyncBundle
               const r = mergeBundle(ctx.db.sqlite, remote)
               report.filesPulled++
               report.sessionsAdded += r.sessionsAdded

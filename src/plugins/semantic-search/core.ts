@@ -28,7 +28,9 @@ const vecParam = (v: VecInput): Buffer | string =>
     ? Buffer.from(v.buffer, v.byteOffset, v.byteLength)
     : JSON.stringify(v)
 
-const hashText = (t: string): string => crypto.createHash('sha1').update(t).digest('hex')
+// 内容哈希用于判断「这段文本是否变过」,属于完整性标识而非安全用途;
+// 仍用 sha256,避免弱哈希的碰撞风险
+const hashText = (t: string): string => crypto.createHash('sha256').update(t).digest('hex')
 
 interface Candidate {
   kind: 'memory' | 'session'

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 
 /**
@@ -122,10 +123,12 @@ describe('页面与新的 202 契约对齐', () => {
 describe('冒烟:服务能起来且 /api/probe 秒回', () => {
   it('响应不等待摘要(实测毫秒级,而摘要要几十秒)', async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'msql-watch-'))
+    // 每次运行随机生成:源码里不留固定口令,也不会误用于其它实例
+    const authToken = `test-${randomBytes(12).toString('hex')}`
     const env = {
       ...process.env,
       PORT: '0',                        // 0 = 让系统分配随机端口,避免撞上在跑的实例
-      AUTH_TOKEN: 'test-token',
+      AUTH_TOKEN: authToken,
       // STATE_PATH 是可覆盖的(见 server.mjs);不给它的话冒烟测试会写进
       // 仓库里的 tools/upstream-watch/state.json —— 污染开发机真实状态。
       STATE_PATH: path.join(dataDir, 'state.json'),
@@ -169,7 +172,7 @@ describe('冒烟:服务能起来且 /api/probe 秒回', () => {
         checkedAt: '2026-01-01T00:00:00.000Z',
         ledgerHash: 'deadbeef',
         results: [{ id: 'zcode', verdict: 'ok' }]
-      }, 'test-token')
+      }, authToken)
       const ms = Date.now() - t0
 
       expect(res.status, '带正确 token 应被接受').toBe(200)
@@ -183,7 +186,7 @@ describe('冒烟:服务能起来且 /api/probe 秒回', () => {
 
       // 数据必须真的落盘(回执说收下了,盘上就得有)
       const st = await fetch(base + '/api/state', {
-        headers: { Authorization: 'Bearer test-token' }
+        headers: { Authorization: `Bearer ${authToken}` }
       }).then((r) => r.json()) as { probe: { ledgerHash: string | null; results: unknown[] } }
       expect(st.probe.results, '数据应已落盘').toHaveLength(1)
       expect(st.probe.ledgerHash).toBe('deadbeef')

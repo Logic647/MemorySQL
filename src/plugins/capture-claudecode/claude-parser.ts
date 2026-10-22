@@ -1,6 +1,6 @@
-import fs from 'node:fs'
 import path from 'node:path'
 import type { RawMessage, RawSession } from '../../shared/types'
+import { safeDir, walkWithin } from '../../main/core/safe-path'
 
 /**
  * Claude Code (~/.claude/projects/<project-slug>/*.jsonl). Each line:
@@ -94,21 +94,13 @@ export function parseClaudeJsonl(
 }
 
 export function findClaudeFiles(root: string): string[] {
+  // 根目录来自环境变量/设置,先收口校验(必须是已存在的目录),再在其中遍历
+  const base = safeDir(root)
+  if (!base) return []
   const out: string[] = []
-  const walk = (dir: string): void => {
-    let entries: fs.Dirent[]
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const e of entries) {
-      const full = path.join(dir, e.name)
-      if (e.isDirectory()) walk(full)
-      else if (e.isFile() && e.name.endsWith('.jsonl')) out.push(full)
-    }
-  }
-  walk(root)
+  walkWithin(base, base, (file) => {
+    if (file.endsWith('.jsonl')) out.push(file)
+  })
   return out
 }
 
@@ -162,21 +154,13 @@ export function parseDesktopMeta(
 }
 
 export function findDesktopMetaFiles(root: string): string[] {
+  const base = safeDir(root)
+  if (!base) return []
   const out: string[] = []
-  const walk = (dir: string): void => {
-    let entries: fs.Dirent[]
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const e of entries) {
-      const full = path.join(dir, e.name)
-      if (e.isDirectory()) walk(full)
-      else if (e.isFile() && e.name.startsWith('local_') && e.name.endsWith('.json')) out.push(full)
-    }
-  }
-  walk(root)
+  walkWithin(base, base, (file) => {
+    const name = path.basename(file)
+    if (name.startsWith('local_') && name.endsWith('.json')) out.push(file)
+  })
   return out
 }
 

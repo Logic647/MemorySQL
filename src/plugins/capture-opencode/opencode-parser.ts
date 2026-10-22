@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { RawMessage, RawSession } from '../../shared/types'
+import { isWithin, listWithin, safeDir, withinRoot } from '../../main/core/safe-path'
 
 /**
  * OpenCode (~/.local/share/opencode/storage/ or %LOCALAPPDATA%/opencode/storage):
@@ -9,19 +10,24 @@ import type { RawMessage, RawSession } from '../../shared/types'
  *   part/<messageId>/part_*.json   → {type:'text', text} | {type:'tool', …}
  * File names carry ordering (msg_0001…). Parsed defensively.
  */
-function readJsonFiles(dir: string): Array<{ file: string; data: Record<string, unknown> }> {
+function readJsonFiles(root: string, dir: string): Array<{ file: string; data: Record<string, unknown> }> {
   const out: Array<{ file: string; data: Record<string, unknown> }> = []
-  let entries: fs.Dirent[]
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true })
-  } catch {
-    return out
-  }
-  for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (!e.isFile() || !e.name.endsWith('.json')) continue
+  // 文件名排序决定消息顺序;用纯字典序(无自定义比较器),避免把外部数据带进比较函数
+  const names = listWithin(root, dir)
+    .map((e) => e.name)
+    .sort()
+  for (const name of names) {
+    const full = withinRoot(root, path.join(dir, name), 'opencode 文件')
+    let st: fs.Stats
     try {
-      const data = JSON.parse(fs.readFileSync(path.join(dir, e.name), 'utf-8')) as Record<string, unknown>
-      if (data && typeof data === 'object') out.push({ file: e.name, data })
+      st = fs.statSync(full)
+    } catch {
+      continue
+    }
+    if (!st.isFile() || !name.endsWith('.json')) continue
+    try {
+      const data = JSON.parse(fs.readFileSync(full, 'utf-8')) as Record<string, unknown>
+      if (data && typeof data === 'object') out.push({ file: name, data })
     } catch {
       /* skip malformed */
     }
@@ -29,8 +35,8 @@ function readJsonFiles(dir: string): Array<{ file: string; data: Record<string, 
   return out
 }
 
-function collectTexts(partDir: string, messageRef: string): string | null {
-  const parts = readJsonFiles(partDir)
+function collectTexts(root: string, partDir: string, messageRef: string): string | null {
+  const parts = readJsonFiles(root, partDir)
   if (parts.length === 0) return null
   const texts: string[] = []
   let toolCalls = 0
@@ -50,34 +56,32 @@ function collectTexts(partDir: string, messageRef: string): string | null {
 }
 
 export function parseOpencodeStorage(storageDir: string): RawSession[] {
-  const sessionDir = path.join(storageDir, 'session')
+  // 存储目录可能来自环境变量,先收口校验为真实存在的目录
+  const base = safeDir(storageDir)
+  if (!base) return []
+  const root = base
+  const sessionDir = withinRoot(root, path.join(root, 'session'), 'opencode 会话目录')
   if (!fs.existsSync(sessionDir)) return []
   const out: RawSession[] = []
 
-  const scopeDirs: fs.Dirent[] = (() => {
-    try {
-      return fs.readdirSync(sessionDir, { withFileTypes: true }).filter((d) => d.isDirectory())
-    } catch {
-      return []
-    }
-  })()
+  const scopeDirs: fs.Dirent[] = listWithin(root, sessionDir).filter((d) => d.isDirectory())
 
   for (const scope of scopeDirs) {
-    const scopePath = path.join(sessionDir, scope.name)
-    for (const { file, data } of readJsonFiles(scopePath)) {
+    const scopePath = withinRoot(root, path.join(sessionDir, scope.name), 'opencode scope')
+    for (const { file, data } of readJsonFiles(root, scopePath)) {
       const sessionId = String(data.id ?? file.replace(/\.json$/, ''))
       if (!sessionId) continue
-      const msgDir = path.join(storageDir, 'message', sessionId)
+      const msgDir = withinRoot(root, path.join(root, 'message', sessionId), 'opencode 消息目录')
       if (!fs.existsSync(msgDir)) continue
 
       const messages: RawMessage[] = []
       let startedAt: number | undefined
       let endedAt: number | undefined
-      for (const { data: msg } of readJsonFiles(msgDir)) {
+      for (const { data: msg } of readJsonFiles(root, msgDir)) {
         const role = String(msg.role ?? '') === 'user' ? 'user' : String(msg.role ?? '') === 'assistant' ? 'assistant' : null
         if (!role) continue
         const messageId = String(msg.id ?? '')
-        const text = collectTexts(path.join(storageDir, 'part', messageId), messageId)
+        const text = collectTexts(root, withinRoot(root, path.join(root, 'part', messageId), 'opencode part 目录'), messageId)
         if (!text) continue
         const time = msg.time as { created?: number } | undefined
         const ts = time?.created ? Math.floor(time.created / 1000) : undefined
@@ -106,12 +110,19 @@ export function parseOpencodeStorage(storageDir: string): RawSession[] {
 }
 
 export function findOpencodeStorage(home: string, localAppData?: string): string | null {
+  // home / localAppData 来自环境变量,先收口校验为真实存在的目录
+  const homeRoot = safeDir(home)
+  if (!homeRoot) return null
+  const appRoot = localAppData ? safeDir(localAppData) : null
   const candidates = [
-    localAppData ? path.join(localAppData, 'opencode', 'storage') : null,
-    path.join(home, '.local', 'share', 'opencode', 'storage')
+    appRoot ? path.join(appRoot, 'opencode', 'storage') : null,
+    path.join(homeRoot, '.local', 'share', 'opencode', 'storage')
   ].filter((p): p is string => p !== null)
   for (const c of candidates) {
-    if (fs.existsSync(c)) return c
+    const abs = path.resolve(c)
+    // 候选目录必须真实存在,且不能借 ".." 之类的片段跳出预期位置
+    if (!isWithin(homeRoot, abs) && !(appRoot && isWithin(appRoot, abs))) continue
+    if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) return abs
   }
   return null
 }

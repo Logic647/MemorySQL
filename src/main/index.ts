@@ -3,6 +3,16 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { resolveAppEnv, defaultDataDir } from './core/env'
+import { withinRoot } from './core/safe-path'
+import {
+  DISPATCH,
+  EXPORT_ARCHIVE_DEST,
+  GENERATE_DEVLOG,
+  HEADLESS_SCAN,
+  LAUNCH_HIDDEN,
+  SEMANTIC_REINDEX,
+  SYNC_FOLDER
+} from './core/cli-args'
 import { connectAgent, agentSnippet } from './core/agent-connect'
 import { SettingsStore } from './core/settings'
 import { EventBus } from './core/event-bus'
@@ -81,20 +91,7 @@ const BUILTIN_PLUGINS = [
   semanticSearch
 ]
 
-const HEADLESS_SCAN = process.argv.includes('--scan')
-const SYNC_FOLDER = (() => {
-  const i = process.argv.indexOf('--sync')
-  return i >= 0 ? (process.argv[i + 1] ?? '') : null
-})()
-const DISPATCH = process.argv.includes('--dispatch')
-const GENERATE_DEVLOG = process.argv.includes('--devlog')
-const SEMANTIC_REINDEX = process.argv.includes('--reindex')
-const EXPORT_ARCHIVE_DEST = (() => {
-  const i = process.argv.indexOf('--export-archive')
-  return i >= 0 ? (process.argv[i + 1] ?? '') : null
-})()
-// 开机自启「启动后隐藏到托盘」(core-launcher 写入的登录项参数)
-const LAUNCH_HIDDEN = process.argv.includes('--hidden')
+// 命令行参数解析集中在 core/cli-args(路径类参数在那里做存在性校验)
 
 /**
  * A previous run staged an archive import: swap the staged db/vault into
@@ -234,9 +231,11 @@ async function loadExternalPlugins(dataDir: string, host: PluginHost): Promise<v
   if (!fs.existsSync(root)) return
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
-    const dir = path.join(root, entry.name)
+    // 插件目录名来自 readdir,仍显式校验边界:任何越界项直接跳过
+    const dir = withinRoot(root, path.join(root, entry.name), '外部插件目录')
     try {
-      const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf-8')) as {
+      const manifestPath = withinRoot(dir, path.join(dir, 'manifest.json'), '插件清单')
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as {
         id?: string
         name?: string
         version?: string
@@ -244,8 +243,7 @@ async function loadExternalPlugins(dataDir: string, host: PluginHost): Promise<v
       }
       if (!manifest.id || !/^[a-z0-9_-]+$/.test(manifest.id)) throw new Error('manifest.id 缺失或非法')
       if (!manifest.name || !manifest.version) throw new Error('manifest.name / version 缺失')
-      const mainFile = path.resolve(dir, manifest.main ?? 'main.js')
-      if (!mainFile.startsWith(path.resolve(dir) + path.sep)) throw new Error('main 不得逃出插件目录')
+      const mainFile = withinRoot(dir, path.resolve(dir, manifest.main ?? 'main.js'), '插件入口')
       if (!fs.existsSync(mainFile)) throw new Error(`入口文件不存在: ${manifest.main ?? 'main.js'}`)
       // Evaluate as CJS via injected module/exports/require — immune to the
       // app's "type":"module" scope, and plugins can require('electron').
@@ -601,7 +599,11 @@ function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
           }
         }),
     webPreferences: {
-      preload: path.join(import.meta.dirname, '../preload/index.cjs'),
+      preload: withinRoot(
+        path.dirname(import.meta.dirname),
+        path.join(path.dirname(import.meta.dirname), 'preload', 'index.cjs'),
+        '预加载脚本'
+      ),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false
