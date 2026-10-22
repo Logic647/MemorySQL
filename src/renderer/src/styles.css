@@ -60,8 +60,20 @@ body {
   width: 38px; height: 38px; border-radius: var(--msql-radius-md); border: none;
   display: grid; place-items: center; cursor: pointer;
   color: var(--msql-fg-dim); background: transparent;
-  transition: color var(--msql-t-med) var(--msql-ease), background var(--msql-t-med) var(--msql-ease), box-shadow var(--msql-t-med) var(--msql-ease), transform 160ms ease-out;
+  transition: color var(--msql-t-med) var(--msql-ease), background var(--msql-t-med) var(--msql-ease), box-shadow var(--msql-t-medium) var(--msql-ease), transform 160ms ease-out;
 }
+/* 只剩「会话 / 记忆」两个入口后,这两个 tag 撑满导航列的高度,
+   避免上面大片留空(图标仍然居中,只在下方多一行小字标签) */
+.rail-btn-fill {
+  flex: 1; min-height: 0; align-content: center;
+  grid-template-rows: 1fr auto; gap: 4px; padding: 0;
+}
+.rail-btn-label {
+  font-size: 11px; line-height: 1.2; letter-spacing: .02em;
+  color: var(--msql-fg-muted); transition: color var(--msql-t-med) var(--msql-ease);
+}
+.rail-btn-fill:hover .rail-btn-label { color: var(--msql-fg); }
+.rail-btn-fill.active .rail-btn-label { color: var(--msql-accent); }
 .rail-btn:hover { color: var(--msql-fg); background: rgba(255, 255, 255, 0.06); }
 .rail-btn.active {
   color: var(--msql-accent); background: var(--msql-accent-soft);
@@ -211,11 +223,13 @@ body {
 .session-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .session-title { font-size: var(--msql-fs-md); color: var(--msql-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; display: flex; gap: 6px; align-items: center; }
 .sess-id { font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); flex-shrink: 0; }
-.session-time { font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); flex-shrink: 0; margin-left: auto; font-family: var(--msql-font-mono); }
-/* the two stamps sit as a pair at the right edge — only the first one takes
-   the auto margin, otherwise flexbox would split the free space between them
-   and push the start time into the middle of the row */
-.session-time + .session-time { margin-left: 0; }
+/* Two timestamps sit as one group at the right edge. The group is a single
+   flex item, so the title's available width is measured once against the whole
+   pair — not twice, which used to leave the title ~65px (five characters) in
+   the default 380px list. */
+.session-times { display: flex; align-items: baseline; gap: 6px; flex-shrink: 0; margin-left: auto; font-family: var(--msql-font-mono); }
+.session-time { font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); white-space: nowrap; }
+.session-time-key { color: var(--msql-fg-dim); opacity: .72; margin-right: 1px; font-size: .92em; }
 .session-time-last { color: var(--msql-fg-muted); }
 .session-summary { font-size: var(--msql-fs-sm); color: var(--msql-fg-dim); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-meta { display: flex; gap: 10px; margin-top: 4px; font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); font-family: var(--msql-font-mono); }

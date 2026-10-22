@@ -52,7 +52,6 @@
 - **语义检索** —— sqlite-vec + 本地 embedding(bge-small-zh),字面搜不到的概念性提问也能召回
 - **收工汇报闭环** —— `memory_log_progress` 结构化记录做了什么/下一步/卡在哪,人工确认后进正式记忆
 - **自动项目日志** —— `vault/devlog/` 按项目生成开发日志(时间线 + 决策 + 待办)
-- **笔记 + 图谱** —— Markdown 笔记、[[双向链接]]、知识图谱,Obsidian 兼容
 - **托盘常驻 + 全局秒搜** —— 关窗即驻留(MCP 保持在线),任意界面 `Alt+Shift+M` 唤起秒搜
 - **记忆治理** —— 收工汇报候选确认、LLM 冲突检测、手动改名/归档/续接链管理
 
@@ -152,7 +151,7 @@ npm run dist         # 打包 Windows 安装包 + 免安装目录
 npm run import:scan  # 无头扫描导入本机 agent 会话(验收用)
 ```
 
-技术栈:Electron + TypeScript(strict) + React + better-sqlite3(FTS5) + sqlite-vec + CodeMirror 6。
+技术栈:Electron + TypeScript(strict) + React + better-sqlite3(FTS5) + sqlite-vec。
 
 ## 📁 文档
 

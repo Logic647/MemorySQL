@@ -43,7 +43,9 @@ export function createSearchService(sqlite: Database.Database): SearchService {
           params.push(pid)
         }
         if (sinceSec != null) {
-          where.push('COALESCE(s.started_at, s.updated_at) >= ?')
+          // "last N days" is about when the session last spoke, not when it
+          // began — the same semantics memory_list_sessions uses
+          where.push('COALESCE(s.last_message_at, s.started_at, s.updated_at) >= ?')
           params.push(sinceSec)
         }
         if (query.length >= 3) {

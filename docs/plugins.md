@@ -59,7 +59,6 @@ export default plugin
 | `summarizer-llm` | 可选 LLM 摘要(OpenAI/Anthropic/Ollama 模板) | summarizer provider(注册在 rules 前) |
 | `summarizer-rules` | 本地规则摘要(永远可用,兜底) | summarizer provider |
 | `core-schema` | 核心表 + 摄取管道 + trigram FTS | services: `ingest` / `search` / `memories`;MCP 工具 ×3 |
-| `core-vault` | vault 笔记索引、双链/反链、FTS、图谱 | IPC `core-vault:notes:*` |
 | `capture-codex` / `capture-zcode` / `capture-hermes` | 三家 agent 会话导入 + 增量监听 | IPC `<id>:status / scanNow` |
 | `capture-watcher` | 项目目录 AGENTS/CLAUDE/MEMORY.md 只读导入 | IPC `capture-watcher:*` |
 | `mcp-server` | MCP Streamable HTTP(127.0.0.1:8642) | `mcp-server:status / restart` |

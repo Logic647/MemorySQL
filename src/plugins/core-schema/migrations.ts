@@ -145,7 +145,7 @@ ALTER TABLE sessions ADD COLUMN last_message_at INTEGER;
 
 UPDATE sessions
    SET last_message_at = COALESCE(
-         (SELECT MAX(m.ts) FROM session_messages m WHERE m.session_id = sessions.id),
+         NULLIF((SELECT MAX(m.ts) FROM session_messages m WHERE m.session_id = sessions.id), 0),
          ended_at
        )
  WHERE last_message_at IS NULL;

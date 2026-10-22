@@ -138,10 +138,12 @@ export function mergeBundle(db: Database.Database, bundle: SyncBundle): MergeRep
         | { id: number; content_hash: string; updated_at: number }
         | undefined
       // last conversation time, derived from the synced messages themselves
-      // (the bundle format stays unchanged — no cross-version field drift)
+      // (the bundle format stays unchanged — no cross-version field drift).
+      // ts 0 counts as absent: a 0 would otherwise suppress the ended_at
+      // fallback and show up as 1970.
       const lastMsgAt =
         msgs.reduce<number | null>(
-          (max, m) => (m.ts != null && (max == null || m.ts > max) ? m.ts : max),
+          (max, m) => (m.ts != null && m.ts > 0 && (max == null || m.ts > max) ? m.ts : max),
           null
         ) ?? s.ended_at ?? null
 

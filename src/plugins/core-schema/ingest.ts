@@ -55,6 +55,22 @@ export interface IngestDeps {
   onIngest: (sessionIds: number[]) => void
 }
 
+/**
+ * Newest message timestamp, in epoch seconds — the "last conversation time".
+ *
+ * `ts` of 0 is treated as absent, not as a real epoch: some adapters hand back
+ * a 0 for a missing field, and storing it would (a) suppress the ended_at
+ * fallback and (b) render as 1970 everywhere.
+ */
+function latestMessageTs(s: RawSession): number | null {
+  let max: number | null = null
+  for (const m of s.messages) {
+    const ts = m.ts ?? 0
+    if (ts > 0 && (max == null || ts > max)) max = ts
+  }
+  return max
+}
+
 function clip(text: string, max: number): string {
   const t = text.replace(/\s+/g, ' ').trim()
   return t.length > max ? `${t.slice(0, max)}…` : t
@@ -89,7 +105,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
     'UPDATE sessions SET cwd = ?, project_id = ?, updated_at = ? WHERE cwd = ? AND deleted = 0'
   )
   const stmtSessionFind = sqlite.prepare(
-    `SELECT id, content_hash, title_locked, title, cwd, project_id, summary
+    `SELECT id, content_hash, title_locked, title, cwd, project_id, summary, last_message_at
      FROM sessions WHERE agent_type = ? AND external_id = ?`
   )
   const stmtSessionIns = sqlite.prepare(`
@@ -107,9 +123,10 @@ export function createIngestService(deps: IngestDeps): IngestService {
       updated_at = @updated_at, raw_path = COALESCE(@raw_path, raw_path)
     WHERE id = @id
   `)
-  // hash unchanged: only project/cwd/title may still need a refresh
+  // hash unchanged: only project/cwd/title/last_message_at may still need a refresh
   const stmtSessionMeta = sqlite.prepare(`
-    UPDATE sessions SET project_id = @project_id, cwd = @cwd, title = @title, updated_at = @updated_at
+    UPDATE sessions SET project_id = @project_id, cwd = @cwd, title = @title,
+      last_message_at = @last_message_at, updated_at = @updated_at
     WHERE id = @id
   `)
   const stmtMsgIds = sqlite.prepare('SELECT id FROM session_messages WHERE session_id = ?')
@@ -210,6 +227,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
           cwd: string | null
           project_id: number | null
           summary: string | null
+          last_message_at: number | null
         }
       | undefined
 
@@ -232,12 +250,19 @@ export function createIngestService(deps: IngestDeps): IngestService {
       const needTitle = nextTitle !== existing.title
       const needCwd = effectiveCwd !== existing.cwd
       const needProject = nextProjectId !== existing.project_id
-      if (!needTitle && !needCwd && !needProject) return { outcome: 'skipped' }
+      // content_hash covers only role+content, so an adapter that reports a
+      // newer activity time for identical messages (Claude Desktop metadata:
+      // no messages at all, endedAt = the file's lastActivityAt) would never
+      // refresh last_message_at here. Keep it monotonic and refresh it too.
+      const lastMessageAt = latestMessageTs(s) ?? s.endedAt ?? null
+      const needLast = lastMessageAt != null && lastMessageAt > (existing.last_message_at ?? 0)
+      if (!needTitle && !needCwd && !needProject && !needLast) return { outcome: 'skipped' }
       stmtSessionMeta.run({
         id: existing.id,
         project_id: nextProjectId,
         cwd: effectiveCwd,
         title: nextTitle,
+        last_message_at: needLast ? lastMessageAt : existing.last_message_at,
         updated_at: now()
       })
       if (needTitle) {
@@ -256,11 +281,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
     }
     // "last conversation time" = newest message timestamp; adapters that
     // report no per-message ts fall back to the session's ended_at
-    const lastMessageAt =
-      s.messages.reduce<number | null>(
-        (max, m) => (m.ts != null && (max == null || m.ts > max) ? m.ts : max),
-        null
-      ) ?? s.endedAt ?? null
+    const lastMessageAt = latestMessageTs(s) ?? s.endedAt ?? null
 
     if (existing) {
       const sessionId = existing.id

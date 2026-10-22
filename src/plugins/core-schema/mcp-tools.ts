@@ -110,18 +110,21 @@ export function createMcpTools(deps: {
           `SELECT p.id, p.name, p.path, p.tech_stack FROM projects p
            JOIN sessions s ON s.project_id = p.id
            WHERE p.deleted = 0
-           GROUP BY p.id ORDER BY MAX(COALESCE(s.started_at, s.updated_at)) DESC LIMIT 1`
+           GROUP BY p.id ORDER BY MAX(COALESCE(s.last_message_at, s.started_at, s.updated_at)) DESC LIMIT 1`
         )
         .get() as ProjectRow | undefined) ?? null
     )
   }
 
   const recentSessions = (projectId: number | null, limit = 5): SessionRow[] => {
+    // most recently *conversing* first — a session that started long ago but
+    // talked yesterday belongs above one that started and finished this morning
+    const order = 'COALESCE(last_message_at, started_at, updated_at) DESC'
     if (projectId === null) {
       return sqlite
         .prepare(
           `SELECT id, title, summary, started_at, last_message_at, agent_type FROM sessions
-           WHERE deleted = 0 ORDER BY COALESCE(started_at, updated_at) DESC LIMIT ?`
+           WHERE deleted = 0 ORDER BY ${order} LIMIT ?`
         )
         .all(limit) as SessionRow[]
     }
@@ -129,7 +132,7 @@ export function createMcpTools(deps: {
       .prepare(
         `SELECT id, title, summary, started_at, last_message_at, agent_type FROM sessions
          WHERE deleted = 0 AND project_id = ?
-         ORDER BY COALESCE(started_at, updated_at) DESC LIMIT ?`
+         ORDER BY ${order} LIMIT ?`
       )
       .all(projectId, limit) as SessionRow[]
   }
@@ -350,14 +353,16 @@ export function createMcpTools(deps: {
           params.push(agent)
         }
         if (sinceDays > 0) {
-          where.push('COALESCE(started_at, updated_at) >= ?')
+          // "last N days" means last *conversation*, not last start: a session
+          // opened three weeks ago but still talking yesterday is recent
+          where.push('COALESCE(last_message_at, started_at, updated_at) >= ?')
           params.push(sinceCutoffSec(sinceDays))
         }
         const rows = sqlite
           .prepare(
             `SELECT id, title, summary, started_at, last_message_at, agent_type, message_count FROM sessions
              WHERE ${where.join(' AND ')}
-             ORDER BY COALESCE(started_at, updated_at) DESC LIMIT ? OFFSET ?`
+             ORDER BY COALESCE(last_message_at, started_at, updated_at) DESC LIMIT ? OFFSET ?`
           )
           .all(...params, limit, offset) as SessionRow[]
         if (rows.length === 0) return '没有符合条件的会话。'
@@ -494,12 +499,24 @@ export function createMcpTools(deps: {
                 extra.push(`[memory·语义/${row.agent_type ?? '全局'}] [${row.kind}]\n   ${clip(row.content, 160)}`)
               } else {
                 const row = sqlite
-                  .prepare(`SELECT agent_type, title, summary, started_at, project_id FROM sessions WHERE id = ? AND deleted = 0`)
-                  .get(s.refId) as { agent_type: string; title: string | null; summary: string | null; started_at: number | null; project_id: number | null } | undefined
+                  .prepare(
+                    `SELECT agent_type, title, summary, started_at, last_message_at, project_id
+                     FROM sessions WHERE id = ? AND deleted = 0`
+                  )
+                  .get(s.refId) as
+                  | {
+                      agent_type: string
+                      title: string | null
+                      summary: string | null
+                      started_at: number | null
+                      last_message_at: number | null
+                      project_id: number | null
+                    }
+                  | undefined
                 if (!row) continue
                 if (agent && row.agent_type !== agent) continue
                 if (projectId != null && row.project_id !== projectId) continue
-                if (sinceSec != null && (row.started_at ?? 0) < sinceSec) continue
+                if (sinceSec != null && (row.last_message_at ?? row.started_at ?? 0) < sinceSec) continue
                 const first = row.summary ? clip(row.summary.split('\n')[0] ?? '', 120) : ''
                 extra.push(
                   `[session·语义/会话#${s.refId}/${row.agent_type}] ${row.title ?? '(无标题)'}${first ? ` — ${first}` : ''}`

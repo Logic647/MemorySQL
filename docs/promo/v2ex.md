@@ -32,14 +32,14 @@
 
 几个顺手的小东西:
 
-- 全局 `Alt+Shift+M` 秒搜所有会话/记忆/笔记,不切窗口
+- 全局 `Alt+Shift+M` 秒搜所有会话/记忆,不切窗口
 - 语义检索:本地 ONNX 模型,字面搜不到的概念性提问也能召回(「怎么把知识库迁到另一台机器」能命中"换机迁移"的会话)
 - 按项目自动生成开发日志(时间线 + 决策 + 待办),Markdown 落盘
 - 7 个 MCP 工具:回读会话、检索、写记忆、收工汇报、项目交接简报
 
-**隐私立场先说清楚**:数据 100% 存本机(明文 SQLite + Markdown,Obsidian 兼容);联网的只有你自己配置的 LLM API(可选项,做会话摘要)和 GitHub 版本更新检查,其余全程离线——语义检索也是本地模型;任何导出/分享路径强制过脱敏模块。
+**隐私立场先说清楚**:数据 100% 存本机(明文 SQLite + 生成文件);联网的只有你自己配置的 LLM API(可选项,做会话摘要)和 GitHub 版本更新检查,其余全程离线——语义检索也是本地模型;任何导出/分享路径强制过脱敏模块。
 
-技术栈:Electron + TypeScript + React + better-sqlite3(FTS5)+ sqlite-vec + CodeMirror 6。一切功能皆插件——会话捕获、语义检索、脱敏导出,和外部插件走完全相同的加载协议。
+技术栈:Electron + TypeScript + React + better-sqlite3(FTS5)+ sqlite-vec。一切功能皆插件——会话捕获、语义检索、脱敏导出,和外部插件走完全相同的加载协议。
 
 GitHub(MIT,求 issue 拍砖):https://github.com/Logic647/MemorySQL
 

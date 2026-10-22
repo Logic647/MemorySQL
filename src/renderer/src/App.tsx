@@ -48,19 +48,34 @@ function fmtShort(ts: number | null | undefined): string {
 }
 
 /**
+ * Same compact stamp, with the year when it is not the current one — a session
+ * that last spoke 8 months ago is exactly the case where "03-15" is ambiguous.
+ */
+function fmtShortYear(ts: number | null | undefined): string {
+  if (!ts) return '—'
+  const d = new Date(ts * 1000)
+  const md = `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  return d.getFullYear() === new Date().getFullYear() ? md : `${d.getFullYear()}-${md}`
+}
+
+/**
  * "how long ago did this session last talk" — the signal that tells a session
  * that started last week but ended this morning apart from one that has been
  * quiet since the day it started. Beyond 30 days the relative form stops
- * helping, so it falls back to the absolute short stamp.
+ * helping, so it falls back to an absolute stamp (year included when needed).
  */
 function fmtRelative(ts: number | null | undefined): string {
   if (!ts) return '—'
   const diff = Date.now() / 1000 - ts
+  // a future timestamp is not "just now": a clock that jumped backwards or a
+  // peer device reporting ahead would otherwise read as live activity
+  if (diff < -60) return '时间异常'
+  if (diff < 0) return '刚刚'
   if (diff < 60) return '刚刚'
   if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
   if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
   if (diff < 86400 * 30) return `${Math.floor(diff / 86400)} 天前`
-  return fmtShort(ts)
+  return fmtShortYear(ts)
 }
 
 function AgentBadge({ type }: { type: string }) {
@@ -237,21 +252,32 @@ export default function App() {
           : (res.message ?? '没有可生成的项目')
       )
       // the vault is no longer an in-app note library — the generated files
-      // are only reachable from disk, so offer the folder right away
+      // are only reachable from disk, so offer the folder right away.
+      // devlogDir lives in its own state (NOT devlogNote): the note is a 4s
+      // toast, but this button has to outlive it or the folder is unreachable.
       if (res.files.length > 0) {
         void api
           .paths()
           .then((pp) => setDevlogDir(pp.devlogDir))
           .catch(() => setDevlogDir(null))
+      } else {
+        setDevlogDir(null)
       }
       await refresh()
     } catch {
       setDevlogNote('生成失败')
+      setDevlogDir(null)
     } finally {
       setDevlogBusy(false)
       setTimeout(() => setDevlogNote(null), 4000)
     }
   }, [refresh])
+
+  const openDevlogDir = useCallback(() => {
+    void api.openPath(devlogDir ?? '').catch((e) =>
+      setKbMsg(`打开日志目录失败: ${String(e)}`)
+    )
+  }, [devlogDir])
 
   const doImport = useCallback(async () => {
     if (!importText.trim()) return
@@ -392,14 +418,18 @@ export default function App() {
             </span>
           )}
           <span className="sess-id">#{s.id}</span>
-          <span className="session-time" title={`会话开始: ${fmtTime(s.startedAt)}`}>
-            开始 {fmtShort(s.startedAt)}
-          </span>
-          <span
-            className="session-time session-time-last"
-            title={`最后一次对话: ${fmtTime(s.lastMessageAt)}`}
-          >
-            最后 {fmtRelative(s.lastMessageAt)}
+          <span className="session-times">
+            <span className="session-time" title={`会话开始: ${fmtTime(s.startedAt)}`}>
+              <span className="session-time-key">开始</span>
+              {fmtShort(s.startedAt)}
+            </span>
+            <span
+              className="session-time session-time-last"
+              title={`最后一次对话: ${fmtTime(s.lastMessageAt)}`}
+            >
+              <span className="session-time-key">最后</span>
+              {fmtRelative(s.lastMessageAt)}
+            </span>
           </span>
         </div>
         {s.summary && <div className="session-summary">{s.summary.split('\n')[0]}</div>}
@@ -444,8 +474,15 @@ export default function App() {
           {(['sessions', 'memories'] as View[]).map((v) => {
             const Icon = VIEW_ICON[v]
             return (
-              <button key={v} className={`rail-btn ${view === v ? 'active' : ''}`} aria-label={VIEW_LABEL[v]} onClick={() => setView(v)}>
+              <button
+                key={v}
+                className={`rail-btn rail-btn-fill ${view === v ? 'active' : ''}`}
+                aria-label={VIEW_LABEL[v]}
+                title={VIEW_LABEL[v]}
+                onClick={() => setView(v)}
+              >
                 <Icon size={18} strokeWidth={1.8} />
+                <span className="rail-btn-label">{VIEW_LABEL[v]}</span>
               </button>
             )
           })}
@@ -500,11 +537,11 @@ export default function App() {
           {devlogBusy ? '生成中…' : '生成项目日志'}
         </button>
         {devlogNote && <span className="devlog-note">{devlogNote}</span>}
-        {devlogNote && devlogDir && (
+        {devlogDir && (
           <button
             className="btn btn-small"
             title={devlogDir}
-            onClick={() => void api.openPath(devlogDir)}
+            onClick={openDevlogDir}
           >
             打开日志目录
           </button>
@@ -926,9 +963,19 @@ export default function App() {
                       }}
                     >
                       <span className="sess-id">#{r.id}</span> {r.title ?? '(无标题)'}
-                      <span className="session-time">{fmtShort(r.startedAt)}</span>
-                      <span className="session-time session-time-last">
-                        最后 {fmtRelative(r.lastMessageAt)}
+                      <span className="sess-id">#{r.id}</span>
+                      <span className="session-times">
+                        <span className="session-time">
+                          <span className="session-time-key">开始</span>
+                          {fmtShortYear(r.startedAt)}
+                        </span>
+                        <span
+                          className="session-time session-time-last"
+                          title={`最后一次对话: ${fmtTime(r.lastMessageAt)}`}
+                        >
+                          <span className="session-time-key">最后</span>
+                          {fmtRelative(r.lastMessageAt)}
+                        </span>
                       </span>
                     </button>
                   ))}

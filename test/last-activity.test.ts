@@ -96,6 +96,38 @@ describe('last_message_at — 入库时维护', () => {
     ])
     expect(lastOf('s4')).toBe(1_700_050_000)
   })
+
+  it('消息内容没变但活动时间变新时,时间仍会刷新(Claude Desktop 元数据场景)', async () => {
+    // 适配器恒定返回零消息 + endedAt = 元数据里的 lastActivityAt,
+    // 于是 content_hash 永远相同 —— 这条路必须仍然推进 last_message_at
+    const meta = (endedAt: number) =>
+      session({ externalId: 'm1', endedAt, messages: [] })
+
+    await ingest.ingestSessions([meta(1_700_000_000)])
+    expect(lastOf('m1')).toBe(1_700_000_000)
+
+    // 用户继续在 Claude Desktop 里聊 → lastActivityAt 前移,内容仍然为空
+    const res = await ingest.ingestSessions([meta(1_700_090_000)])
+    expect(res.updated).toBe(1)
+    expect(lastOf('m1')).toBe(1_700_090_000)
+  })
+
+  it('时间不会后退:活动时间变旧时保留已有值', async () => {
+    await ingest.ingestSessions([session({ externalId: 's5', endedAt: 1_700_000_000, messages: [] })])
+    await ingest.ingestSessions([session({ externalId: 's5', endedAt: 1_600_000_000, messages: [] })])
+    expect(lastOf('s5')).toBe(1_700_000_000)
+  })
+
+  it('ts=0 被当作「无时间戳」,回落 ended_at 而不是写 0', async () => {
+    await ingest.ingestSessions([
+      session({
+        externalId: 's6',
+        endedAt: 1_700_000_900,
+        messages: [{ role: 'user', content: '时间戳为 0 的消息', ts: 0 }]
+      })
+    ])
+    expect(lastOf('s6')).toBe(1_700_000_900)
+  })
 })
 
 describe('last_message_at — 迁移回填', () => {
@@ -141,6 +173,28 @@ describe('last_message_at — 迁移回填', () => {
       last_message_at: number | null
     }
     expect(row.last_message_at).toBe(1_700_000_123)
+    old.close()
+  })
+
+  it('v7 把 ts=0 的消息当作无时间戳,回落到 ended_at', () => {
+    const old = buildOldDb()
+    old.sqlite
+      .prepare(
+        `INSERT INTO sessions (agent_type, external_id, started_at, ended_at, title, content_hash, updated_at, device_id)
+         VALUES ('zcode', 'old3', 1699000000, 1700000456, '旧会话', 'h', 1, 'local')`
+      )
+      .run()
+    old.sqlite
+      .prepare(
+        `INSERT INTO session_messages (session_id, seq, role, content, ts)
+         VALUES (1, 0, 'user', '时间戳为 0', 0)`
+      )
+      .run()
+    old.migrate('core-schema', [CORE_MIGRATIONS[6]])
+    const row = old.sqlite.prepare('SELECT last_message_at FROM sessions WHERE id = 1').get() as {
+      last_message_at: number | null
+    }
+    expect(row.last_message_at).toBe(1_700_000_456)
     old.close()
   })
 })
