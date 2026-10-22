@@ -3,10 +3,14 @@ import path from 'node:path'
 import fs from 'node:fs'
 
 /**
- * Data layout (self-contained, portable — copy the folder, move the vault):
+ * Data layout (self-contained, portable — copy the folder, move it as a whole):
  *   <dataDir>/memory.db       SQLite (sessions/messages/memories/FTS)
- *   <dataDir>/vault/          Markdown notes (Obsidian-compatible)
+ *   <dataDir>/vault/          生成文件目录(项目日志 devlog/、记忆分发 dispatch/)
  *   <dataDir>/settings.json   app + plugin settings
+ *
+ * The vault used to be an Obsidian-compatible note library indexed by the
+ * core-vault plugin; notes and the knowledge graph are gone, so the folder is
+ * now purely an output directory for generated files.
  *
  * The user may relocate the whole dir in settings: a one-shot marker file
  * `.datadir-pending` in the DEFAULT location points at the new root and is

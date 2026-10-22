@@ -5,8 +5,7 @@ import { api } from './api'
 const KIND_LABEL: Record<SearchHit['kind'], string> = {
   session: '会话',
   message: '消息',
-  memory: '记忆',
-  note: '笔记'
+  memory: '记忆'
 }
 
 /**
@@ -47,7 +46,7 @@ export default function SpotlightView(): React.JSX.Element {
     if ((h.kind === 'session' || h.kind === 'message') && h.sessionId != null) {
       void window.memorysql.invoke('memorysql:host:openSession', { id: h.sessionId })
     } else {
-      // memories/notes: bring the main window up (no deep link yet)
+      // memories: bring the main window up (no deep link yet)
       void window.memorysql.invoke('memorysql:host:openSession', { id: 0 })
     }
   }, [])
@@ -58,7 +57,7 @@ export default function SpotlightView(): React.JSX.Element {
       <input
         ref={inputRef}
         className="spotlight-input"
-        placeholder="秒搜:会话 / 消息 / 记忆 / 笔记…(Enter 打开第一条,Esc 关闭)"
+        placeholder="秒搜:会话 / 消息 / 记忆…(Enter 打开第一条,Esc 关闭)"
         value={q}
         onChange={(e) => setQ(e.target.value)}
         onKeyDown={(e) => {

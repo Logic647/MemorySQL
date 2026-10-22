@@ -16,8 +16,8 @@
 
 ## 技术栈(已定,勿改)
 
-- Electron + TypeScript(strict)+ React + CodeMirror 6(M4 编辑器)
-- 存储:笔记 = Markdown 文件(`vault/`);记忆/会话 = SQLite(better-sqlite3 + FTS5)
+- Electron + TypeScript(strict)+ React(笔记编辑器已下线,不再有 CodeMirror)
+- 存储:记忆/会话 = SQLite(better-sqlite3 + FTS5);生成文件(项目日志/记忆分发) = `vault/` 下的 Markdown
 - 插件系统:**一步到位**,核心功能即内置插件(见 architecture.md)
 - 构建:electron-vite;测试:vitest
 
@@ -30,7 +30,7 @@ docs/DEVLOG.md             ← 进展日志(追加式)
 src/main/                  ← 主进程:入口、插件宿主、DB
 src/plugins/<id>/          ← 插件(manifest.json + index.ts)
 src/preload/  src/renderer/  src/shared/
-vault/                     ← MD 笔记库(Obsidian 兼容)
+vault/                     ← 生成文件目录(devlog/ 项目日志、dispatch/ 记忆分发)
 upstream/                  ← 上游监控:台账 JSON 导出件 + 黑盒漂移检查(check.ts)
 tools/upstream-watch/      ← 云端看板服务(零依赖,部署到阿里云,见 DEPLOY.md)
 test/*.test.ts             ← 单测。**样本内联在各 .test.ts 里,test/fixtures/ 不存在**
@@ -62,6 +62,7 @@ npm run dist         # 打包 Windows 安装包 + 免安装目录(需 ELECTRON_B
 
 ## 当前状态(接手 agent 从这里开始)
 
+- **笔记与知识图谱已下线 + 新增「最后一次对话时间」(2026-10-22,未发版)**:删掉 `core-vault` 插件 + `NotesView` + `GraphView`,连带移除 CodeMirror/cytoscape 四个依赖(**renderer 产物 2.79MB → 0.68MB,-75.7%**);检索只剩会话/消息/记忆三类(MCP `memory_search` 的 `kind=note` 现在明确报错);左侧导航只剩「会话/记忆」,快捷键改 `Ctrl+1..3`;`vault/` 语义变为**纯生成文件目录**(devlog/ + dispatch/),生成项目日志后顶栏给「打开日志目录」按钮;**`sessions.last_message_at` 新列(迁移 v7)** = 最新消息 ts(无则回落 `ended_at`,都没有留 NULL 不写 0),会话行显示「开始 MM-DD HH:mm + 最后 刚刚/3 天前」,详情页与 MCP(`memory_list_sessions` / `memory_get_session`)同步带出。**旧 `notes`/`notes_fts` 表保留不删**。验收:typecheck 0 / vitest 385:385 / 真实库副本回填 264 会话 0 NULL / import:scan 12 插件无回归 / 真机 GUI 截图确认(详见 DEVLOG 同日条)
 - **M0–M6 全部完成**(2026-08-31):M5 = 审计修复 + 会话 ID + 七 agent 捕获矩阵 + 记忆 agent 维度/规则提炼/LLM 精炼 + 外部插件加载 + 液态玻璃 UI(细节见 DEVLOG);M5.2 = 外部测试修复(记忆/笔记进 MCP 全文检索、Hermes 记忆 § 分段、版本号、get_context 会话 id);**M6 = MCP 工具矩阵 v2(4→7 工具:get_context agent 过滤+交接摘要、memory_list_sessions、memory_get_session full、memory_search kind/agent/project/since 过滤、memory_write 归因+tags/project、memory_log_progress 收工汇报→候选记忆)+ 交接简报 memory_get_project_brief + 写入去重**(LLM 冲突检测顺延 M7)
 - **M0–M7 完成;M8 分发完成**(2026-08-31):语义检索/托盘秒搜/项目日志/冲突检测均已上线;CI 已接(main 推送自动 ci+package);**v0.4.1 已发版**(README 社区标准重写+CI 自动 Release);推送走服务器 bundle 中转(本机直连 github.com:443 被墙,见 DEVLOG);winget PR 已提(microsoft/winget-pkgs#426778,CLA 已签)+ scoop bucket 上线
 - **内存治理 + 开机自启动**(2026-09-02):A1–A7 七项优化(cytoscape 泄漏、语义索引水位增量同步+移除清扫、embedder 空闲 15min 释放、sessions:get 尾页 200 分页、memories:list 分页、memory_get_session 线性化、单实例锁);core-launcher 插件(setLoginItemSettings + `--hidden` 驻留托盘,设置页「通用 · 启动」);顺带修 privacy-export 传参 bug(会话导出一调即抛)

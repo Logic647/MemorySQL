@@ -71,6 +71,7 @@ const plugin: MemorySQLPlugin = {
           `SELECT s.id, s.agent_type AS agentType, s.external_id AS externalId,
                   s.title, s.summary, p.name AS project,
                   s.started_at AS startedAt, s.ended_at AS endedAt,
+                  s.last_message_at AS lastMessageAt,
                   s.message_count AS messageCount, s.tool_call_count AS toolCallCount,
                   s.title_locked AS titleLocked, s.archived AS archived, s.similar_to AS similarTo,
                   s.sort_key AS sortKey, s.project_id AS projectId

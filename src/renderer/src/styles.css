@@ -123,7 +123,7 @@ body {
 .kb-msg { font-size: var(--msql-fs-sm); color: var(--msql-accent); padding: 8px 6px 0; white-space: pre-wrap; }
 
 /* ---------- main panes ---------- */
-.main, .list-pane, .detail-pane, .memories-pane, .notes-view, .settings-pane {
+.main, .list-pane, .detail-pane, .memories-pane, .settings-pane {
   background: var(--msql-glass);
   backdrop-filter: blur(var(--msql-blur)) saturate(1.25);
 }
@@ -170,7 +170,7 @@ body {
 
 .field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
 .field > span { font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); }
-.field input, .field select, .field textarea, .notes-editor .grow, input.grow, input.grow-sm {
+.field input, .field select, .field textarea, input.grow, input.grow-sm {
   padding: 6px 10px; border-radius: var(--msql-radius-sm); font-size: var(--msql-fs-md);
   border: 1px solid var(--msql-glass-border); background: rgba(0, 0, 0, 0.28);
   color: var(--msql-fg); outline: none; font-family: inherit;
@@ -212,6 +212,11 @@ body {
 .session-title { font-size: var(--msql-fs-md); color: var(--msql-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; display: flex; gap: 6px; align-items: center; }
 .sess-id { font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); flex-shrink: 0; }
 .session-time { font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); flex-shrink: 0; margin-left: auto; font-family: var(--msql-font-mono); }
+/* the two stamps sit as a pair at the right edge — only the first one takes
+   the auto margin, otherwise flexbox would split the free space between them
+   and push the start time into the middle of the row */
+.session-time + .session-time { margin-left: 0; }
+.session-time-last { color: var(--msql-fg-muted); }
 .session-summary { font-size: var(--msql-fs-sm); color: var(--msql-fg-dim); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-meta { display: flex; gap: 10px; margin-top: 4px; font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); font-family: var(--msql-font-mono); }
 .group-head {
@@ -306,20 +311,7 @@ body {
 .mem-source { font-family: var(--msql-font-mono); }
 .mem-actions { display: inline-flex; gap: 8px; margin-left: auto; }
 
-/* ---------- notes ---------- */
-.notes-view { flex: 1; display: flex; min-width: 0; }
-.notes-list { width: 300px; flex-shrink: 0; border-right: 1px solid var(--msql-glass-border); display: flex; flex-direction: column; }
-.notes-search { padding: 10px; border-bottom: 1px solid var(--msql-glass-border); display: flex; gap: 6px; }
-.note-create { flex-shrink: 0; }
-.note-active { background: var(--msql-accent-soft) !important; border-left-color: var(--msql-accent) !important; }
-.notes-editor { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.cm-container { flex: 1; min-height: 0; overflow-y: auto; }
-.dirty-mark { color: var(--msql-warning); font-size: var(--msql-fs-sm); }
-.backlinks { padding: 10px 18px; border-top: 1px solid var(--msql-glass-border); font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); }
-
-/* ---------- graph ---------- */
-.graph-view { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.graph-container { flex: 1; min-height: 0; }
+/* (笔记与知识图谱已下线 —— 相关的 notes-* / graph-* 样式随之移除) */
 
 /* ---------- settings ---------- */
 .settings-pane { flex: 1; display: flex; flex-direction: row; min-width: 0; }
@@ -433,9 +425,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* ---------- sidebar-ified views / modal / drop target ---------- */
 .memories-pane { flex-direction: row; }
 .mem-main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
-.graph-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.graph-sidebar { width: 240px; }
-.notes-list { width: var(--msql-side-w); background: var(--msql-glass-soft); backdrop-filter: blur(var(--msql-blur)); }
 .group-head.drop-target {
   background: var(--msql-accent-soft);
   outline: 1px dashed rgba(79, 140, 255, 0.6); outline-offset: -2px;

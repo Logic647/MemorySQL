@@ -19,7 +19,7 @@
 | `memory_get_project_brief(project?, agent?)` | 项目交接简报:最近会话、上一棒 tail、活跃记忆、待确认进度 |
 | `memory_list_sessions(project?, agent?, since?, limit?, offset?)` | 会话枚举(带 id) |
 | `memory_get_session(id, tail?, full?)` | 完整消息时间线回读 |
-| `memory_search(query, kind?, agent?, project?, since?, limit?)` | 全文检索会话/消息/记忆/笔记(trigram 中文友好)+ 本地语义召回补足 |
+| `memory_search(query, kind?, agent?, project?, since?, limit?)` | 全文检索会话/消息/记忆(trigram 中文友好)+ 本地语义召回补足 |
 | `memory_write(kind, content, agent?, project?, tags?)` | 写入长期记忆(归因/标签/去重) |
 | `memory_log_progress(project, done, next?, issues?, agent?)` | 结构化收工汇报 → 候选记忆(人工确认后转正)→ 交接简报可见 |
 
@@ -33,7 +33,7 @@ Codex CLI / ZCode / Claude Code / Gemini CLI / Cursor / OpenCode / Hermes Agent 
 
 ## 隐私要点(目录页建议高亮)
 
-数据 100% 本地(会话原文/记忆/笔记明文存本机);任何导出/分享路径强制过脱敏模块;语义检索用本地 ONNX 模型,检索全程不联网。
+数据 100% 本地(会话原文/记忆明文存本机);任何导出/分享路径强制过脱敏模块;语义检索用本地 ONNX 模型,检索全程不联网。
 
 ---
 

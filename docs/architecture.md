@@ -12,7 +12,7 @@
 |---|---|---|
 | 个人记忆 / 画像 | 技术栈、编码偏好、工作习惯 | SQLite `memories` + 分发为各家 agent 的记忆文件 |
 | 会话记录 | 与各 agent 的对话,自动捕获、摘要、可检索 | SQLite(原文 append-only) |
-| 开发过程 | 项目决策、进度、经验 | MD 笔记(vault)+ 会话沉淀 |
+| 开发过程 | 项目决策、进度、经验 | 会话沉淀 + 自动生成的项目日志(`vault/devlog/`),**不再有笔记库与图谱**(D11) |
 
 ## 2. 总体架构
 
@@ -20,7 +20,7 @@
 ┌ Electron 主进程 ────────────────────────────────────┐
 │ Plugin Host — 加载/生命周期/能力注册(IPC·MCP·UI·DB) │
 │ ┌ 内置插件(与社区插件同机制) ─────────────────────┐ │
-│ │ core.db  core.vault  core.search  core.settings │ │
+│ │ core.db  core.search  core.settings              │ │
 │ │ capture-codex  capture-zcode  capture-hermes    │ │
 │ │ summarizer-rules  summarizer-llm                │ │
 │ │ mcp-server  privacy-export  memory-core         │ │
@@ -29,7 +29,7 @@
 │ └─────────────────────────────────────────────────┘ │
 │ better-sqlite3(+FTS5)  chokidar watcher             │
 ├ Electron 渲染进程(React)───────────────────────────┤
-│ 会话浏览器 / 记忆画像 / 笔记编辑(CodeMirror 6, M4) │
+│ 会话浏览器 / 记忆画像(笔记编辑与图谱已下线,D11)      │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -62,7 +62,7 @@ devices         id PK · name · created_at
 FTS: sessions_fts(title, summary) · messages_fts(content)  — contentless + 外部 rowid 映射
 ```
 
-- 所有业务表带 `updated_at / device_id / deleted`(tombstone),为 sync-folder 增量同步预留;会话原始数据 append-only 天然免冲突,记忆/笔记 LWW 合并
+- 所有业务表带 `updated_at / device_id / deleted`(tombstone),为 sync-folder 增量同步预留;会话原始数据 append-only 天然免冲突,记忆 LWW 合并
 - DB 文件:`<dataDir>/memory.db`;数据目录自包含(vault/ + memory.db + settings.json)→ 整夹拷贝即迁移
 - **时间单位(混用,勿误判为时间戳损坏)**:`sessions.started_at / ended_at` 与 `session_messages.ts` 存 **Unix 秒**(写侧各 parser `Math.floor(t/1000)`,如 `_lib/agent-db-parser.ts` 的 `epoch()`;读侧 `App.tsx fmtTime` 统一 `new Date(ts*1000)`);各表 `updated_at` 存 **毫秒**。直查库时按秒解读 `started_at`,否则全显示 1970
 
@@ -96,7 +96,7 @@ FTS: sessions_fts(title, summary) · messages_fts(content)  — contentless + �
 | # | 决策 | 理由 |
 |---|---|---|
 | D1 | Electron + TS + React 桌面应用 + 内置 MCP server | Obsidian 同源生态,Node 直接读各 agent 目录 |
-| D2 | 混合存储:笔记 MD,记忆/会话 SQLite(FTS5) | 结构化检索与人可读两头兼顾 |
+| D2 | 混合存储:生成文件 MD,记忆/会话 SQLite(FTS5) | 结构化检索与人可读两头兼顾(笔记库部分已于 D11 下线) |
 | D3 | 接入三路:MCP + 自动导入 + 项目文件监听 | MCP 通用,导入兜底,监听让沉淀发生在项目内 |
 | D4 | MVP 以会话捕获为先 | 数据先积累,再围绕数据建检索与 UI |
 | D5 | 三适配器:Codex + ZCode + Hermes | 本机真实数据验收;Hermes 路径由用户提供 |
@@ -105,6 +105,7 @@ FTS: sessions_fts(title, summary) · messages_fts(content)  — contentless + �
 | D8 | 一步到位插件系统 | 核心功能即内置插件,扩展接口从第一天存在 |
 | D9 | 知识库迁移:归档导入导出 + 增量同步 | 除 LLM 外零服务器依赖,数据目录自包含 |
 | D10 | 开发文档 AGENTS.md 主入口 + docs/ | 本项目自身跨 agent 开发(dogfooding),并写入 agent 全局记忆 |
+| D11 | **2026-10-22 下线笔记与知识图谱**(M4 的笔记/图谱部分回退) | 长期使用后判断实用性不高;图谱的数据源本就是笔记链接关系,笔记没了图谱失去意义。连带移除 CodeMirror + cytoscape,renderer 产物 2.79MB → 0.68MB。`vault/` 保留但语义变为**纯生成文件目录**(devlog/dispatch);`notes`/`notes_fts` 旧表留在库里不删 |
 
 ## 8. 里程碑
 
@@ -112,7 +113,7 @@ FTS: sessions_fts(title, summary) · messages_fts(content)  — contentless + �
 - **M1** 捕获 MVP:三捕获插件 + 规则摘要 + 实体抽取 + FTS5 + 极简 UI(列表/详情/搜索)。验收 = 本机三源真实会话全部导入、可搜可浏览
 - **M2** 服务层:mcp-server(`memory_get_context` / `memory_search` / `memory_write`)+ privacy-export + sync-archive
 - **M3** 记忆与同步:memory-core 画像;summarizer-llm(切换 + 模板 + 降级);记忆分发;sync-folder
-- **M4** 完全体:CodeMirror 6 笔记 + 双链/反链 + 图谱 + capture-watcher;插件 API 文档化
+- **M4** 完全体:CodeMirror 6 笔记 + 双链/反链 + 图谱 + capture-watcher;插件 API 文档化(**笔记/图谱部分已于 2026-10-22 回退下线,见 D11**)
 - **M5** 全量增强(已完成,2026-08-30):审计修复(P0×1/P1×5/P2×8)、会话 id、七 agent 连接向导、记忆 agent 维度、LLM 模型列表、外部插件加载、液态玻璃 UI、M5.1 Cursor 校准 + Hermes MCP 直连。细节见 DEVLOG
 - **M5.2** 外部测试修复(已完成,2026-08-31):memories/notes 进 FTS(v3 迁移 + 触发器自动同步)、Hermes 记忆 § 分段导入(内容寻址 key + legacy 清理)、MCP serverInfo 版本号接 app.getVersion()、headless scanNow 通道过滤、get_context 会话列表带 id。细节见 DEVLOG
 
@@ -127,7 +128,7 @@ FTS: sessions_fts(title, summary) · messages_fts(content)  — contentless + �
 | `memory_get_context` | 增强 | `project?, agent?, include_last_session?`;记忆按 agent 过滤;最近会话带 id;`include_last_session=true` 时内联最近一次会话 tail 作为「上一棒交接摘要」 |
 | `memory_list_sessions` | 新增 | `project?, agent?, since?, limit?, offset?` → `[{id, title, agent, started_at, message_count}]`;agent 侧系统性枚举入口(search 命中之外唯一的列举途径) |
 | `memory_get_session` | 增强 | `id, tail?, full?`;full 模式去掉单条消息 2000 字符硬截断 |
-| `memory_search` | 增强 | `query, kind?, agent?, project?, since?, limit?` 加过滤维度(已支持会话/消息/记忆/笔记四路) |
+| `memory_search` | 增强 | `query, kind?, agent?, project?, since?, limit?` 加过滤维度(现支持会话/消息/记忆三路,笔记路已于 D11 下线) |
 | `memory_write` | 增强 | `kind, content, agent?, project?, tags?`;归因接通 `memories.agent_type`(M5 已加列,数据流未接) |
 | `memory_log_progress` | 新增 | `project, done, next?, issues?` 结构化收工汇报 → 自动关联项目 + 生成候选交接条。设计依据:agent 不会主动写好记忆,但会老实填表 |
 
@@ -143,7 +144,7 @@ FTS: sessions_fts(title, summary) · messages_fts(content)  — contentless + �
 
 1. **本地语义检索**:sqlite-vec 扩展 + 本地小模型 embedding(fastembed/ONNX 级),FTS + 向量混合排序;全程离线,不破 local-first 承诺。「语义召回全部开发史,且不上云」是独一无二的卖点。✅ 基建完成(2026-08-31,semantic-search 插件:bge-small-zh-v1.5 向量化活跃记忆+会话,memory_search 字面未命中时语义补足;**默认关闭,启用即下载 ~100MB 模型,属用户显式动作**;UI 开关与 messages 级向量待后续)
 2. **自动 DEVLOG**:从会话历史自动生成/维护每个项目的开发日志(用户手写 DEVLOG 的纪律就是需求证明);与 capture-watcher 双向打通,形成「项目文件 ↔ 知识库」活同步。✅ 第一期已完成(2026-08-31,project-devlog 插件:时间线+决策+待办,vault/devlog/ 下按项目生成,UI 按钮 + headless --devlog + ingest 防抖自动更新;LLM 精炼与手工编辑保护后续叠加)
-3. **每日打开的理由**:托盘常驻 + 全局热键 Spotlight 式秒搜(会话/记忆/笔记一起搜);轻量「本周开发轨迹」仪表盘(按 agent/项目分布、活跃曲线,纯只读视图)。MCP 服务端常驻的前提是用户有每天打开它的动机
+3. **每日打开的理由**:托盘常驻 + 全局热键 Spotlight 式秒搜(会话/记忆一起搜);轻量「本周开发轨迹」仪表盘(按 agent/项目分布、活跃曲线,纯只读视图)。MCP 服务端常驻的前提是用户有每天打开它的动机
 4. **静态加密(可选)**:SQLCipher,把「数据 100% 本地」升级为「100% 本地且加密」。⏸ **暂缓(2026-08-31 决策)**:SQLCipher 需替换 better-sqlite3 原生构建(破坏现有 ABI、.msqlv 归档与增量同步兼容),且引入密钥管理问题(密钥存哪都是新攻击面);个人本地场景下磁盘级加密(BitLocker 等)已覆盖主要威胁模型。重新评估触发条件:多用户共用机器、笔记本高失窃风险、或用户明确提出
 
 ### M8 分发与增长

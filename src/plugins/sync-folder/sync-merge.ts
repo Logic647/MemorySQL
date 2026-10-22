@@ -103,13 +103,14 @@ export function mergeBundle(db: Database.Database, bundle: SyncBundle): MergeRep
       'SELECT id, content_hash, updated_at FROM sessions WHERE agent_type = ? AND external_id = ?'
     )
     const sessIns = db.prepare(`
-      INSERT INTO sessions (agent_type, external_id, cwd, started_at, ended_at, title, summary,
-                            content_hash, message_count, tool_call_count, updated_at, device_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (agent_type, external_id, cwd, started_at, ended_at, last_message_at,
+                            title, summary, content_hash, message_count, tool_call_count,
+                            updated_at, device_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const sessUpd = db.prepare(`
-      UPDATE sessions SET cwd = ?, started_at = ?, ended_at = ?, title = ?, summary = ?,
-        content_hash = ?, message_count = ?, tool_call_count = ?, updated_at = ?
+      UPDATE sessions SET cwd = ?, started_at = ?, ended_at = ?, last_message_at = ?,
+        title = ?, summary = ?, content_hash = ?, message_count = ?, tool_call_count = ?, updated_at = ?
       WHERE id = ?
     `)
     const msgIds = db.prepare('SELECT id FROM session_messages WHERE session_id = ?')
@@ -136,6 +137,13 @@ export function mergeBundle(db: Database.Database, bundle: SyncBundle): MergeRep
       const local = sessFind.get(s.agent_type, s.external_id) as
         | { id: number; content_hash: string; updated_at: number }
         | undefined
+      // last conversation time, derived from the synced messages themselves
+      // (the bundle format stays unchanged — no cross-version field drift)
+      const lastMsgAt =
+        msgs.reduce<number | null>(
+          (max, m) => (m.ts != null && (max == null || m.ts > max) ? m.ts : max),
+          null
+        ) ?? s.ended_at ?? null
 
       if (!local) {
         let sessionId = 0
@@ -146,6 +154,7 @@ export function mergeBundle(db: Database.Database, bundle: SyncBundle): MergeRep
             s.cwd,
             s.started_at,
             s.ended_at,
+            lastMsgAt,
             s.title,
             s.summary,
             s.content_hash,
@@ -171,6 +180,7 @@ export function mergeBundle(db: Database.Database, bundle: SyncBundle): MergeRep
           s.cwd,
           s.started_at,
           s.ended_at,
+          lastMsgAt,
           effTitle,
           s.summary,
           s.content_hash,

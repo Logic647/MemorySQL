@@ -42,7 +42,6 @@ import memoryDispatch from '../plugins/memory-dispatch'
 import syncFolder from '../plugins/sync-folder'
 import projectDevlog from '../plugins/project-devlog'
 import semanticSearch from '../plugins/semantic-search'
-import coreVault from '../plugins/core-vault'
 import captureWatcher from '../plugins/capture-watcher'
 import importChat from '../plugins/import-chat'
 import type { MemorySQLPlugin } from './core/plugin-host'
@@ -65,7 +64,6 @@ const BUILTIN_PLUGINS = [
   summarizerLlm,
   summarizerRules,
   coreSchema,
-  coreVault,
   coreLauncher,
   captureCodex,
   captureZcode,

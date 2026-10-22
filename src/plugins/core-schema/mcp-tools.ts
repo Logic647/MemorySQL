@@ -5,7 +5,7 @@ import type { SearchService } from './search'
 import type { MemoriesService } from './index'
 
 const VALID_KINDS = new Set(['fact', 'preference', 'persona', 'decision'])
-const SEARCH_KINDS = new Set(['session', 'message', 'memory', 'note'])
+const SEARCH_KINDS = new Set(['session', 'message', 'memory'])
 
 function clip(text: string, max: number): string {
   const t = text.replace(/\s+/g, ' ').trim()
@@ -36,6 +36,7 @@ interface SessionRow {
   title: string | null
   summary: string | null
   started_at: number | null
+  last_message_at?: number | null
   agent_type?: string
   message_count?: number
 }
@@ -119,14 +120,14 @@ export function createMcpTools(deps: {
     if (projectId === null) {
       return sqlite
         .prepare(
-          `SELECT id, title, summary, started_at, agent_type FROM sessions
+          `SELECT id, title, summary, started_at, last_message_at, agent_type FROM sessions
            WHERE deleted = 0 ORDER BY COALESCE(started_at, updated_at) DESC LIMIT ?`
         )
         .all(limit) as SessionRow[]
     }
     return sqlite
       .prepare(
-        `SELECT id, title, summary, started_at, agent_type FROM sessions
+        `SELECT id, title, summary, started_at, last_message_at, agent_type FROM sessions
          WHERE deleted = 0 AND project_id = ?
          ORDER BY COALESCE(started_at, updated_at) DESC LIMIT ?`
       )
@@ -154,7 +155,14 @@ export function createMcpTools(deps: {
 
   const sessionLine = (s: SessionRow): string => {
     const firstLine = s.summary ? clip(s.summary.split('\n')[0] ?? '', 120) : ''
-    return `#${s.id} [${s.agent_type ?? '?'}] [${fmtDate(s.started_at)}] ${s.title ?? '(无标题)'}${
+    // the last conversation time tells the agent whether this session is
+    // still "hot" — a session started last week but finished today is not
+    // the same thing as one that has been quiet for a month
+    const last =
+      typeof s.last_message_at === 'number' && s.last_message_at !== s.started_at
+        ? ` [最后 ${fmtDate(s.last_message_at)}]`
+        : ''
+    return `#${s.id} [${s.agent_type ?? '?'}] [${fmtDate(s.started_at)}]${last} ${s.title ?? '(无标题)'}${
       typeof s.message_count === 'number' ? ` (${s.message_count} 条消息)` : ''
     }${firstLine ? ` — ${firstLine}` : ''}`
   }
@@ -347,7 +355,7 @@ export function createMcpTools(deps: {
         }
         const rows = sqlite
           .prepare(
-            `SELECT id, title, summary, started_at, agent_type, message_count FROM sessions
+            `SELECT id, title, summary, started_at, last_message_at, agent_type, message_count FROM sessions
              WHERE ${where.join(' AND ')}
              ORDER BY COALESCE(started_at, updated_at) DESC LIMIT ? OFFSET ?`
           )
@@ -373,8 +381,18 @@ export function createMcpTools(deps: {
         const id = Number(args.id)
         if (!id || Number.isNaN(id)) return '参数错误:需要数字 id'
         const session = sqlite
-          .prepare('SELECT title, agent_type, started_at, summary FROM sessions WHERE id = ? AND deleted = 0')
-          .get(id) as { title: string | null; agent_type: string; started_at: number | null; summary: string | null } | undefined
+          .prepare(
+            'SELECT title, agent_type, started_at, last_message_at, summary FROM sessions WHERE id = ? AND deleted = 0'
+          )
+          .get(id) as
+          | {
+              title: string | null
+              agent_type: string
+              started_at: number | null
+              last_message_at: number | null
+              summary: string | null
+            }
+          | undefined
         if (!session) return `未找到会话 #${id}`
         let messages = sqlite
           .prepare('SELECT role, content, ts, tool_name FROM session_messages WHERE session_id = ? ORDER BY seq')
@@ -404,7 +422,7 @@ export function createMcpTools(deps: {
           budget -= line.length + (lines.length > 1 ? SEP.length : 0)
         }
         const body = lines.join('\n\n---\n\n')
-        const head = `# ${session.title ?? `会话 #${id}`}\n- id: ${id}\n- agent: ${session.agent_type}\n- 开始: ${when(session.started_at)}\n- 消息数: ${messages.length}${omitted > 0 ? `(已省略前 ${omitted} 条,可用 tail=0 获取全量)` : ''}\n`
+        const head = `# ${session.title ?? `会话 #${id}`}\n- id: ${id}\n- agent: ${session.agent_type}\n- 开始: ${when(session.started_at)}\n- 最后: ${when(session.last_message_at)}\n- 消息数: ${messages.length}${omitted > 0 ? `(已省略前 ${omitted} 条,可用 tail=0 获取全量)` : ''}\n`
         const capNote = capped ? '\n\n> [已达输出上限,后面内容被省略 — 用 tail 参数收窄范围]' : ''
         return `${head}\n${session.summary ? `> 摘要: ${clip(session.summary, 200)}\n\n` : ''}${body}${capNote}`
       }
@@ -412,13 +430,13 @@ export function createMcpTools(deps: {
     {
       name: 'memory_search',
       description:
-        '全文检索会话/消息/记忆/笔记(trigram,支持中文),可按 kind、agent、项目、时间范围收窄;语义检索启用时,字面未命中的概念性查询会以「·语义」标注补足召回。列举会话(不按内容)用 memory_list_sessions。',
+        '全文检索会话/消息/记忆(trigram,支持中文),可按 kind、agent、项目、时间范围收窄;语义检索启用时,字面未命中的概念性查询会以「·语义」标注补足召回。列举会话(不按内容)用 memory_list_sessions。',
       inputSchema: {
         type: 'object',
         properties: {
           query: { type: 'string', description: '检索词' },
           limit: { type: 'number', description: '返回条数,默认 20,上限 100' },
-          kind: { type: 'string', enum: ['session', 'message', 'memory', 'note'], description: '只搜某类资产' },
+          kind: { type: 'string', enum: ['session', 'message', 'memory'], description: '只搜某类资产' },
           agent: { type: 'string', description: '按 agent 过滤(记忆含全局)' },
           project: { type: 'string', description: '项目名或路径关键词(作用于会话/消息)' },
           since: { type: 'number', description: '只看最近 N 天,如 7' }
@@ -430,7 +448,7 @@ export function createMcpTools(deps: {
         const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100)
         const kind = typeof args.kind === 'string' ? args.kind : undefined
         if (kind && !SEARCH_KINDS.has(kind)) {
-          return `参数错误:kind 必须是 session/message/memory/note`
+          return `参数错误:kind 必须是 session/message/memory`
         }
         const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
         const keyword = typeof args.project === 'string' && args.project.trim() ? args.project.trim() : undefined

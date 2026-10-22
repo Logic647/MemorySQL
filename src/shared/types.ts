@@ -51,6 +51,8 @@ export interface SessionSummaryRow {
   project: string | null
   startedAt: number | null
   endedAt: number | null
+  /** 最后一次对话时间(最新消息的 ts,秒);与开始时间并排显示,便于分辨久未续聊的会话 */
+  lastMessageAt: number | null
   messageCount: number
   toolCallCount: number
   titleLocked?: number
@@ -70,7 +72,7 @@ export interface MessageRow {
 }
 
 export interface SearchHit {
-  kind: 'session' | 'message' | 'memory' | 'note'
+  kind: 'session' | 'message' | 'memory'
   id: number
   sessionId?: number
   agentType?: AgentType

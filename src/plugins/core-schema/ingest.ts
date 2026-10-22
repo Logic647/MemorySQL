@@ -94,17 +94,17 @@ export function createIngestService(deps: IngestDeps): IngestService {
   )
   const stmtSessionIns = sqlite.prepare(`
     INSERT INTO sessions (agent_type, external_id, project_id, cwd, started_at, ended_at,
-                          title, summary, raw_path, content_hash, message_count, tool_call_count,
-                          updated_at, device_id)
+                          last_message_at, title, summary, raw_path, content_hash,
+                          message_count, tool_call_count, updated_at, device_id)
     VALUES (@agent_type, @external_id, @project_id, @cwd, @started_at, @ended_at,
-            @title, @summary, @raw_path, @content_hash, @message_count, @tool_call_count,
-            @updated_at, @device_id)
+            @last_message_at, @title, @summary, @raw_path, @content_hash,
+            @message_count, @tool_call_count, @updated_at, @device_id)
   `)
   const stmtSessionUpdate = sqlite.prepare(`
     UPDATE sessions SET project_id = @project_id, cwd = @cwd, started_at = @started_at,
-      ended_at = @ended_at, title = @title, summary = @summary, content_hash = @content_hash,
-      message_count = @message_count, tool_call_count = @tool_call_count, updated_at = @updated_at,
-      raw_path = COALESCE(@raw_path, raw_path)
+      ended_at = @ended_at, last_message_at = @last_message_at, title = @title, summary = @summary,
+      content_hash = @content_hash, message_count = @message_count, tool_call_count = @tool_call_count,
+      updated_at = @updated_at, raw_path = COALESCE(@raw_path, raw_path)
     WHERE id = @id
   `)
   // hash unchanged: only project/cwd/title may still need a refresh
@@ -254,6 +254,13 @@ export function createIngestService(deps: IngestDeps): IngestService {
       message_count: s.messages.length,
       tool_call_count: toolCalls
     }
+    // "last conversation time" = newest message timestamp; adapters that
+    // report no per-message ts fall back to the session's ended_at
+    const lastMessageAt =
+      s.messages.reduce<number | null>(
+        (max, m) => (m.ts != null && (max == null || m.ts > max) ? m.ts : max),
+        null
+      ) ?? s.endedAt ?? null
 
     if (existing) {
       const sessionId = existing.id
@@ -268,6 +275,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
           cwd: effectiveCwd,
           started_at: s.startedAt ?? null,
           ended_at: s.endedAt ?? null,
+          last_message_at: lastMessageAt,
           title,
           summary: summaryText,
           content_hash: contentHash,
@@ -293,6 +301,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
           cwd: effectiveCwd,
           started_at: s.startedAt ?? null,
           ended_at: s.endedAt ?? null,
+          last_message_at: lastMessageAt,
           title,
           summary: summaryText,
           raw_path: s.rawPath ?? null,

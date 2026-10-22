@@ -60,35 +60,12 @@ describe('search service — memory path', () => {
   })
 })
 
-describe('search service — note path', () => {
-  it('finds notes via notes_fts with kind=note', () => {
-    const db = freshDb()
-    for (const m of [
-      `CREATE TABLE notes (
-        id INTEGER PRIMARY KEY, rel_path TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
-        links TEXT NOT NULL DEFAULT '[]', tags TEXT NOT NULL DEFAULT '[]',
-        updated_at INTEGER NOT NULL, device_id TEXT, deleted INTEGER NOT NULL DEFAULT 0)`,
-      `CREATE VIRTUAL TABLE notes_fts USING fts5(title, content, tokenize='trigram')`
-    ]) {
-      db.exec(m)
-    }
-    const res = db
-      .prepare(`INSERT INTO notes (rel_path, title, updated_at) VALUES ('a.md', '架构笔记', 1)`)
-      .run() as { lastInsertRowid: number | bigint }
-    db.prepare(`INSERT INTO notes_fts (rowid, title, content) VALUES (?, '架构笔记', '双向链接与反向链接设计')`).run(
-      Number(res.lastInsertRowid)
-    )
-    const hits = createSearchService(db).searchAll('反向链接')
-    const hit = hits.find((h) => h.kind === 'note')
-    expect(hit).toBeDefined()
-    expect(hit?.title).toBe('架构笔记')
-  })
-
-  it('tolerates a database without notes tables', () => {
+describe('search service — 笔记已下线', () => {
+  it('不再返回 note 类命中(检索只剩会话/消息/记忆)', () => {
     const db = freshDb()
     addMemory(db, '没有笔记表时的记忆内容样例')
     const hits = createSearchService(db).searchAll('记忆内容样例')
     expect(hits.some((h) => h.kind === 'memory')).toBe(true)
-    expect(hits.some((h) => h.kind === 'note')).toBe(false)
+    expect(hits.some((h) => (h.kind as string) === 'note')).toBe(false)
   })
 })

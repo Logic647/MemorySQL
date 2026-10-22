@@ -83,7 +83,7 @@
 | `memory_get_project_brief` | 项目交接简报 |
 | `memory_list_sessions` | 会话枚举(项目/agent/时间过滤,带 id) |
 | `memory_get_session` | 完整消息时间线回读(full 模式去截断) |
-| `memory_search` | 全文检索会话/消息/记忆/笔记 + 本地语义补足 |
+| `memory_search` | 全文检索会话/消息/记忆 + 本地语义补足 |
 | `memory_write` | 写入长期记忆(agent 归因 / 标签 / 去重) |
 | `memory_log_progress` | 收工汇报 → 候选记忆 → 交接简报可见 |
 

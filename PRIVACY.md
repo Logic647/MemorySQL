@@ -10,7 +10,7 @@
 
 ## 一句话总结
 
-MemorySQL 会在你的电脑上**明文保存**你与所有 AI agent 的完整对话、你的个人记忆画像、笔记和项目状态;
+MemorySQL 会在你的电脑上**明文保存**你与所有 AI agent 的完整对话、你的个人记忆画像和项目状态;
 它会在**本机**开一个**无鉴权**的 MCP 端点供 agent 读取这些内容;启用 LLM 功能时会把**对话摘录**发给你配置的服务商;
 启用文件夹同步时会把**完整明文**写进你选的目录。**它不采集任何遥测,也不会把这些内容发给我们。**
 
@@ -20,13 +20,12 @@ MemorySQL 会在你的电脑上**明文保存**你与所有 AI agent 的完整�
 
 MemorySQL 自动监听本机已安装的 AI agent(Codex、ZCode、Claude Code、Gemini CLI、Cursor、OpenCode、
 Hermes、Qwen Code、Kimi CLI、CodeBuddy、WorkBuddy、Qoder 等),把它们产生的数据写入本地数据库
-(`%APPDATA%/memorysql/data/memory.db`)与 Markdown 笔记库。以下内容全部是**明文**:
+(`%APPDATA%/memorysql/data/memory.db`)与生成文件目录。以下内容全部是**明文**:
 
 | 类别 | 具体内容 |
 |---|---|
 | **agent 对话全文** | 你与 assistant 的每一轮消息、工具调用及其输出,以及解析器保留的原始附加数据 |
 | **个人记忆画像** | 从对话中提炼的人物画像、偏好、事实条目(`kind=fact/persona`) |
-| **笔记** | 手动创建的笔记 |
 | **项目状态** | 项目级 devlog:做到哪一步、下一步是什么、踩过什么坑 |
 | **配置派生内容** | agent 的配置结构、MCP 配置键、目录布局等(用于兼容性探测) |
 
@@ -53,7 +52,7 @@ Hermes、Qwen Code、Kimi CLI、CodeBuddy、WorkBuddy、Qoder 等),把它们产�
 | | 相对 dataDir 的路径 |
 |---|---|
 | 数据库 | `memory.db` |
-| 笔记库 | `vault/` |
+| 生成文件(项目日志 / 记忆分发) | `vault/` |
 | 设置 | `settings.json` |
 
 这是一个**可整体搬迁**的目录 —— 复制整个 `data\` 即可带走全部数据。

@@ -1,27 +1,21 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
-import { Brain, FileText, Settings2, Share2, History } from 'lucide-react'
+import { Brain, Settings2, History } from 'lucide-react'
 import appIcon from './assets/icon.png'
 import type { SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
 import MemoriesView from './MemoriesView'
 import SettingsView from './SettingsView'
-import NotesView from './NotesView'
-import GraphView from './GraphView'
 
-type View = 'sessions' | 'memories' | 'notes' | 'graph' | 'settings'
+type View = 'sessions' | 'memories' | 'settings'
 const VIEW_LABEL: Record<View, string> = {
   sessions: '会话',
   memories: '记忆',
-  notes: '笔记',
-  graph: '图谱',
   settings: '设置'
 }
 
 const VIEW_ICON: Record<View, typeof History> = {
   sessions: History,
   memories: Brain,
-  notes: FileText,
-  graph: Share2,
   settings: Settings2
 }
 const CAPTURE_PLUGINS: Array<{ id: string; label: string }> = [
@@ -44,6 +38,31 @@ function fmtTime(ts: number | null | undefined): string {
   return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false })
 }
 
+const pad2 = (n: number): string => (n < 10 ? `0${n}` : String(n))
+
+/** compact stamp for the dense session list: "10-22 13:02" */
+function fmtShort(ts: number | null | undefined): string {
+  if (!ts) return '—'
+  const d = new Date(ts * 1000)
+  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+/**
+ * "how long ago did this session last talk" — the signal that tells a session
+ * that started last week but ended this morning apart from one that has been
+ * quiet since the day it started. Beyond 30 days the relative form stops
+ * helping, so it falls back to the absolute short stamp.
+ */
+function fmtRelative(ts: number | null | undefined): string {
+  if (!ts) return '—'
+  const diff = Date.now() / 1000 - ts
+  if (diff < 60) return '刚刚'
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
+  if (diff < 86400 * 30) return `${Math.floor(diff / 86400)} 天前`
+  return fmtShort(ts)
+}
+
 function AgentBadge({ type }: { type: string }) {
   return <span className={`badge badge-${type}`}>{type}</span>
 }
@@ -59,6 +78,7 @@ export default function App() {
   const [scanning, setScanning] = useState(false)
   const [devlogBusy, setDevlogBusy] = useState(false)
   const [devlogNote, setDevlogNote] = useState<string | null>(null)
+  const [devlogDir, setDevlogDir] = useState<string | null>(null)
   const [mcp, setMcp] = useState<{ port: number; running: boolean; toolCount: number } | null>(null)
   const [kbMsg, setKbMsg] = useState('')
   const [importOpen, setImportOpen] = useState(false)
@@ -161,12 +181,12 @@ export default function App() {
     })
   }, [])
 
-  // Ctrl+1..5 switch views (command-driven navigation)
+  // Ctrl+1..3 switch views (command-driven navigation)
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
       if (!e.ctrlKey || e.shiftKey || e.altKey) return
-      const views: View[] = ['sessions', 'memories', 'notes', 'graph', 'settings']
-      const i = ['1', '2', '3', '4', '5'].indexOf(e.key)
+      const views: View[] = ['sessions', 'memories', 'settings']
+      const i = ['1', '2', '3'].indexOf(e.key)
       if (i >= 0) {
         e.preventDefault()
         setView(views[i])
@@ -216,6 +236,14 @@ export default function App() {
           ? `已生成 ${res.files.length} 个项目日志 → vault/devlog/`
           : (res.message ?? '没有可生成的项目')
       )
+      // the vault is no longer an in-app note library — the generated files
+      // are only reachable from disk, so offer the folder right away
+      if (res.files.length > 0) {
+        void api
+          .paths()
+          .then((pp) => setDevlogDir(pp.devlogDir))
+          .catch(() => setDevlogDir(null))
+      }
       await refresh()
     } catch {
       setDevlogNote('生成失败')
@@ -364,7 +392,15 @@ export default function App() {
             </span>
           )}
           <span className="sess-id">#{s.id}</span>
-          <span className="session-time">{fmtTime(s.startedAt)}</span>
+          <span className="session-time" title={`会话开始: ${fmtTime(s.startedAt)}`}>
+            开始 {fmtShort(s.startedAt)}
+          </span>
+          <span
+            className="session-time session-time-last"
+            title={`最后一次对话: ${fmtTime(s.lastMessageAt)}`}
+          >
+            最后 {fmtRelative(s.lastMessageAt)}
+          </span>
         </div>
         {s.summary && <div className="session-summary">{s.summary.split('\n')[0]}</div>}
         <div className="session-meta">
@@ -405,7 +441,7 @@ export default function App() {
           <img className="brand-icon" src={appIcon} alt="MemorySQL" />
         </div>
         <div className="rail-nav">
-          {(['sessions', 'memories', 'notes', 'graph'] as View[]).map((v) => {
+          {(['sessions', 'memories'] as View[]).map((v) => {
             const Icon = VIEW_ICON[v]
             return (
               <button key={v} className={`rail-btn ${view === v ? 'active' : ''}`} aria-label={VIEW_LABEL[v]} onClick={() => setView(v)}>
@@ -464,6 +500,15 @@ export default function App() {
           {devlogBusy ? '生成中…' : '生成项目日志'}
         </button>
         {devlogNote && <span className="devlog-note">{devlogNote}</span>}
+        {devlogNote && devlogDir && (
+          <button
+            className="btn btn-small"
+            title={devlogDir}
+            onClick={() => void api.openPath(devlogDir)}
+          >
+            打开日志目录
+          </button>
+        )}
       </header>
 
       {upBanner && (upBanner.downloaded || upBanner.available) && (
@@ -588,10 +633,6 @@ export default function App() {
 
         {view === 'memories' ? (
           <MemoriesView />
-        ) : view === 'notes' ? (
-          <NotesView />
-        ) : view === 'graph' ? (
-          <GraphView />
         ) : view === 'settings' ? (
           <SettingsView />
         ) : (
@@ -610,7 +651,7 @@ export default function App() {
                     <div className="hit-head">
                       <AgentBadge type={h.agentType ?? '?'} />
                       <span className="hit-kind">
-                        {({ session: '会话', message: '消息', memory: '记忆', note: '笔记' } as const)[h.kind]}
+                        {({ session: '会话', message: '消息', memory: '记忆' } as const)[h.kind]}
                       </span>
                       <span className="hit-title">{h.title ?? ''}</span>
                     </div>
@@ -798,6 +839,7 @@ export default function App() {
                     </button>
                     {selected.session.project && <span>项目: {selected.session.project}</span>}
                     <span>开始: {fmtTime(selected.session.started_at)}</span>
+                    <span>最后: {fmtTime(selected.session.last_message_at)}</span>
                     <span>
                       消息: {selected.messages.length}
                       {selected.total > selected.messages.length ? ` / ${selected.total}` : ''}
@@ -884,7 +926,10 @@ export default function App() {
                       }}
                     >
                       <span className="sess-id">#{r.id}</span> {r.title ?? '(无标题)'}
-                      <span className="session-time">{fmtTime(r.startedAt)}</span>
+                      <span className="session-time">{fmtShort(r.startedAt)}</span>
+                      <span className="session-time session-time-last">
+                        最后 {fmtRelative(r.lastMessageAt)}
+                      </span>
                     </button>
                   ))}
               </div>

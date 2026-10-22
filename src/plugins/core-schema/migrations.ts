@@ -132,5 +132,25 @@ CREATE INDEX idx_sessions_archived ON sessions(archived, deleted);
 ALTER TABLE sessions ADD COLUMN sort_key REAL;
 CREATE INDEX idx_sessions_sort ON sessions(project_id, sort_key);
 `
+  },
+  {
+    version: 7,
+    up: `
+-- v7: last conversation time (最后一次对话时间).
+-- sessions.ended_at is adapter-supplied and often absent; what actually
+-- answers "when did this session last talk" is the newest message ts.
+-- Backfill from the messages already stored; sessions without timestamps fall
+-- back to ended_at, and stay NULL when neither is known.
+ALTER TABLE sessions ADD COLUMN last_message_at INTEGER;
+
+UPDATE sessions
+   SET last_message_at = COALESCE(
+         (SELECT MAX(m.ts) FROM session_messages m WHERE m.session_id = sessions.id),
+         ended_at
+       )
+ WHERE last_message_at IS NULL;
+
+CREATE INDEX idx_sessions_last ON sessions(last_message_at);
+`
   }
 ]

@@ -15,7 +15,6 @@ type Category = (typeof CATEGORIES)[number]
 
 const PLUGIN_DESC: Record<string, string> = {
   'core-schema': '核心数据层 —— 表结构、会话入库、全文检索',
-  'core-vault': '笔记库 —— Markdown 笔记、双向链接、知识图谱',
   'core-launcher': '开机自启动 —— 写入系统登录项,可选启动后驻留托盘',
   'capture-codex': 'Codex CLI 会话捕获',
   'capture-zcode': 'ZCode 会话捕获',
@@ -37,7 +36,7 @@ const PLUGIN_DESC: Record<string, string> = {
   'sync-folder': '增量同步 —— 通过网盘文件夹多机合并',
   'memory-core': '记忆管理 —— 增删改、LLM 精炼、冲突检测',
   'memory-dispatch': '记忆分发 —— 生成各 agent 可用的记忆文件',
-  'project-devlog': '自动项目日志 —— vault/devlog 按项目生成',
+  'project-devlog': '自动项目日志 —— 按项目生成 Markdown 日志文件(vault/devlog)',
   'semantic-search': '语义检索 —— 本地向量模型,字面未命中时补足召回',
   'summarizer-llm': 'LLM 摘要引擎(可选,自动降级)',
   'summarizer-rules': '本地规则摘要(默认,零依赖)'
@@ -132,7 +131,7 @@ export default function SettingsView() {
             <section>
               <h3>存储位置</h3>
               <p className="hint">
-                整个知识库(数据库 + 笔记 + 设置)的存放目录。迁移会复制全部数据到新目录并在重启后切换,原目录保留可回退。
+                整个知识库(数据库 + 生成文件 + 设置)的存放目录。迁移会复制全部数据到新目录并在重启后切换,原目录保留可回退。
               </p>
               <label className="field">
                 <span>新目录</span>
@@ -567,7 +566,6 @@ function BackupPathsSection({ onMsg }: { onMsg: (s: string) => void }) {
       <h3>备份与生成文件位置</h3>
       <p className="hint">
         「导出备份」(.msqlv 快照)与「记忆分发」的写入目录,均可自定义;导出完成后会自动打开对应文件夹。
-        注意:分发目录若移出 vault,将不再进入笔记自动检索。
       </p>
       {paths && (
         <>

@@ -4,6 +4,38 @@
 
 ---
 
+## 2026-10-22 · 下线「笔记」与「知识图谱」+ 新增「最后一次对话时间」
+
+**背景:** 用户长期使用后判断这两个功能实用性不高,要求去掉,并顺带减体积;同时要求「在每个会话的开始时间处再添加一个最后一次对话时间,方便用户分辨」。
+
+**一、笔记与知识图谱下线(产品层收缩)**
+- **删除 `core-vault` 插件**(`index.ts` / `note-parser.ts` / `migrations.ts`):Markdown 笔记库、`[[wikilink]]` 双向链接、标签、笔记 FTS、vault watcher 一并消失
+- **删除 `GraphView`**(cytoscape 力导向图)——图谱的数据源本来就是笔记的链接关系,笔记没了图谱没有意义
+- **删除 `NotesView`**(CodeMirror 6 Markdown 编辑器)——`@codemirror/view|state|lang-markdown`、`codemirror`、`cytoscape`、`@types/cytoscape` 四个依赖随之从 package.json 移除(package-lock 同步减 295 行)
+- **检索域收缩**:`SearchHit.kind` 去掉 `'note'`,`search.ts` 删掉笔记分支(连同「探测 notes_fts 是否存在」的兜底),MCP `memory_search` 的 `kind` 枚举改为 `session/message/memory`(老 agent 传 `kind=note` 会得到明确报错而不是静默空结果)
+- **UI 随删随调**:左侧导航只剩「会话 / 记忆」两个入口(设置仍在底部),快捷键 `Ctrl+1..5` 改为 `Ctrl+1..3`,命中类型标签、秒搜占位符、设置页插件说明、存储位置文案同步清理;`styles.css` 删掉 `notes-*` / `graph-*` / `cm-container` 等无用规则
+- **vault 目录语义变更**:不再是「被索引的笔记库」,而是**纯生成文件目录**(`devlog/` 项目日志 + `dispatch/` 记忆分发)。为不让「生成项目日志」变成看不见的死功能,生成后顶栏直接给一个「打开日志目录」按钮
+- **旧数据不删**:已存在的 `notes` / `notes_fts` 表留在库里(不 DROP、不丢历史笔记文件),只是不再被读写;迁移版本号不回退,已装机的库直接跳过
+
+**二、最后一次对话时间(`sessions.last_message_at`)**
+- **新列 + 迁移 v7**:`ALTER TABLE sessions ADD COLUMN last_message_at`,并从 `MAX(session_messages.ts)` 回填旧库,无消息时间戳的回落到 `ended_at`,两者皆无则留 NULL(**不写 0**,0 会被当成 1970 年)
+- **写入侧**:`ingest.ts` 入库/更新时取消息里的最大 `ts`;`sync-folder` 同步合并时从同步过来的消息自行推导(**不改 bundle 格式**,避免跨版本字段漂移)
+- **读侧**:会话列表 `sessions:list` 带出 `lastMessageAt`;MCP `memory_list_sessions` 的会话行加 `[最后 …]`,`memory_get_session` 头部加 `- 最后: …` —— agent 也能一眼分出「上周开始但今早还在聊」的会话
+- **展示**:会话行 = `开始 10-21 21:46`(紧凑绝对时间)+ `最后 刚刚 / 3 小时前 / 5 天前`(相对时间,超过 30 天回落绝对),两个时间都带 title 提示完整值;会话详情页用完整绝对时间并列「开始 / 最后」
+
+**三、体积(实测)**
+- renderer 产物 **2,789,563 → 677,529 字节(-75.7%)**;`out/renderer` 整目录 2.8MB → 725KB
+- 打包体积相应减少约 2MB(win NSIS 105.5MB → 约 103.5MB,待发版实测)
+- 注:笔记/图谱两个功能本身是纯 TS 代码,**体积大头其实是它们拖进来的 CodeMirror + cytoscape**(Vite 会把 devDependencies 打进 renderer bundle)——这才是删掉它们真正省下来的部分
+
+**验证:** typecheck 零错 / vitest **385:385**(36 文件;新增 `test/last-activity.test.ts` 6 例,删除 `test/note-parser.test.ts`)/ 真实库副本跑迁移 v7 成功:**264 个会话全部回填,0 个 NULL,212 个「最后 > 开始」**;`import:scan` 12 个捕获插件无回归;**真机 GUI 验收**(隔离 profile 启动 dev 构建)——导航只剩两个入口、会话行两个时间都在、详情页「开始/最后」并列,截图确认无错位
+
+**遗留:**
+- `notes` / `notes_fts` 表仍留在用户库里(不主动删数据);如需彻底清空可在后续版本加一次性 DROP
+- 尚未发版,装机用户暂时看不到新 UI
+
+---
+
 ## 2026-10-22 · 安全扫描整改:22 → 0 条(Mimosa L3 深度扫描全清)
 
 **背景:** 会话级 Mimosa 安全守卫在**提交工作区之外的仓库**时,会先扫描本工作区;发现高危即强制拦截(本机 gh 提交另一个项目时被它挡下,`--no-verify` 无效——它不是 git hook)。先摸清告警构成,再逐条整改。

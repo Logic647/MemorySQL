@@ -13,9 +13,9 @@ interface ProjectRow {
 /**
  * Auto DEVLOG: keeps one generated Markdown log per project in
  * vault/devlog/, assembled from captured sessions (timeline) and memories
- * (decisions / pending progress). Written into the vault, so core-vault's
- * watcher indexes it automatically — the loop "project files <-> knowledge
- * base" starts here. Regeneration is fully rule-based and idempotent.
+ * (decisions / pending progress). The vault is no longer an indexed note
+ * library — these are plain files the user opens from disk (the app links
+ * straight to the folder). Regeneration is fully rule-based and idempotent.
  */
 const plugin: MemorySQLPlugin = {
   manifest: {

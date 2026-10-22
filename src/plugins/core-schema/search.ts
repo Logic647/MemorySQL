@@ -2,13 +2,13 @@ import type Database from 'better-sqlite3'
 import type { SearchHit } from '../../shared/types'
 
 export interface SearchFilters {
-  /** only query these sources; omitted = all four */
+  /** only query these sources; omitted = all three */
   kinds?: Array<SearchHit['kind']>
   /** sessions/messages by agent; memories include global (NULL) rows too */
   agent?: string
   /** sessions/messages scoped to a resolved project id */
   projectId?: number
-  /** epoch-seconds cutoff; memories/notes compare their ms timestamps internally */
+  /** epoch-seconds cutoff; memories compare their ms timestamps internally */
   sinceSec?: number
 }
 
@@ -19,12 +19,6 @@ export interface SearchService {
 const quoteMatch = (query: string): string => `"${query.replace(/"/g, '""')}"`
 
 export function createSearchService(sqlite: Database.Database): SearchService {
-  // notes/notes_fts belong to core-vault's migration — probe per call so a
-  // database without them (plugin disabled) simply yields no note hits
-  const notesExist = sqlite.prepare(
-    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'notes_fts'`
-  )
-
   return {
     searchAll(q: string, limit = 40, filters: SearchFilters = {}): SearchHit[] {
       const query = q.trim()
@@ -215,51 +209,7 @@ export function createSearchService(sqlite: Database.Database): SearchService {
       }
 
       // ---- notes ----------------------------------------------------------
-      if (want('note') && notesExist.get()) {
-        const where = ['n.deleted = 0']
-        const params: unknown[] = []
-        if (sinceSec != null) {
-          where.push('n.updated_at >= ?')
-          params.push(sinceSec * 1000)
-        }
-        if (query.length >= 3) {
-          const rows = sqlite
-            .prepare(
-              `SELECT n.id, n.title, snippet(notes_fts, 1, '«', '»', '…', 8) AS snip
-               FROM notes_fts f JOIN notes n ON n.id = f.rowid
-               WHERE notes_fts MATCH ? AND ${where.join(' AND ')}
-               LIMIT ?`
-            )
-            .all(quoteMatch(query), ...params, limit) as Array<Record<string, unknown>>
-          for (const r of rows) {
-            hits.push({
-              kind: 'note',
-              id: r.id as number,
-              title: r.title as string,
-              snippet: r.snip as string,
-              rank: hits.length
-            })
-          }
-        } else {
-          const like = `%${query}%`
-          const rows = sqlite
-            .prepare(
-              `SELECT n.id, n.title FROM notes n
-               WHERE ${where.join(' AND ')} AND n.title LIKE ?
-               ORDER BY n.updated_at DESC LIMIT ?`
-            )
-            .all(...params, like, limit) as Array<Record<string, unknown>>
-          for (const r of rows) {
-            hits.push({
-              kind: 'note',
-              id: r.id as number,
-              title: r.title as string,
-              snippet: r.title as string,
-              rank: hits.length
-            })
-          }
-        }
-      }
+      // (笔记与知识图谱已下线 —— 检索只剩会话/消息/记忆三类)
 
       return hits.slice(0, limit)
     }
