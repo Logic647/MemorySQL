@@ -1,5 +1,7 @@
 # V2EX 首发帖(分享创造节点)
 
+> ⚠️ **本文案停留在 v0.5.0 时代**(写于 2026-09-13):「10 家 agent」已过时(现 12 家,新增 WorkBuddy / Qoder CLI)、平台描述与版本号也旧。本轮发帖用 [juejin.md](juejin.md) / [csdn.md](csdn.md) / [zhihu.md](zhihu.md) 的现况口径;若仍想发 V2EX,先按新文案刷新数字。
+>
 > 发布前:把 `〔图:xx〕` 替换为实际贴图(图见 [screenshots.md](screenshots.md)),删掉所有引用块。标题选一个,别带「开源」「求 star」以外的营销词。
 
 ## 标题候选(选一)
