@@ -551,7 +551,6 @@ export default function App() {
                 onClick={() => setView(v)}
               >
                 <Icon size={18} strokeWidth={1.8} />
-                <span className="rail-btn-label">{VIEW_LABEL[v]}</span>
               </button>
             )
           })}
