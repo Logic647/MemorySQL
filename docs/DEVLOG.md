@@ -32,6 +32,9 @@
 
 **README 同步**:特性列表删掉「笔记 + 图谱」、加「最后一次对话时间」、加 v0.6.0 变更说明(含「升级不丢数据」);`02-sessions.png` 与 `03-session-detail.png` 重新截图(旧图还带着四个导航图标和单个时间戳)。
 
+**发版收尾(踩坑)**:`publish-release.mjs` 转正后**mac 三件套没进 release**——CI 的 mac artifact 里明明有 dmg/zip/latest-mac.yml,但 `electron-builder publish` 只把 `.dmg.blockmap` 传上去了(与 DEVLOG 早前记的「publish 常只传 blockmap」同一个坑)。从 artifact 下载补传后 11 个资产齐全,`latest-mac.yml` 的 sha512/size 与实际文件逐项校验通过。
+**遗留:mac 的 `zip.blockmap` 仍未上传** —— 它只影响**差分更新效率**(mac 用户仍能收到更新,只是下载完整 zip),且 `latest-mac.yml` 不引用它,不影响正确性。下次 mac 打包时留意一并补传。
+
 ---
 
 ## 2026-10-23 · 拖拽会话时列表无法滚动 → 边缘自动滚动
