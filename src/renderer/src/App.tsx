@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Brain, Settings2, History } from 'lucide-react'
 import appIcon from './assets/icon.png'
 import type { SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type Overview, type SessionDetail } from './api'
+import { edgeScrollDelta } from './drag-autoscroll'
 import MemoriesView from './MemoriesView'
 import SettingsView from './SettingsView'
 
@@ -82,6 +83,67 @@ function AgentBadge({ type }: { type: string }) {
   return <span className={`badge badge-${type}`}>{type}</span>
 }
 
+/**
+ * Drag near the top/bottom edge of a scrollable list and it scrolls for you.
+ *
+ * The wheel does not work while an HTML5 drag is in flight — the browser owns
+ * the pointer once dragstart fires, so the only way to reach sessions beyond
+ * the fold is to scroll the container from code. The per-frame math lives in
+ * ./drag-autoscroll (unit-tested there); this hook is the DOM side.
+ *
+ * onEdgeHover(id, below) reports the row currently under the pointer while the
+ * list scrolls under it, so the drop indicator follows the drag instead of
+ * freezing on whatever row happened to be there when the scrolling began.
+ */
+function useDragAutoScroll(
+  scrollRef: React.RefObject<HTMLDivElement | null>,
+  active: boolean,
+  onEdgeHover: (id: number, below: boolean) => void
+): void {
+  // keep the callback in a ref so the effect does not restart every render
+  const hoverRef = useRef(onEdgeHover)
+  hoverRef.current = onEdgeHover
+
+  useEffect(() => {
+    if (!active) return
+    const el = scrollRef.current
+    if (!el) return
+    let raf = 0
+    let x = 0
+    let y = 0
+
+    const track = (e: PointerEvent): void => {
+      x = e.clientX
+      y = e.clientY
+    }
+    const tick = (): void => {
+      const delta = edgeScrollDelta(y, el.getBoundingClientRect())
+      if (delta !== 0) {
+        const before = el.scrollTop
+        el.scrollTop += delta
+        // the list moved under a stationary pointer: re-read the row so the
+        // drop indicator tracks the drag instead of sticking to one row
+        if (el.scrollTop !== before) {
+          const row = document.elementFromPoint(x, y)?.closest('.session')
+          const id = Number(row?.getAttribute('data-id'))
+          if (id) {
+            const r = (row as HTMLElement).getBoundingClientRect()
+            hoverRef.current(id, y - r.top > r.height / 2)
+          }
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+
+    window.addEventListener('pointermove', track, true)
+    raf = requestAnimationFrame(tick)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('pointermove', track, true)
+    }
+  }, [scrollRef, active])
+}
+
 export default function App() {
   const [filter, setFilter] = useState<string>('all')
   const [sessions, setSessions] = useState<SessionSummaryRow[]>([])
@@ -110,6 +172,13 @@ export default function App() {
   const [expandedChains, setExpandedChains] = useState<Set<number>>(new Set())
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [dropLine, setDropLine] = useState<{ afterId: number; below: boolean } | null>(null)
+  /** the scrolling session list — drag auto-scroll needs its DOM node */
+  const sessionListRef = useRef<HTMLDivElement | null>(null)
+  // dragging: the wheel is dead during an HTML5 drag, so the list scrolls itself
+  // when the pointer nears its top/bottom edge
+  useDragAutoScroll(sessionListRef, draggingId != null, (id, below) =>
+    setDropLine((prev) => (prev?.afterId === id && prev.below === below ? prev : { afterId: id, below }))
+  )
   const [upBanner, setUpBanner] = useState<{
     available?: boolean
     version?: string
@@ -711,7 +780,7 @@ export default function App() {
                   显示已归档
                 </label>
               </div>
-              <div className="session-list">
+              <div className="session-list" ref={sessionListRef}>
                 {(() => {
                   // group by project; a relay session always sits right after
                   // the session it continues (chain order, multi-hop safe)
