@@ -1,40 +1,40 @@
-# MemorySQL 宣传片分镜脚本(v0.6.0 · 2026-10-24)
+# MemorySQL 宣传片 · 动画版分镜脚本(v2 · 2026-10-24)
 
-> 成片目标:约 31 秒,1920×1080@30fps,横屏,无声旁白(原因见文末「交付边界」)。
-> 画面素材全部来自 `design/screenshots/` 的 v0.6.0 真实界面截图;文案口径与五平台发帖文案一致。
-> 剪映可编辑源:渲染完成后按 `out/report.md` 说明导入;本文件即分镜表,时间轴改动只改这里。
+> 替代同日早间的截图版(用户否定,材料已全部清理)。**全片无截图无实拍,纯程序化动画**:
+> PIL 逐帧绘制 + ffmpeg 合成,1920×1080@30fps,**34 秒**。
+> 设计语言:深蓝夜空渐变底(#0A0E1C→#111930)+ 蓝紫点缀(#7C84FF)+ 缓慢上漂微粒;微软雅黑 Bold 标题 / Regular 正文 / Consolas 代码;统一 ease-out 缓动,胶囊/数字用 ease-back 弹入。
 
-## 一、分镜表
+## 分镜表
 
-| # | 时间 | 时长 | 画面 | 字幕(烧录) | 音效/音乐 |
-|---|---|---|---|---|---|
-| 0 | 0.0–3.5s | 3.5s | 深色底 + MemorySQL logo 居中,轻微放大 | **MemorySQL**<br>面向个人开发者的本地优先知识库 | BGM 淡入(2s) |
-| 1 | 3.5–7.5s | 4.0s | 会话库总览(02-sessions.png,12 家 agent 列表 + 会话行「开始/最后」双时间) | 12 家 AI agent 的会话<br>自动捕获,本地可搜 | BGM 连续 |
-| 2 | 7.5–11.5s | 4.0s | 会话详情(03-session-detail.png,完整消息时间线) | 完整消息时间线<br>随时回读任意一段 | BGM 连续 |
-| 3 | 11.5–15.5s | 4.0s | 记忆库(04-memories.png,画像/偏好/事实/决策 + agent 维度) | 你的画像与长期记忆<br>按 agent 维度沉淀 | BGM 连续 |
-| 4 | 15.5–20.0s | 4.5s | 终端 MCP 续接包(01-context-handoff.png,`memory_get_context` 返回) | 新会话一句「续接」<br>上下文全部回来 | BGM 连续 |
-| 5 | 20.0–23.5s | 3.5s | 语义检索(06-quicksearch.png,秒搜浮层) | 全文 + 语义双路检索<br>字面搜不到也能召回 | BGM 连续 |
-| 6 | 23.5–27.0s | 3.5s | 连接向导(07-connect-wizard.png,一键连接按钮矩阵) | 一键写入 agent 配置<br>连上就能用 | BGM 连续 |
-| 7 | 27.0–31.0s | 4.0s | 深色底 + logo + 三平台安装信息 | MemorySQL · 本地优先<br>Windows / macOS / Linux | BGM 淡出(3s) |
+| # | 时间 | 场景 | 画面与动效 | 文案 |
+|---|---|---|---|---|
+| S1 | 0.0–4.5s | 开场 | logo 弹入(overshoot 1.1×)→主标题上滑淡入→副标题→三枚胶囊依次浮入 | **MemorySQL** / 面向个人开发者的本地优先知识库 / 「自动捕获 · 一次续接 · 本地优先」 |
+| S2 | 4.5–10.0s | 痛点 | 标题→5 枚 agent 胶囊错落浮入(Codex/Claude Code/ZCode/Hermes/OpenCode)→每枚右上角弹出红 ✕ 徽章(150ms 步进)→底部三条带红 × 的短语依次出现 | 换一个 agent,就得重新来一遍 / ×重复铺垫背景 ×丢掉当前进度 ×忘记关键决策 |
+| S3 | 10.0–15.5s | 捕获 | 左上小 logo + 标题→**12 家 agent 胶囊 4×3 网格逐个弹入**(90ms 步进)→大数字「12」弹性放大→底注 | 会话自动捕获,一个不落 / **12** 家 agent 全覆盖 / 增量监听 · 零手动操作 |
+| S4 | 15.5–23.0s | 核心卖点 | 终端窗体上滑(红黄绿三点 + 标题)→「续接 MemorySQL」**逐字打出**(光标闪烁)→4 行输出带绿 ✓ 逐条滑入→紫色高亮胶囊弹出 | `> 续接 MemorySQL` / ✓开发者画像 ✓长期记忆 ✓项目状态 ✓最近会话(含交接摘要) / **一次调用,上下文全部回来** / 7 个 MCP 工具 · 连接即续接 |
+| S5 | 23.0–28.5s | 本地优先 | 标题→三枚横条左滑入(SQLite 明文 / 本地 ONNX 离线 / 零服务器)→灰色披露行 | 数据 100% 留在本机 / SQLite 本地存储 · 明文可读 / 语义检索 · 本地 ONNX 离线推理 / 除 LLM API 可选项外,零服务器依赖 / 明文与本地端点的完整披露 · 见 PRIVACY.md |
+| S6 | 28.5–34.0s | CTA | 三平台胶囊弹入→GitHub 仓库行(等宽字)→托盘说明→logo + 品牌 + 口号收尾,光晕缓亮 | Windows / macOS / Linux / `github.com/Logic647/MemorySQL` / 安装即驻留托盘 · MCP 持续在线 / 本地优先 · 连接即续接 |
 
-合计 31.0s,8 个镜头,镜头间用 0.3–0.5s 交叉淡化(renderer 以 clip 级 fade 实现)。
+转场:场景共用同一背景,场景层首尾 0.3s/0.4s 淡入淡出形成交叉淡化;全片头 0.5s 从黑淡入、尾 0.6s 淡出到黑。
 
-## 二、转场与节奏
+## 音频(合成,无版权风险)
 
-- 每个画面片段自带 `transition_in`/`transition_out` = fade 0.4s(与相邻片段重叠出交叉淡化观感)。
-- 字幕为底部居中深色半透明底条,字号 44,白色,微软雅黑。
-- BGM 为 ffmpeg 合成的四正弦叠加轻电子底乐,无版权风险,`out/bgm/bgm.wav`,与成片等长 31s,全片 volume 0.5。
-- 无对白、无音效点缀——刻意保持「工具演示片」的干净;要加音效在剪映里补即可。
+numpy 合成弦乐垫:Am→F→C→G 四和弦各 8.5s,正弦基频 + 25% 八度泛音,左右声道 ±0.12% 失调展宽;每个和弦起点有 4 音琶音拨弦点缀;全片 1.6s 淡入、2s 淡出,峰值归一 -13dB 左右。**无旁白**——官方 TTS 通道仅对 ZCode 宿主内 MCP 调用开放(CLI 直调返回 `coding_plan_required`,死能力不伪造,详见 out/report.md)。
 
-## 三、文案口径核对(与发帖文案一致)
+## 文案口径(与发帖文案一致)
 
-- 「12 家 agent」:Codex / ZCode / Claude Code / Hermes / Qwen Code / Kimi CLI / CodeBuddy / WorkBuddy / Qoder CLI / Gemini CLI / Cursor / OpenCode。
-- 「一键写入 agent 配置」对应连接向导的「一键连接」。
-- 隐私口径不在视频里展开(时长不够),片尾口播文案层面也不提——视频是引流件,披露以 PRIVACY.md 与发帖正文为准。
+- 12 家 agent 名单与 README 一致:Codex / ZCode / Claude Code / Hermes / Qwen Code / Kimi CLI / CodeBuddy / WorkBuddy / Qoder CLI / Gemini / Cursor / OpenCode。
+- 终端演示里的项目名沿用公开演示库的 `caffeine-tracker`(docs/DEMO.md 的合成演示,非真实项目,可公开)。
+- 隐私行明写「明文 / 本地端点 / 见 PRIVACY.md」——与 README/PRIVACY.md 口径一致,不做无披露宣传。
+- 不出现 winget(审核中),安装引导只给 GitHub Releases 与仓库地址。
 
-## 四、交付边界(如实说明)
+## 产物与重渲
 
-1. **本片无 AI 旁白**:官方 TTS 通道只对 ZCode 宿主内 MCP 调用开放(身份头由宿主逐调用注入),CLI/直连端点均返回 `coding_plan_required`/`no permission`。旁白属死能力,未伪造。
-2. **字幕已烧录**:所有字幕文字走 timeline text 轨由 ffmpeg drawtext 烧录,剪映打开后仍可在文字轨二次编辑。
-3. **BGM 为合成音**:非商用曲库素材,规避版权问题;听感平淡,用户可在剪映里换成正式 BGM(时间轴不变)。
-4. 截图 06(秒搜)为 2026-10-08 截图的旧版 UI(单色顶栏),07(连接向导)缺 WorkBuddy/Qoder 两行——两者均为本机真实界面,非合成;若追求完全同步,重截这两张后重跑 `out/segments/build_segments.sh` 即可。
+| 产物 | 说明 |
+|---|---|
+| `out/anim/promo.mp4` | 成片(34s) |
+| `out/anim/render.py` | 渲染器:`python render.py` 全量渲染(约 2–3 分钟);`python render.py --preview` 出 6 张关键帧 PNG 快速检查 |
+| `out/anim/make_bgm.py` | BGM 合成,产出 `out/anim/bgm.wav` |
+| `out/anim/preview_f*.png` | 关键帧检查图 |
+
+改脚本 = 改 `render.py` 顶部的场景时间窗与 `s1()`–`s6()` 函数;本分镜表是唯一事实源。渲染器与成片都在 `out/`(gitignore,机器本地),入库的只有本文件——渲染器丢失时按本表重写即可。
