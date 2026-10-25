@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-10-25 · Tauri 评估落地:最小 spike 实测(体积结论强化、内存收益有限,维持「现在不迁」)
+
+**背景:** v0.7.0 发版后按既定计划执行 Tauri 评估的实测部分——`docs/tauri-feasibility.md` 文末设想的「托盘 + MCP 服务 + 读库」三件事 spike,当天做完并回写文档(新增「Spike 实测」节)。
+
+**产物:** `out/tauri-spike/`(gitignored,不进库):Tauri 2 最小应用(托盘常驻/关窗隐藏 + rusqlite bundled SQLite **只读打开真实库副本** + FTS5 trigram 探针 UI,静态 ui/ 无 bundler)+ Node 侧车(better-sqlite3 开同一快照,`/health` + MCP 形状 `/mcp`,tools/call 真查 FTS 与 sessions,`memory_search('Tauri')` 真实命中)。
+
+**实测数字(详见 tauri-feasibility.md「Spike 实测」节):**
+- 壳 exe **4.03MB**(含托盘+SQLite+FTS5),NSIS 安装包 **1.58MB**(downloadBootstrapper 口径)——远低于原估 15-25MB
+- 路线 B 合计压缩口径 **≈38MB**(壳 1.58 + 侧车 zip 36.5MB,node.exe 87.4MB 原始独占压缩后 ~31MB)vs 原估 55-65MB
+- 内存(托盘驻留,PowerShell CIM 同时刻实测):spike 全树 363MB WS / **152MB private**(壳 25.7 + WebView2 六进程 ~337);侧车单进程 62MB WS / 25MB;Electron 0.7.0 装机版对照 510MB WS / **406MB private**——**换栈内存只省约六成,且功能不对等(spike 无任何插件/watcher/MCP 全量逻辑),WebView2 并不比 Electron 轻多少,「换栈省内存」直觉不成立**
+- **结论维持「现在不迁」**:体积收益比原估更大,但 99.5MB 现状不痛;真正的成本项(13 家捕获解析器、60+ IPC、更新链路、外部插件机制)spike 不覆盖。将来立项从 `out/tauri-spike/` 骨架续做,2 周 spike 范围缩小为「迁移 1-2 家真实捕获解析器(建议 hermes+zcode,一文件一库两形态)+ 更新链路对齐」
+
+**本轮踩坑(新的):**
+1. **WAL 库只读连接不能改 `journal_mode`**——pragma 本质是写操作,报 `SQLITE_IOERR_LOCK`;只读副本直接查(SQLite 3.22+ 支持无 -wal 的只读 WAL 打开,better-sqlite3 `readonly:true` 实测可开)
+2. trigram 分词器查询词 **≥3 字符**才有命中,两字词(如「项目」)0 条是正确行为——MCP `memory_search` 早有此规则,Rust/Node 两侧 bundled SQLite 行为一致
+3. `memories_fts` 的 FTS5 列名是 `content`(不是源表列名 `memory`)
+4. exe 被驻留进程锁定时 `tauri build` 报 `os error 5` 拒绝访问——先 taskkill 再打包;且管道 `tail` 会吞真实退出码,让失败看起来像成功(「失败要像失败」家族 +1)
+5. Mimosa 拦「argv/env 路径 → `Command::new`/fs」污点流(spike 原设计的 `--with-sidecar` 运行时拉侧车被拒)——按既有「切断污点源」经验改为编译期常量路径 + 侧车独立进程测量,反而更贴合评估需要(壳不负责拉侧车,路线 B 本就用 externalBin 机制)
+6. 环境事实:本机 **VS2026 MSVC 现成**(G 盘,vswhere 确认),rustup minimal + stable-msvc 一次装好;tauri CLI 自动下载 NSIS **直连 GitHub 成功**(未走镜像);cargo release 首次全量 ~4 分钟/增量 43 秒;**真库已涨到 683MB**(v0.7.0 后继续增长,快照时点 651.7MB)
+7. spike 磁盘代价:cargo target 1.24GB + 库快照 652MB(共 ~1.9GB,在 `out/`,不需要整目录删)
+
+---
+
 ## 2026-10-25 · v0.7.0 发版收尾:用户测试反馈 9 项 + CI 两个真坑(.mjs 加载 / rebuild 产物膨胀)
 
 **用户手测反馈 9 项(全部落地,vitest 459:459):**

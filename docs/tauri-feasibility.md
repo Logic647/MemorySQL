@@ -1,16 +1,20 @@
 # MemorySQL × Tauri 可行性评估
 
 > 2026-10-25 · 应「软件体积太大,能否换技术栈」立项评估。本文只评估不迁码;
-> 体积数字为当日实测,估算部分明确标注。
+> 体积数字为当日实测,估算部分明确标注。**同日下午已用最小 spike 实测替代
+> 关键估算(见「Spike 实测」节),结论不变、数字校准。**
 
 ## 结论先行
 
-**现在不迁移。** 体积收益真实(安装包约 99.5 → 15-25MB),但代价是把 100% 的
+**现在不迁移。** 体积收益真实(spike 实测:纯壳安装包仅 **1.58MB**、壳+侧车
+压缩口径合计约 **38MB**,比本文原估算还要低一个量级),但代价是把 100% 的
 主进程(26 个插件、MCP 服务、13 家 agent 捕获解析器、更新链路)推倒重来,
 工作量以人月计;而 0.7.0 已经把「Electron 内能砍的」砍完了(105.5→99.5MB,
-语义组件 20MB 转按需下载)。**建议保持关注 + 设定重评触发条件**(见文末),
-若将来启动,先做两周原型 spike 用实测替代本文估算,并走「Tauri 壳 + Node 侧车」
-半步路线保住插件生态,而不是直接全 Rust 重写。
+语义组件 20MB 转按需下载)。**另注意:内存收益远小于体积收益**——Tauri 壳
+托盘驻留实测 152MB private(Electron 全功能 406MB),WebView2 六子进程并不
+比 Electron 轻多少。**建议保持关注 + 设定重评触发条件**(见文末),若将来
+启动,从 `out/tauri-spike/` 骨架续做,走「Tauri 壳 + Node 侧车」半步路线
+保住插件生态,而不是直接全 Rust 重写。
 
 ## 体积测算(2026-10-25 实测 + 估算)
 
@@ -25,6 +29,49 @@
 Node 22 独立运行时压缩约 25-30MB;Tauri 空壳典型 3-8MB。**压缩口径下 Electron
 的体积大头其实是 Chromium 本体,LZMA 已经压得很好**——这是「换前端栈无意义、
 换壳才有意义」的量化根据。
+
+## Spike 实测(2026-10-25,本机 Win11 · out/tauri-spike/)
+
+**spike 范围**:原文末设想的「托盘 + MCP 服务 + 读库」三件事,一天完成。
+①托盘常驻(菜单 显示/退出,关窗隐藏);②读**真实库副本**(651.7MB 快照,
+rusqlite bundled SQLite 只读打开,FTS5 trigram `MATCH('MemorySQL')` 命中 14 条);
+③Node 侧车(node.exe + better-sqlite3 开同一快照,`/health` + MCP 形状 `/mcp`,
+tools/call 真查 FTS 与会话表)。构建:VS2026 MSVC(本机已有)+ rustup minimal,
+cargo release 首次全量 ~4 分钟、增量 43 秒;NSIS 由 tauri CLI 自动下载,直连成功。
+
+| 项 | 实测 | 本文原估算 |
+|---|---|---|
+| Tauri 纯壳(解压,单 exe,含托盘+rusqlite+FTS5) | **4.03 MB** | 空壳 3-8 MB ✓ |
+| Tauri 纯壳安装包(NSIS,downloadBootstrapper 口径) | **1.58 MB** | 全 Rust 安装包 15-25 MB(远低于) |
+| Node 侧车原始部署(node.exe 87.4 + node_modules 14.0) | 101.4 MB | — |
+| Node 侧车 zip 压缩(node.exe 独占约 31MB) | **36.5 MB** | Node 运行时压缩 25-30 MB ✓ |
+| **路线 B 合计(压缩口径:壳 1.58 + 侧车 36.5)** | **≈38 MB** | 55-65 MB(低于) |
+
+内存(托盘驻留态,WorkingSet / Private,同机同时刻 PowerShell CIM 实测):
+
+| 进程树 | WS | Private |
+|---|---|---|
+| Tauri spike(壳 25.7 + WebView2 六进程 ~337) | 363 MB | **152 MB** |
+| Node 侧车(单进程,只读打开 651MB 库) | 62 MB | 25 MB |
+| Electron 0.7.0 装机版(4 进程,全功能常驻) | 510 MB | **406 MB** |
+
+**读数要点:**
+1. **磁盘体积结论被强化**:纯壳 1.58MB 安装包连原估算的下限都远低于(估算按
+   embedBootstrapper 等保守口径);路线 B 合计 ≈38MB。若真迁,体积收益比本文
+   原估更大——但 99.5MB 现状并不痛,收益够不着重写成本。
+2. **内存收益有限**:WebView2 六子进程托盘驻留 152MB private,对比 Electron
+   406MB——且**功能不对等**(spike 无任何插件/watcher/MCP 全量逻辑),真实
+   等价 Tauri 版会显著更高。「换栈省内存」的直觉在 WebView2 上不成立多少。
+3. spike 只覆盖了「简单的 5%」:13 家捕获解析器、60+ IPC、更新链路切换、
+   外部插件机制这些真正的成本项,spike 无法也不必替它们估算——架构映射表
+   与两条路线的工作量判断维持不变。
+4. 过程坑(已记 DEVLOG):WAL 库只读连接改 `journal_mode` 即 `SQLITE_IOERR_LOCK`
+   (pragma 是写操作);`memories_fts` 列名为 `content`;trigram 查询词 ≥3 字符
+   否则 0 命中(正确行为);exe 被驻留进程锁定时 `tauri build` 报 os error 5;
+   Mimosa 拦「env/argv 路径 → Command/fs」污点流,spike 改编译期常量路径。
+
+**磁盘占用**:spike 产物在 `out/tauri-spike/`(gitignored):cargo target
+1.24GB + 库快照 652MB,不需要可直接删目录。
 
 ## 架构映射表(逐块评估)
 
@@ -76,5 +123,6 @@ Node sidecar,Tauri 只做壳(窗口/托盘/热键/更新)。工作量估 3-4 人
 - (c) Tauri 生态出现「SQLite+FTS5+文件监听+自动更新」的成熟参考范式,
   使捕获矩阵的重写成本显著下降。
 
-届时先做 **2 周 spike**(只做托盘 + MCP 服务 + 读库三件事,出真实体积与
-内存数据),再决定是否立项。
+**spike 已于 2026-10-25 提前做完**(范围「托盘 + MCP 服务 + 读库」,一天,实测
+见前文)。若将来立项,2 周 spike 的范围缩小为:**迁移 1-2 家真实捕获解析器
+(建议 hermes + zcode,一文件一库两形态)+ 更新链路对齐方案**,再决定是否全面立项。
