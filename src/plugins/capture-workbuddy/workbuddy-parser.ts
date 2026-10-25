@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { RawMessage, RawSession } from '../../shared/types'
-import { openForeignDb } from '../../main/core/sqlite-ro'
+import { openForeignDb } from '../../main/core/sqlite-ro.ts'
 
 /**
  * Tencent WorkBuddy desktop stores sessions under ~/.workbuddy/:

@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { MemorySQLPlugin, PluginContext } from '../../main/core/plugin-host'
 import type { CaptureStatus, RawSession } from '../../shared/types'
 import type { IngestService } from '../core-schema/ingest'
-import { failureDetail, healthFrom } from './capture-health'
+import { failureDetail, healthFrom } from './capture-health.ts'
 
 /**
  * Shared skeleton for session-capture plugins: status/scanNow IPC, source

@@ -1,5 +1,5 @@
 import type { RawMessage, RawSession } from '../../shared/types'
-import { openForeignDb } from '../../main/core/sqlite-ro'
+import { openForeignDb } from '../../main/core/sqlite-ro.ts'
 
 /**
  * opencode-lineage agents (opencode itself and its forks — ZCode CLI among

@@ -232,11 +232,25 @@ function updateAndSession(ledgerRoots, nasState) {
 
 /** 跑黑盒检查,拿 JSON。子进程而非 import,与 dev 探针同款(工具与生产代码解耦) */
 function runBlackbox() {
-  const out = execFileSync(
-    process.execPath,
-    ['--experimental-strip-types', path.join(REPO, 'upstream', 'check.ts'), '--json'],
-    { cwd: REPO, encoding: 'utf-8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] }
-  )
+  let out
+  try {
+    out = execFileSync(
+      process.execPath,
+      ['--experimental-strip-types', path.join(REPO, 'upstream', 'check.ts'), '--json'],
+      { cwd: REPO, encoding: 'utf-8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+  } catch (e) {
+    // check.ts 用退出码表达「发现漂移(1)/检查器故障(2)」—— 这是**设计行为**,
+    // stdout 照样携带完整 JSON。把非零当崩溃的话,探针恰好死在最需要它工作的
+    // 事件上:一次真漂移 = 探针 crash = 不写报告、不上报,日志里只有一坨栈。
+    // 只在连 stdout 都没有时才真抛(检查器根本没跑起来)。
+    if (e.stdout) {
+      log(`⚠ 检查器以退出码 ${e.status} 结束(1=漂移 2=检查器故障),照常处理其输出`)
+      out = e.stdout
+    } else {
+      throw e
+    }
+  }
   return JSON.parse(out)
 }
 
@@ -376,10 +390,16 @@ async function report(data) {
 // ── 主流程 ───────────────────────────────────────────────────────────────────
 
 // 台账/检查器跟随 main:NAS 的契约判定必须与看板服务端同源,否则指纹校验
-// 会报「契约不一致」。失败不致命 —— 用本地版本继续,报告里可见。
-{
+// 会报「契约不一致」。github 的 git 链路抖动是常态(见 DEPLOY.md),重试 3 次;
+// 全部失败用本地版本继续 —— 检查不能因链路问题整体罢工,报告里可见。
+for (let i = 1; i <= 3; i++) {
   const pull = runStep(['git', '-C', REPO, 'pull', '--ff-only'], 120_000)
-  log(pull.ok ? `git pull: ${firstLine(pull.out) || '已是最新'}` : `⚠ git pull 失败(${pull.out}),用本地版本继续`)
+  if (pull.ok) {
+    log(`git pull: ${firstLine(pull.out) || '已是最新'}`)
+    break
+  }
+  log(`⚠ git pull 第 ${i}/3 次失败(${pull.out})${i < 3 ? ',6s 后重试' : ' —— 用本地版本继续'}`)
+  if (i < 3) await new Promise((r) => setTimeout(r, 6_000))
 }
 
 const nasState = loadNasState()

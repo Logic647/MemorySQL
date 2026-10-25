@@ -1,6 +1,6 @@
 import path from 'node:path'
 import type { RawMessage, RawSession } from '../../shared/types'
-import { safeDir, walkWithin } from '../../main/core/safe-path'
+import { safeDir, walkWithin } from '../../main/core/safe-path.ts'
 
 /**
  * Claude Code (~/.claude/projects/<project-slug>/*.jsonl). Each line:

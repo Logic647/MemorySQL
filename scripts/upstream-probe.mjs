@@ -52,11 +52,25 @@ if (major < 22 || (major === 22 && minor < 6)) {
 
 /** 跑黑盒检查,拿 JSON。用子进程而非 import,避免工具与生产代码耦合 */
 function runBlackbox() {
-  const out = execFileSync(
-    process.execPath,
-    ['--experimental-strip-types', path.join(REPO, 'upstream', 'check.ts'), '--json'],
-    { cwd: REPO, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }
-  )
+  let out
+  try {
+    out = execFileSync(
+      process.execPath,
+      ['--experimental-strip-types', path.join(REPO, 'upstream', 'check.ts'), '--json'],
+      { cwd: REPO, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+  } catch (e) {
+    // 退出码 1/2 是 check.ts 的**设计行为**(1=发现漂移 2=检查器故障),stdout
+    // 仍带完整 JSON。此前把非零当崩溃:真发生漂移的当天探针直接死掉 ——
+    // 报告不写、云端不上报,恰好在最需要它工作的那天缺席。潜伏两周后由
+    // NAS 探针首跑当场撞出(同型函数一起修)。只在无 stdout 时才真抛。
+    if (e.stdout) {
+      log(`⚠ 检查器以退出码 ${e.status} 结束(1=漂移 2=检查器故障),照常处理其输出`)
+      out = e.stdout
+    } else {
+      throw e
+    }
+  }
   return JSON.parse(out)
 }
 

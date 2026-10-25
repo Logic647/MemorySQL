@@ -2,8 +2,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { RawSession } from '../../shared/types'
-import { createCapturePlugin } from '../_lib/capture-factory'
-import { findClaudeFiles, parseClaudeJsonl } from '../capture-claudecode/claude-parser'
+import { createCapturePlugin } from '../_lib/capture-factory.ts'
+import { findClaudeFiles, parseClaudeJsonl } from '../capture-claudecode/claude-parser.ts'
 
 /**
  * Qoder CLI / Qoder CN (Alibaba) — Claude-compatible JSONL under the user
