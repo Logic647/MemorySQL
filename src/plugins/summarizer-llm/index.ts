@@ -122,6 +122,18 @@ export function isOpenaiReady(cfg: Pick<LlmConfig, 'preset' | 'openaiBaseUrl' | 
   return presetById(cfg.preset)?.keyless === true
 }
 
+/**
+ * 一份配置(无论来自 settings 还是 UI 草稿)当前是否可用。
+ * provider.available() 只看已保存配置 —— 测试连接要用这份函数评 UI 传入的草稿,
+ * 否则"没保存就点测试"永远报配置不完整(用户实测踩到)。
+ */
+export function isLlmReady(cfg: LlmConfig): boolean {
+  if (cfg.provider === 'none') return false
+  if (cfg.provider === 'openai') return isOpenaiReady(cfg)
+  if (cfg.provider === 'anthropic') return cfg.anthropicKey.trim().length > 0
+  return cfg.ollamaUrl.trim().length > 0
+}
+
 async function callLlm(cfg: LlmConfig, transcript: string, maxTokens = 300, system?: string): Promise<string> {
   transcript = redactWithCount(transcript).text
   const controller = new AbortController()
@@ -203,13 +215,7 @@ const plugin: MemorySQLPlugin = {
 
     const provider: SummarizerProvider = {
       id: 'llm',
-      available: () => {
-        const cfg = getConfig()
-        if (cfg.provider === 'none') return false
-        if (cfg.provider === 'openai') return isOpenaiReady(cfg)
-        if (cfg.provider === 'anthropic') return cfg.anthropicKey.trim().length > 0
-        return cfg.ollamaUrl.trim().length > 0
-      },
+      available: () => isLlmReady(getConfig()),
       summarize: async (input) => {
         const cfg = getConfig()
         if (!provider.available()) return null
@@ -253,7 +259,7 @@ const plugin: MemorySQLPlugin = {
         ;(cfg as unknown as Record<string, string>)[key] = v
       }
       if (cfg.provider === 'none') return { ok: false as const, message: '请先选择 LLM 引擎' }
-      if (!provider.available()) return { ok: false as const, message: '配置不完整(缺 API Key 或 Base URL)' }
+      if (!isLlmReady(cfg)) return { ok: false as const, message: '配置不完整(缺 API Key 或 Base URL)' }
       const t0 = Date.now()
       try {
         // 512 上限给推理型模型留出思考 token(MiMo 实测一次推理就烧 ~136)

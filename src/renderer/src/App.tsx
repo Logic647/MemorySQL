@@ -84,6 +84,23 @@ function AgentBadge({ type }: { type: string }) {
   return <span className={`badge badge-${type}`}>{type}</span>
 }
 
+/** digest 徽标四态(会话组头与「项目总结」弹窗共用) */
+function digestBadgeOf(dst?: {
+  status: string
+  lastDigestAt: number | null
+  lastError: string | null
+}): { cls: string; text: string; title: string } {
+  if (dst?.status === 'running') return { cls: 'running', text: '⟳ 总结中', title: '正在生成滚动总结' }
+  if (dst?.lastDigestAt) {
+    return {
+      cls: 'ok',
+      text: `✓ ${fmtRelative(dst.lastDigestAt / 1000)}`,
+      title: `上次总结: ${fmtTime(dst.lastDigestAt / 1000)}${dst.lastError ? `\n${dst.lastError}` : ''}`
+    }
+  }
+  return { cls: 'dim', text: '未总结', title: '有会话待总结;新会话安静期后自动生成,或点「总结」立即生成' }
+}
+
 /**
  * Drag near the top/bottom edge of a scrollable list and it scrolls for you.
  *
@@ -198,6 +215,17 @@ export default function App() {
   const [digestCards, setDigestCards] = useState<Record<number, DigestLatest | null>>({})
   const [openDigest, setOpenDigest] = useState<Set<number>>(new Set())
   const openDigestRef = useRef<Set<number>>(new Set())
+  // 「项目总结」弹窗(顶栏入口):选中项目 + 内容懒取
+  const [digestModal, setDigestModal] = useState(false)
+  const [digestModalSel, setDigestModalSel] = useState<number | null>(null)
+  // 项目组折叠(纯 UI 偏好,localStorage 记住;undefined = 展开为默认)
+  const [closedGroups, setClosedGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('msql.projectGroups') ?? '{}') as Record<string, boolean>
+    } catch {
+      return {}
+    }
+  })
 
   const refresh = useCallback(async () => {
     setSessions(await api.listSessions(filter, { archived: showArchived }))
@@ -255,6 +283,13 @@ export default function App() {
     return api.onDigestChanged(() => void refreshDigest())
   }, [refreshDigest])
 
+  const fetchDigest = useCallback((projectId: number): void => {
+    void api
+      .digestLatest(projectId)
+      .then((d) => setDigestCards((prev) => ({ ...prev, [projectId]: d })))
+      .catch(() => {})
+  }, [])
+
   const toggleDigestCard = useCallback((projectId: number): void => {
     setOpenDigest((prev) => {
       const next = new Set(prev)
@@ -263,11 +298,8 @@ export default function App() {
       openDigestRef.current = next
       return next
     })
-    void api
-      .digestLatest(projectId)
-      .then((d) => setDigestCards((prev) => ({ ...prev, [projectId]: d })))
-      .catch(() => {})
-  }, [])
+    fetchDigest(projectId)
+  }, [fetchDigest])
 
   const runDigestNow = useCallback(
     (projectId: number): void => {
@@ -647,6 +679,16 @@ export default function App() {
         <button className="btn" onClick={() => { setImportOpen(true); setImportErr(null) }}>
           导入对话
         </button>
+        <button
+          className="btn"
+          title="浏览各项目的滚动总结(摘要/待办/决策),可立即总结"
+          onClick={() => {
+            setDigestModal(true)
+            void refreshDigest()
+          }}
+        >
+          项目总结
+        </button>
         <button className="btn btn-accent" disabled={scanning} onClick={() => void scanAll()}>
           {scanning ? '扫描中…' : '立即扫描'}
         </button>
@@ -714,10 +756,11 @@ export default function App() {
                 agent 默认开启,0 条 = 本机未装/未用到,不是故障) */}
             {(() => {
               const counts = new Map((overview?.byAgent ?? []).map((x) => [x.agent_type, x.sessions]))
+              // 「显示取决于检测到了多少」:数量降序;未检测到(0 条)的 agent 不占位
               const chips = orderAgentChips(
                 CAPTURE_PLUGINS.filter(({ id }) => enabledCaptures[id] !== false).map(({ id }) => id.replace('capture-', '')),
                 counts
-              )
+              ).filter((c) => c.count > 0)
               return ['all', ...chips.map((c) => c.agent)].map((a) => {
                 const count = a === 'all'
                   ? overview?.byAgent.reduce((n, x) => n + x.sessions, 0) ?? 0
@@ -725,8 +768,7 @@ export default function App() {
                 return (
                   <button
                     key={a}
-                    className={`side-item ${filter === a ? 'active' : ''} ${a !== 'all' && count === 0 ? 'dim' : ''}`}
-                    title={a !== 'all' && count === 0 ? '未检测到会话 —— 装好该 agent 后自动导入' : undefined}
+                    className={`side-item ${filter === a ? 'active' : ''}`}
                     onClick={() => setFilter(a)}
                   >
                     {a === 'all' ? '全部' : a}
@@ -955,23 +997,22 @@ export default function App() {
                     const dPid = rows[0]?.projectId ?? null
                     const dOn = digestInfo?.enabled === true && dPid != null
                     const dst = dPid != null ? digestInfo?.projects.find((p) => p.projectId === dPid) : undefined
-                    const badge =
-                      dst?.status === 'running'
-                        ? { cls: 'running', text: '⟳ 总结中', title: '正在生成滚动总结' }
-                        : dst?.lastDigestAt
-                          ? {
-                              cls: 'ok',
-                              text: `✓ ${fmtRelative(dst.lastDigestAt / 1000)}`,
-                              title: `上次总结: ${fmtTime(dst.lastDigestAt / 1000)}${dst.lastError ? `\n${dst.lastError}` : ''}(点击展开/收起)`
-                            }
-                          : {
-                              cls: 'dim',
-                              text: '未总结',
-                              title: '有会话待总结;新会话安静期后自动生成,或点「总结」立即生成(点击展开)'
-                            }
+                    const badge = digestBadgeOf(dst)
                     const card = dPid != null ? digestCards[dPid] : undefined
+                    const groupOpen = closedGroups[project] !== false
+                    const toggleGroup = (): void => {
+                      setClosedGroups((prev) => {
+                        const next = { ...prev, [project]: !(prev[project] !== false) }
+                        try {
+                          localStorage.setItem('msql.projectGroups', JSON.stringify(next))
+                        } catch {
+                          /* 隐私模式写不进只影响本会话 */
+                        }
+                        return next
+                      })
+                    }
                     const digestCardNode =
-                      dOn && dPid != null && openDigest.has(dPid) ? (
+                      dOn && dPid != null && openDigest.has(dPid) && groupOpen ? (
                         <div key={`${project}-digest`} className="digest-card">
                           {card ? (
                             <>
@@ -1016,6 +1057,8 @@ export default function App() {
                             '--ps': project === '(未分配项目)' ? '14%' : '55%'
                           } as CSSProperties
                         }
+                        title="点击折叠/展开该项目的会话"
+                        onClick={() => toggleGroup()}
                         onDragOver={(e) => {
                           e.preventDefault()
                           setDropTarget(project)
@@ -1033,6 +1076,7 @@ export default function App() {
                             .catch((err) => setKbMsg(`移动失败: ${String(err)}`))
                         }}
                       >
+                        <span className={`chev ${groupOpen ? 'open' : ''}`}>▸</span>
                         {project}
                         <span className="group-count">{rows.length}</span>
                         {dOn && (
@@ -1060,8 +1104,7 @@ export default function App() {
                           </button>
                         )}
                       </div>,
-                      ...(digestCardNode ? [digestCardNode] : []),
-                      ...body,
+                      ...(groupOpen ? [...(digestCardNode ? [digestCardNode] : []), ...body] : []),
                     ]
                   })
                 })()}
@@ -1153,6 +1196,106 @@ export default function App() {
             </div>
           </div>
         )}
+        {digestModal && (
+          <div className="modal-overlay" onClick={() => setDigestModal(false)}>
+            <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-title">项目总结 · 各项目滚动摘要</div>
+              {digestInfo == null ? (
+                <p className="hint">加载中…</p>
+              ) : !digestInfo.enabled ? (
+                <p className="hint">
+                  项目总结未开启 —— 在 设置 → 智能引擎 → 项目总结 中开启后,这里会显示各项目的滚动总结。
+                </p>
+              ) : (
+                <div className="digest-modal-body">
+                  <div className="digest-modal-list">
+                    {digestInfo.projects.map((p) => {
+                      const b = digestBadgeOf(p)
+                      return (
+                        <button
+                          key={p.projectId}
+                          className={`modal-item digest-modal-item ${digestModalSel === p.projectId ? 'sel' : ''}`}
+                          onClick={() => {
+                            setDigestModalSel(p.projectId)
+                            fetchDigest(p.projectId)
+                          }}
+                        >
+                          <span className="digest-modal-name">{p.name}</span>
+                          <span className={`digest-badge ${b.cls}`} title={b.title}>
+                            {b.text}
+                          </span>
+                        </button>
+                      )
+                    })}
+                    {digestInfo.projects.length === 0 && <div className="empty">还没有带会话的项目</div>}
+                  </div>
+                  <div className="digest-modal-detail">
+                    {(() => {
+                      const d = digestModalSel != null ? digestCards[digestModalSel] : undefined
+                      if (digestModalSel == null) return <div className="empty">左侧选择项目查看最新总结</div>
+                      if (!d) {
+                        return (
+                          <div className="empty">
+                            该项目还没有总结 —— 点下方「立即总结该项目」生成一次
+                          </div>
+                        )
+                      }
+                      return (
+                        <>
+                          <div className="digest-card-head">
+                            <span className="mono-tag">
+                              {d.projectName} · {d.model}
+                            </span>
+                            <span className="hint">
+                              覆盖 {fmtShort(d.periodStart)} ~ {fmtShort(d.periodEnd)} · {d.sessionsCovered} 会话 · 生成于{' '}
+                              {fmtTime(d.createdAt / 1000)}
+                            </span>
+                          </div>
+                          <pre className="digest-summary">{d.summary}</pre>
+                          {d.todos.length > 0 && (
+                            <div className="digest-todos">
+                              {d.todos.map((t, i) => (
+                                <div key={i} className={`digest-todo ${t.status === 'done' ? 'done' : ''}`}>
+                                  [{t.status === 'done' ? 'x' : ' '}] {t.content}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {d.decisions.length > 0 && (
+                            <div className="digest-decisions">
+                              {d.decisions.map((x, i) => (
+                                <div key={i}>· {x}</div>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      )
+                    })()}
+                    {digestModalSel != null && (
+                      <div className="field-row" style={{ justifyContent: 'flex-end' }}>
+                        <button
+                          className="btn btn-accent btn-small"
+                          onClick={() => {
+                            runDigestNow(digestModalSel as number)
+                            fetchDigest(digestModalSel as number)
+                          }}
+                        >
+                          立即总结该项目
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              <div className="field-row" style={{ justifyContent: 'flex-end' }}>
+                <button className="btn btn-small" onClick={() => setDigestModal(false)}>
+                  关闭
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {relayPick && (
           <div className="modal-overlay" onClick={() => setRelayPick(null)}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>

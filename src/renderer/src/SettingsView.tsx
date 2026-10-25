@@ -1125,6 +1125,31 @@ function DigestSection({ onMsg }: { onMsg: (s: string) => void }) {
           保存
         </button>
       </div>
+      <div className="field-row">
+        <button
+          className="btn btn-accent btn-small"
+          onClick={() =>
+            void api
+              .digestQueueAll()
+              .then((r) => {
+                if (!r.ok) {
+                  onMsg(r.message ?? '失败')
+                  return
+                }
+                onMsg(
+                  r.queued
+                    ? `已入队 ${r.queued} 个项目,后台逐个总结中 —— 会话页徽标与此处计数会自动刷新`
+                    : '所有项目都已总结到最新,无需处理'
+                )
+                void load()
+              })
+              .catch((e) => onMsg(`操作失败: ${String(e)}`))
+          }
+        >
+          立即总结全部项目
+        </button>
+        <span className="hint">首次总结会读完项目全部会话(分批滚动消化,单项目至多 200 个/次),之后只读上次水位之后的新会话。</span>
+      </div>
     </>
   )
 }

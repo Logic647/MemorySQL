@@ -20,18 +20,26 @@ export interface DigestResult {
   candidates: DigestCandidate[]
 }
 
-/** 单次总结最多覆盖的新会话数;超出部分留到下一轮(滚动追赶)。 */
+/** 单轮总结最多覆盖的新会话数;首次/追赶会连续多轮直到清空(见 index.ts 的消化循环)。 */
 export const DIGEST_MAX_SESSIONS_PER_RUN = 20
+/** 单项目一次触发的最大消化轮数(20×10=200 会话;超出留到下次触发,防失控连环调用)。 */
+export const DIGEST_MAX_ROUNDS_PER_TRIGGER = 10
 /** prompt 软上限(字符):超限先丢最老会话的正文细节,仍超则截断。 */
 export const DIGEST_SOFT_CHAR_CAP = 24_000
 
 export const DIGEST_SYSTEM_PROMPT =
-  '你是项目开发日志的滚动总结器。阅读一个项目的既有总结与新增开发会话,输出更新版总结,严格 JSON(不要 markdown 代码块,不要多余文字):' +
-  '{"summary":"不超过10行的项目总结:目标/当前状态/关键结论,在上一版基础上滚动续写",' +
-  '"todos":[{"content":"待办事项","status":"open或done"}],' +
-  '"decisions":["本窗口确认的技术决策或事实,短句"],' +
+  '你是项目开发日志的滚动总结器。阅读一个项目的既有总结与新增开发会话,输出**更新版总结**,严格 JSON(不要 markdown 代码块,不要多余文字):\n' +
+  '{"summary":"项目的完整交接总结(可以长,1500字以内):写给一个**对该项目一无所知、即将接手继续开发**的 agent,读这一段就能直接开工,不必翻任何历史会话。必须包含:\\n' +
+  '1. 项目是什么:目标、给谁用、当前整体状态\\n' +
+  '2. 技术要点:语言/框架/关键库、目录与模块划分、数据流向\\n' +
+  '3. 已确认的关键决策与原因(避免重蹈覆辙的坑)\\n' +
+  '4. 当前进行到哪:最近在做什么、改了哪些文件/模块、已知问题\\n' +
+  '5. 环境与命令:怎么跑起来、怎么测试、需要注意的本机路径或凭据位置(只写位置,不写值)\\n' +
+  '在上一版基础上滚动更新——过时的信息删掉,新信息并入对应小节,不要只追加一段流水账",\n' +
+  '"todos":[{"content":"待办事项,写清做什么/怎么验收","status":"open或done"}],\n' +
+  '"decisions":["本窗口确认的技术决策或事实,短句"],\n' +
   '"candidates":[{"kind":"fact或preference或decision","content":"值得长期记住的用户偏好/事实/决策,供用户确认后入记忆库"}]}\n' +
-  'todos 是滚动清单:结转上一版仍要做的(标 open),已完成/已过时的标 done 或移除,可新增。'
+  'todos 是滚动清单:结转上一版仍要做的(标 open,可补充验收标准),已完成/已过时的标 done 或移除,可新增。'
 
 export interface DigestSessionInput {
   id: number
@@ -189,7 +197,7 @@ function tryParse(s: string): DigestResult | null {
         }))
         .filter((c) => c.content.length > 0)
     : []
-  return { summary: r.summary.trim().slice(0, 4000), todos, decisions, candidates }
+  return { summary: r.summary.trim().slice(0, 6000), todos, decisions, candidates }
 }
 
 export function parseDigestResponse(text: string): DigestResult | null {
@@ -231,7 +239,7 @@ export function buildRulesDigest(
     ...(prev?.todos.filter((t) => t.status === 'open') ?? []),
     ...pendingProgress.map((c) => ({ content: clip(c, 200) ?? '', status: 'open' as const }))
   ].filter((t) => t.content.length > 0)
-  return { summary: lines.join('\n').slice(0, 4000), todos, decisions: [], candidates: [] }
+  return { summary: lines.join('\n').slice(0, 6000), todos, decisions: [], candidates: [] }
 }
 
 // ---------------------------------------------------------------------------

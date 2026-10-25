@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { LLM_PRESETS, presetById } from '../src/shared/llm-presets'
 import {
+  isLlmReady,
   isOpenaiReady,
   LLM_DEFAULTS,
   openaiCompatRequest
@@ -95,6 +96,27 @@ describe('isOpenaiReady', () => {
 
   it('有 Key 的任何预设都就绪', () => {
     expect(isOpenaiReady({ preset: 'zhipu', openaiBaseUrl: 'https://x', openaiKey: 'sk-1' })).toBe(true)
+  })
+})
+
+describe('isLlmReady(测试连接修复的回归)', () => {
+  it('评估的是传入的草稿配置,而非已保存配置 —— 没保存也能测', () => {
+    // 用户把引擎从 none 切到 openai 并填好 key,但还没点保存:
+    // 这份草稿本身就应判定可用(testConnection 用它直接发请求)
+    const draft = { ...LLM_DEFAULTS, provider: 'openai' as const, preset: 'mimo', openaiBaseUrl: 'https://api.xiaomimimo.com/v1', openaiKey: 'sk-draft', openaiModel: 'mimo-v2.6-flash' }
+    expect(isLlmReady(draft)).toBe(true)
+  })
+
+  it('none / 缺关键项不可用', () => {
+    expect(isLlmReady(LLM_DEFAULTS)).toBe(false)
+    expect(isLlmReady({ ...LLM_DEFAULTS, provider: 'openai', preset: 'zhipu', openaiBaseUrl: '', openaiKey: 'k' })).toBe(false)
+    expect(isLlmReady({ ...LLM_DEFAULTS, provider: 'openai', preset: 'zhipu', openaiBaseUrl: 'https://x', openaiKey: '' })).toBe(false)
+    expect(isLlmReady({ ...LLM_DEFAULTS, provider: 'anthropic', anthropicKey: '' })).toBe(false)
+  })
+
+  it('anthropic/ollama 就绪判定', () => {
+    expect(isLlmReady({ ...LLM_DEFAULTS, provider: 'anthropic', anthropicKey: 'sk-a' })).toBe(true)
+    expect(isLlmReady({ ...LLM_DEFAULTS, provider: 'ollama', ollamaUrl: 'http://127.0.0.1:11434' })).toBe(true)
   })
 })
 

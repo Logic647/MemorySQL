@@ -7,6 +7,7 @@ import {
   buildDigestMcpText,
   buildDigestPrompt,
   buildRulesDigest,
+  DIGEST_MAX_ROUNDS_PER_TRIGGER,
   DIGEST_MAX_SESSIONS_PER_RUN,
   DIGEST_SYSTEM_PROMPT,
   parseDigestResponse,
@@ -159,91 +160,112 @@ const plugin: MemorySQLPlugin = {
       setState(projectId, { status: 'running' })
       notify(projectId)
       try {
-        const state = stmtState.get(projectId) as
-          | { last_digest_at: number | null; last_covered_ts: number | null }
-          | undefined
-        const coveredBefore = state?.last_covered_ts ?? 0
-        const sessions = stmtSessions.all(projectId, coveredBefore) as DigestSessionInput[]
-        if (sessions.length === 0) {
+        // 消化循环:一次触发连续消化多批(每批 ≤ DIGEST_MAX_SESSIONS_PER_RUN),
+        // 直到清空未覆盖会话或达轮数上限 —— 首次总结即"读完项目全部会话",
+        // 并把最后一批的末尾时间记为覆盖水位(last_covered_ts)。
+        const refine = tryUseRefine()
+        let coveredTotal = 0
+        let lastModel = 'rules'
+        let llmError: string | null = null
+        let rounds = 0
+        for (; rounds < DIGEST_MAX_ROUNDS_PER_TRIGGER; rounds++) {
+          const state = stmtState.get(projectId) as
+            | { last_digest_at: number | null; last_covered_ts: number | null }
+            | undefined
+          const coveredBefore = state?.last_covered_ts ?? 0
+          const sessions = stmtSessions.all(projectId, coveredBefore) as DigestSessionInput[]
+          if (sessions.length === 0) break
+          const prevRow = stmtLatestDigest.get(projectId) as
+            | { summary: string; todos: string }
+            | undefined
+          const prev =
+            prevRow != null
+              ? { summary: prevRow.summary, todos: JSON.parse(prevRow.todos || '[]') as DigestTodo[] }
+              : null
+
+          const prompt = buildDigestPrompt(project.name, sessions, prev)
+          let result: DigestResult | null = null
+          let model = 'rules'
+          if (refine?.available()) {
+            try {
+              const text = await refine.refine(prompt, { system: DIGEST_SYSTEM_PROMPT, maxTokens: 4000 })
+              const parsed = parseDigestResponse(text)
+              if (parsed) {
+                result = parsed
+                model = `llm:${refine.describe?.() ?? 'configured'}`
+              } else {
+                llmError = 'LLM 返回无法解析为 JSON,已回落规则总结'
+              }
+            } catch (err) {
+              llmError = `LLM 调用失败: ${String(err instanceof Error ? err.message : err)}`
+            }
+          }
+          if (!result) {
+            result = buildRulesDigest(
+              project.name,
+              sessions,
+              prev,
+              (stmtPendingProgress.all() as Array<{ content: string }>).map((r) => r.content)
+            )
+          }
+
+          const now = Date.now()
+          const periodStart = coveredBefore > 0 ? coveredBefore : sessions[0].ts
+          const periodEnd = sessions[sessions.length - 1].ts
+          stmtInsertDigest.run({
+            project_id: projectId,
+            period_start: periodStart,
+            period_end: periodEnd,
+            summary: result.summary,
+            todos: JSON.stringify(result.todos),
+            decisions: JSON.stringify(result.decisions),
+            model,
+            sessions_covered: sessions.length,
+            created_at: now,
+            updated_at: now
+          })
+          // 候选记忆:同源同内容去重后进入现有「候选 → 用户确认」链路
+          const source = `project-digest:${projectId}`
+          for (const c of result.candidates) {
+            const content = c.content.trim()
+            if (!content || stmtCandidateDup.get(source, content)) continue
+            const kind = ['fact', 'preference', 'decision'].includes(c.kind) ? c.kind : 'fact'
+            stmtInsertCandidate.run(kind, content.slice(0, 1000), source, now, projectId)
+          }
+          // 每轮推进水位(而非只在整个触发结束):中途失败/退出也已消化完的部分不重复处理
+          setState(projectId, {
+            status: 'idle',
+            last_digest_at: now,
+            last_covered_ts: periodEnd,
+            last_error: llmError
+          })
+          writeVaultMd(project.name, result, {
+            projectName: project.name,
+            periodStart,
+            periodEnd,
+            model,
+            sessionsCovered: sessions.length,
+            generatedAt: new Date(now)
+          })
+          coveredTotal += sessions.length
+          lastModel = model
+        }
+
+        if (coveredTotal === 0) {
           setState(projectId, { status: 'idle' })
           return { ok: true, message: '没有新会话需要总结' }
         }
-        const prevRow = stmtLatestDigest.get(projectId) as
-          | { summary: string; todos: string }
-          | undefined
-        const prev =
-          prevRow != null
-            ? { summary: prevRow.summary, todos: JSON.parse(prevRow.todos || '[]') as DigestTodo[] }
-            : null
-
-        const prompt = buildDigestPrompt(project.name, sessions, prev)
-        let result: DigestResult | null = null
-        let model = 'rules'
-        let llmError: string | null = null
-        const refine = tryUseRefine()
-        if (refine?.available()) {
-          try {
-            const text = await refine.refine(prompt, { system: DIGEST_SYSTEM_PROMPT, maxTokens: 2000 })
-            const parsed = parseDigestResponse(text)
-            if (parsed) {
-              result = parsed
-              model = `llm:${refine.describe?.() ?? 'configured'}`
-            } else {
-              llmError = 'LLM 返回无法解析为 JSON,已回落规则总结'
-            }
-          } catch (err) {
-            llmError = `LLM 调用失败: ${String(err instanceof Error ? err.message : err)}`
-          }
-        }
-        if (!result) {
-          result = buildRulesDigest(
-            project.name,
-            sessions,
-            prev,
-            (stmtPendingProgress.all() as Array<{ content: string }>).map((r) => r.content)
-          )
-        }
-
-        const now = Date.now()
-        const periodStart = coveredBefore > 0 ? coveredBefore : sessions[0].ts
-        const periodEnd = sessions[sessions.length - 1].ts
-        stmtInsertDigest.run({
-          project_id: projectId,
-          period_start: periodStart,
-          period_end: periodEnd,
-          summary: result.summary,
-          todos: JSON.stringify(result.todos),
-          decisions: JSON.stringify(result.decisions),
-          model,
-          sessions_covered: sessions.length,
-          created_at: now,
-          updated_at: now
-        })
-        // 候选记忆:同源同内容去重后进入现有「候选 → 用户确认」链路
-        const source = `project-digest:${projectId}`
-        for (const c of result.candidates) {
-          const content = c.content.trim()
-          if (!content || stmtCandidateDup.get(source, content)) continue
-          const kind = ['fact', 'preference', 'decision'].includes(c.kind) ? c.kind : 'fact'
-          stmtInsertCandidate.run(kind, content.slice(0, 1000), source, now, projectId)
-        }
-        setState(projectId, {
-          status: 'idle',
-          last_digest_at: now,
-          last_covered_ts: periodEnd,
-          last_error: llmError
-        })
-        writeVaultMd(project.name, result, {
-          projectName: project.name,
-          periodStart,
-          periodEnd,
-          model,
-          sessionsCovered: sessions.length,
-          generatedAt: new Date(now)
-        })
         notify(projectId)
-        ctx.log.info(`digest ok: ${project.name} +${sessions.length} sessions (${model})${llmError ? ` — ${llmError}` : ''}`)
-        return { ok: true, message: `已总结 ${sessions.length} 个会话(${model})` }
+        ctx.log.info(
+          `digest ok: ${project.name} +${coveredTotal} sessions in ${rounds} round(s) (${lastModel})${llmError ? ` — ${llmError}` : ''}`
+        )
+        return {
+          ok: true,
+          message:
+            rounds > 1
+              ? `已总结 ${coveredTotal} 个会话(${rounds} 轮,${lastModel})`
+              : `已总结 ${coveredTotal} 个会话(${lastModel})`
+        }
       } catch (err) {
         setState(projectId, { status: 'idle', last_error: String(err instanceof Error ? err.message : err) })
         notify(projectId)
@@ -368,13 +390,35 @@ const plugin: MemorySQLPlugin = {
       return { ok: true, queued: !busy }
     })
 
-    // CLI(--digest)与批量场景:显式用户意图,绕过总开关
+    // CLI(--digest)与批量场景:显式用户意图,绕过总开关;阻塞跑完(CLI 要等结果)
     ctx.ipc.handle('runAll', async () => {
       const results: Record<string, { ok: boolean; message: string }> = {}
       for (const { id } of stmtProjectsWithSessions.all() as Array<{ id: number }>) {
         results[String(id)] = await runDigest(id, { manual: true })
       }
       return results
+    })
+
+    // UI「立即总结全部项目」:入队后台串行跑,立即返回入队数(进度走 push:digest)
+    ctx.ipc.handle('queueAll', () => {
+      if (!enabled()) return { ok: false as const, message: '项目总结未开启' }
+      let queued = 0
+      for (const row of sqlite
+        .prepare(
+          `SELECT p.id FROM projects p
+             LEFT JOIN project_digest_state st ON st.project_id = p.id
+            WHERE p.deleted = 0
+              AND EXISTS (SELECT 1 FROM sessions s WHERE s.deleted = 0 AND s.project_id = p.id
+                            AND COALESCE(s.last_message_at, s.started_at) IS NOT NULL
+                            AND COALESCE(s.last_message_at, s.started_at) > COALESCE(st.last_covered_ts, 0))`
+        )
+        .all() as Array<{ id: number }>) {
+        if (!running.has(row.id)) {
+          enqueue(row.id)
+          queued++
+        }
+      }
+      return { ok: true as const, queued }
     })
 
     // ---- MCP:agent 读这一份代替翻大量会话 ----------------------------------

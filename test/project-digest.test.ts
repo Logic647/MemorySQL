@@ -339,6 +339,66 @@ describe('插件接线', () => {
     expect(state.last_error).toContain('无法解析')
   })
 
+  it('消化循环:会话数超过单批上限时连续多轮,直到清空并记下水位', async () => {
+    makeCtx()
+    // 45 个会话 > 20/批 → 应消化 3 轮,全覆盖,last_covered_ts = 最新一个会话的 ts
+    const pid = seedProject('big', 45)
+    const r = (await runAll())[String(pid)]
+    expect(r.ok).toBe(true)
+    expect(r.message).toContain('45 个会话')
+    expect(r.message).toContain('3 轮')
+    const rows = wrapper.sqlite
+      .prepare('SELECT period_start, period_end FROM project_digests WHERE project_id = ? ORDER BY id')
+      .all(pid) as Array<{ period_start: number; period_end: number }>
+    expect(rows).toHaveLength(3)
+    // 批与批之间无缝衔接:上一批的 period_end 就是下一批的 period_start+1(> 严格比较)
+    expect(rows[1].period_start).toBe(rows[0].period_end)
+    expect(rows[2].period_start).toBe(rows[1].period_end)
+    const state = wrapper.sqlite
+      .prepare('SELECT last_covered_ts FROM project_digest_state WHERE project_id = ?')
+      .get(pid) as { last_covered_ts: number }
+    expect(state.last_covered_ts).toBe(rows[2].period_end)
+    // 全部消化完:再跑一次没有新会话
+    const again = (await runAll())[String(pid)]
+    expect(again.message).toContain('没有新会话')
+  })
+
+  it('轮数上限保护:超过 200 个未覆盖会话留到下次触发', async () => {
+    makeCtx()
+    const pid = seedProject('huge', 215)
+    const r = (await runAll())[String(pid)]
+    expect(r.ok).toBe(true)
+    // 10 轮 × 20 = 200;剩下的 15 个留在水位之后
+    const state = wrapper.sqlite
+      .prepare('SELECT last_covered_ts, last_error IS NULL AS clean FROM project_digest_state WHERE project_id = ?')
+      .get(pid) as { last_covered_ts: number; clean: number }
+    const uncovered = (
+      wrapper.sqlite
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sessions WHERE project_id = ? AND COALESCE(last_message_at, started_at) > ?`
+        )
+        .get(pid, state.last_covered_ts) as { n: number }
+    ).n
+    expect(uncovered).toBe(15)
+  })
+
+  it('queueAll:开关关闭拒绝;开启时把有未覆盖会话的项目入队', async () => {
+    makeCtx()
+    const off = handlers.get('project-digest:queueAll')!({}) as { ok: boolean; message?: string }
+    expect(off.ok).toBe(false)
+    settingsMap['project-digest:enabled'] = true
+    const pid = seedProject('demo', 2)
+    const on = handlers.get('project-digest:queueAll')!({}) as { ok: boolean; queued?: number }
+    expect(on.ok).toBe(true)
+    expect(on.queued).toBeGreaterThanOrEqual(1)
+    // 给后台队列一点时间消化完再进 afterEach(关库),避免跨用例噪声
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const state = wrapper.sqlite
+      .prepare('SELECT last_covered_ts FROM project_digest_state WHERE project_id = ?')
+      .get(pid) as { last_covered_ts: number }
+    expect(state.last_covered_ts).toBeGreaterThan(0)
+  })
+
   it('latest 返回最新 digest 内容;status 汇总未覆盖数', async () => {
     makeCtx()
     const pid = seedProject('demo', 2)

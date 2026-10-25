@@ -133,6 +133,12 @@ export const api = {
       ok: boolean
       queued?: boolean
     }>,
+  digestQueueAll: (): Promise<{ ok: boolean; queued?: number; message?: string }> =>
+    window.memorysql.invoke('project-digest:queueAll') as Promise<{
+      ok: boolean
+      queued?: number
+      message?: string
+    }>,
   digestLatest: (projectId: number): Promise<DigestLatest | null> =>
     window.memorysql.invoke('project-digest:latest', { projectId }) as Promise<DigestLatest | null>,
   onDigestChanged: (cb: (p: { projectId: number }) => void): (() => void) =>

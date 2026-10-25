@@ -293,6 +293,29 @@ body {
 /* ---------- 会话侧栏:0 会话的 agent 弱化 ---------- */
 .side-item.dim, .capture-status.dim { opacity: .45; }
 
+/* ---------- 表单控件:暗色主题下的 select(默认白底非常刺眼) ---------- */
+select {
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--msql-fg);
+  border: 1px solid var(--msql-glass-border);
+  border-radius: var(--msql-radius-sm);
+  padding: 5px 8px;
+  font: inherit;
+}
+select:focus { outline: none; border-color: var(--msql-accent); }
+select option { background: #141a24; color: var(--msql-fg); }
+
+/* ---------- 「项目总结」弹窗 ---------- */
+.digest-modal-body { display: flex; gap: 12px; min-height: 300px; max-height: 60vh; margin-top: 8px; }
+.digest-modal-list { width: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.digest-modal-item.sel { background: var(--msql-accent-soft); border: 1px solid var(--msql-glass-border-strong); }
+.digest-modal-name { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.digest-modal-detail { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; border-left: 1px solid var(--msql-glass-border); padding-left: 12px; }
+
+/* ---------- 会话列表:项目组折叠 ---------- */
+.group-head { cursor: pointer; }
+.group-head .chev { color: hsl(var(--ph, 215) var(--ps, 55%) 68%); }
+
 .relay-fold {
   margin: 4px 14px; padding: 6px 12px; text-align: left; width: calc(100% - 28px);
   background: var(--msql-accent-soft); border: 1px dashed rgba(79, 140, 255, 0.3);
