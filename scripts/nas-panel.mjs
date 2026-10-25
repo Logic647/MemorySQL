@@ -125,6 +125,15 @@ function startProc(key, cmd, env, cwd) {
   }
   child.stdout.on('data', push)
   child.stderr.on('data', push)
+  // spawn 失败(ENOENT/EPERM)走 'error' 而非 'exit';不监听的话这是
+  // uncaughtException,直接杀掉整个面板进程(systemd 再拉起,表现为「点登录
+  // 面板就断连/没反应」)。必须转成可展示的输出 + 正常收尾。
+  child.on('error', (e) => {
+    push(`\n=== 启动失败: ${e?.message ?? e}(命令不存在或无权限执行)===\n`)
+    rec.done = true
+    rec.exitCode = -1
+    setTimeout(() => procs.delete(key), 30 * 60_000).unref()
+  })
   child.on('exit', (code) => {
     rec.done = true
     rec.exitCode = code
@@ -368,18 +377,24 @@ async function showReport(f) {
   $('#probeHint').textContent = '报告 ' + f;
 }
 
-function poll(key, el) {
+function poll(key, elId) {
   clearInterval(pollers[key]);
-  el.style.display = 'block';
+  // 每 tick 按 id 现取元素,不持有引用:30s 自动 load() 会重绘卡片 innerHTML,
+  // 旧引用会变成脱离文档的孤儿节点 —— 输出继续写到没人看得见的节点上,
+  // 表现恰是「点了登录,黑框闪一下就消失/没反应」
+  const el0 = document.getElementById(elId);
+  if (el0) el0.style.display = 'block';
   pollers[key] = setInterval(async () => {
-    const v = await fetch('/api/proc?key=' + encodeURIComponent(key)).then(r => r.json()).catch(() => null);
+    const el = document.getElementById(elId);
+    if (!el) return; // 元素还没渲染出来,下一 tick 再试
+    let v = null;
+    try { v = await fetch('/api/proc?key=' + encodeURIComponent(key)).then(r => r.json()); } catch (e) { v = null; }
     if (!v) return;
     el.textContent = v.out || '(等待输出…)';
     el.scrollTop = el.scrollHeight;
     if (v.done) {
       clearInterval(pollers[key]);
-      const line = '\\n=== 进程结束,退出码 ' + v.exitCode + ' ' + (v.exitCode === 0 ? '✅' : '—— 登录失败/被拒,看上面输出') + ' ===';
-      el.textContent += line;
+      el.textContent += '\\n=== 进程结束,退出码 ' + v.exitCode + ' ' + (v.exitCode === 0 ? '✅' : '—— 失败/被拒,看上面输出') + ' ===';
       if (key === 'probe') { $('#runProbe').disabled = false; load(); }
       else load();
     }
@@ -387,17 +402,30 @@ function poll(key, el) {
 }
 
 window.startLogin = async (id) => {
-  const r = await api('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
-  if (r.status === 409) { alert('该 CLI 的登录已在进行中'); return; }
-  poll('login:' + id, document.getElementById('out-' + id));
+  const elId = 'out-' + id;
+  try {
+    const r = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
+    // 409 = 该家登录已在进行中(可能上一轮还挂着等 OAuth):**直接附加到现有输出**
+    // —— 那里面就是等着的授权 URL。旧版这里弹 alert,用户侧被抑制时表现为
+    // 「点了没反应」,而他要的链接其实一直在服务端躺着
+    if (r.status !== 202 && r.status !== 409) {
+      const el = document.getElementById(elId);
+      if (el) { el.style.display = 'block'; el.textContent = '发起失败 HTTP ' + r.status; }
+      return;
+    }
+  } catch (e) {
+    const el = document.getElementById(elId);
+    if (el) { el.style.display = 'block'; el.textContent = '发起失败:' + e.message + '\\n(面板进程可能重启中,几秒后重试)'; }
+    return;
+  }
+  poll('login:' + id, elId);
 };
 
 $('#runProbe').onclick = async () => {
-  const r = await api('/api/probe', { method: 'POST' });
-  if (r.status === 409) { /* 已在跑,直接开始看输出 */ }
+  try { await api('/api/probe', { method: 'POST' }); } catch (e) { /* 已在跑或网络抖动:直接开始看输出 */ }
   $('#runProbe').disabled = true;
   $('#probeHint').textContent = '探针运行中(完整流程可能要几分钟:升级+会话每家最长 5 分钟)…';
-  poll('probe', $('#probeOut'));
+  poll('probe', 'probeOut');
 };
 
 async function load() {
@@ -406,7 +434,11 @@ async function load() {
   catch (e) { $('#sub').textContent = '加载失败:' + e.message; return; }
   renderAgents(st);
   renderSub(st);
-  if (st.running?.includes('probe')) { $('#runProbe').disabled = true; poll('probe', $('#probeOut')); }
+  // 刷新页面后,把仍在跑的进程输出接回来(挂着的登录里可能正是等授权的 URL)
+  for (const key of st.running ?? []) {
+    if (key === 'probe') { $('#runProbe').disabled = true; poll('probe', 'probeOut'); }
+    else if (/^login:[a-z]+$/.test(key)) poll(key, 'out-' + key.slice(6));
+  }
 }
 
 load();
