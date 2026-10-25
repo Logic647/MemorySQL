@@ -32,7 +32,14 @@
 - **npm 包名两处踩坑实锤**:qoder 真名 `@qoder-ai/qodercli`(bin `qoder`);**npm 上无 scope 的 `kimi-code` 是第三方抢注的 Groq 代理工具**(装了 `kimi --help` 直接是别家产品),官方是 `@moonshot-ai/kimi-code`(bin `kimi`)——两者都写进 NAS_AGENTS 注释与 DEPLOY.md
 - **Ubuntu 的 dfsg Node 不能跑 strip-types**:apt 的 nodejs 22.22.1(`+dfsg` 重打包)删了内置 amaro,`--experimental-strip-types` 报 `ERR_NO_TYPESCRIPT`;解法=官方 tarball(npmmirror 下载)解压到 `~/local/` + symlink 进 `/usr/local/bin`。**别用 NodeSource 脚本链**(被 Mimosa 提交守卫拦 curl|bash,且用户态安装本就更可控)
 - **探针两级 bug 首跑即撞出**:①check.ts 退出码 1/2 是设计行为,两台探针此前都当崩溃——真漂移当天探针恰好缺席,已修 ②claude-parser 链上 6 处无扩展名 import 在 Node 22(NAS)严格解析下炸、Node 24(开发机)宽容掩盖,已补 `.ts`
-- NAS 环境事实:Ubuntu 26.04.1、官方 Node v22.22.1 用户态安装、五家 CLI 已装(qoder 1.1.78/codebuddy 2.176.0/qwen 0.26.1/gemini 0.65.0/kimi 2.3.2)、NAS 上本就有 zcode+opencode 真实数据(🟢 白捡两家);cron 已装(每日 10:37,绝对路径 node);**上报端点暂注释**(PROBE_ENDPOINT),待云端多源版部署后启用——旧版单槽会互冲
+- NAS 环境事实:Ubuntu 26.04.1、官方 Node v22.22.1 用户态安装、五家 CLI 已装(qoder 1.1.78/codebuddy 2.176.0/qwen 0.26.1/gemini 0.65.0/kimi 2.3.2)、NAS 上本就有 zcode+opencode 真实数据(🟢 白捡两家);cron 已装(每日 10:37,绝对路径 node);上报端点已随云端部署激活(激活方式:probe.env 里 NAS_PENDING_ENDPOINT 改名 PROBE_ENDPOINT)
+
+**端到端验收(当日全部通过):**
+- **云端多源版已部署**(用户操作 `git pull` + `pm2 restart`,c68a692):带 token 的 `/api/state` 出现 `probeSources`,旧单槽 probe 被自动收养为 dev 源。**排查插曲:不带 token 的 curl 拿到 401 `{"error":"unauthorized"}`,grep -c 自然是 0——两次误判"还是旧代码"全是 401 假阴性,服务端开了鉴权的健康检查必须带 token**;另一插曲:pm2 error log 里的 EADDRINUSE 是历史残留,`pgrep`+`ss -tlnp` 双确认唯一进程后才排除
+- **双源上报互不覆盖**:dev(source:'dev',12 条)+ nas(source:'nas',12 条)先后上报,看板合并视图正确——opencode/zcode 双机都装、同级取较新(nas);codex/hermes 只有 dev 有(src=dev);闭源五家 src=nas 且带版本号;claudecode 双方都 absent、取较新——**判定全对**
+- **漂移注入 E2E**(核心验收):把 NAS 上 codebuddy 真实会话挪走、植入一个新格式 canary jsonl(模拟"上游换了格式";改台账 .ts 的方案被 Mimosa 守卫拦掉,反而逼出了更贴近真实的注入法)→ 探针 🔴 → 上报 → **看板呈现 codebuddy drift + src=nas + v2.176.0 + 详情直指具体文件** → 恢复真实数据重跑 → 回到 🟢。**"NAS 发现漂移到看板变红"全链路实测打通**
+- 🟠 stale 降级真机自证(gemini 旧数据被降级,不假绿)
+- **遗留运维问题:开发机计划任务不可靠**——10-24 错过未补跑(StartWhenAvailable=False/WakeToRun=False),10-25 12:06 补跑被拒(0x800710E0「操作员拒绝请求」)。先于本次改造存在;dev 源已手动补报,看板数据是新的。修复建议:任务计划程序 GUI 勾选「错过计划开始后尽快启动」(GUI 改不改变注册身份;命令行 Set-ScheduledTask 会把它重注册成管理员任务,违背"非管理员注册只在登录态跑"的现状)。dev 源的家(zcode/opencode/codex/claudecode/hermes)本就有白盒 changelog 兜底,此缺口可容忍
 
 ---
 
