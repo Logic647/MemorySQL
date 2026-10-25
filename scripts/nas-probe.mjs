@@ -145,7 +145,6 @@ function saveNasState(st) {
   fs.writeFileSync(tmp, JSON.stringify(st, null, 2), 'utf-8')
   fs.renameSync(tmp, NAS_STATE)
 }
-
 /** 台账 → 每 agent 的数据根。被赞助的 agent 必须在台账里,否则跳过并记录 */
 function dataRootsFromLedger() {
   const raw = JSON.parse(fs.readFileSync(LEDGER, 'utf-8'))
@@ -172,7 +171,7 @@ function updateAndSession(ledgerRoots, nasState) {
   const sponsored = {}
   for (const a of NAS_AGENTS) {
     if (!ledgerRoots[a.id]) continue
-    const fact = { version: null, updatedAt: null, dataAt: null, versionError: null, sessionError: null }
+    const fact = { version: null, updatedAt: null, dataAt: null, versionError: null, sessionError: null, sessionRan: false }
     sponsored[a.id] = fact
 
     const v1 = runStep(a.versionCmd, 20_000)
@@ -214,6 +213,7 @@ function updateAndSession(ledgerRoots, nasState) {
       const v2 = runStep(a.versionCmd, 20_000)
       fact.version = v2.ok ? firstLine(v2.out) : version
       fact.updatedAt = new Date().toISOString()
+      fact.sessionRan = true
       log(`${a.id}: ${prev?.version ?? '(首次)'} → ${fact.version},跑最小会话逼新格式…`)
       const sess = runStep(a.sessionCmd, 180_000)
       if (!sess.ok) {
@@ -223,6 +223,7 @@ function updateAndSession(ledgerRoots, nasState) {
     } else {
       fact.version = version
       fact.updatedAt = prev.updatedAt ?? null
+      fact.sessionRan = false
       log(`${a.id}: 版本未变(${version}),跳过升级与会话`)
     }
     fact.dataAt = scanLatestMtime(ledgerRoots[a.id], HOME)
@@ -324,7 +325,7 @@ function renderReport(data, sponsored, downgraded) {
 async function report(data) {
   if (!endpoint) {
     log('未设 PROBE_ENDPOINT,跳过云端上报')
-    return
+    return { ok: null }
   }
   const url = /\/api\/probe\/?$/.test(endpoint)
     ? endpoint
@@ -370,20 +371,22 @@ async function report(data) {
 
     if (!res) {
       log(`云端上报失败(不影响本地报告):${lastErr}`)
-      return
+      return { ok: false, error: lastErr }
     }
     if (!res.ok) {
       log(`云端上报失败 HTTP ${res.status}(${url}) —— ${lastWhy}`)
-      return
+      return { ok: false, error: `HTTP ${res.status} ${lastWhy}` }
     }
     const ack = await res.json().catch(() => null)
     if (!ack || ack.ok !== true) {
       log(`云端未确认接收:响应不是预期 JSON(${url})`)
-      return
+      return { ok: false, error: '响应不是预期 JSON' }
     }
     log(`云端上报成功(source=${ack.source ?? 'nas'},已接收 ${ack.accepted} 条)`)
+    return { ok: true }
   } catch (e) {
     log(`云端上报失败(不影响本地报告):${e?.message ?? e}`)
+    return { ok: false, error: e?.message ?? String(e) }
   }
 }
 
@@ -414,6 +417,34 @@ const blackbox = runBlackbox()
 const { results, downgraded } = applyFreshness(blackbox.results, sponsored)
 const data = { ...blackbox, results }
 
+/**
+ * lastRun:面板(scripts/nas-panel.mjs)的唯一数据源 —— 每轮结束把「这轮发生了
+ * 什么」压成结构化摘要落盘。没有它,面板只能解析 markdown 报告或 SSH 翻日志。
+ * 登录态信号 = sessionOk:本轮跑了最小会话(版本变了)记本轮成败;没跑(版本
+ * 未变)沿用上轮值 —— 没跑会话就没有新信号,不能把「没测」写成「通过」。
+ * upload 由 report() 回填(上报发生在写盘之后)。
+ */
+const prevAgents = nasState.lastRun?.agents ?? {}
+nasState.lastRun = {
+  at: nasState.lastRunAt,
+  agents: Object.fromEntries(
+    Object.entries(sponsored).map(([id, s]) => {
+      const ran = s.sessionRan === true
+      return [
+        id,
+        {
+          version: s.version,
+          verdict: results.find((r) => r.id === id)?.verdict ?? null,
+          sessionOk: ran ? !s.sessionError : (prevAgents[id]?.sessionOk ?? null),
+          sessionAt: ran ? nasState.lastRunAt : (prevAgents[id]?.sessionAt ?? null),
+          sessionError: ran && s.sessionError ? s.sessionError : null,
+          dataAt: s.dataAt ?? null
+        }
+      ]
+    })
+  )
+}
+
 if (!dryRun) saveNasState({ ...nasState, lastError: null })
 
 const rep = renderReport(data, sponsored, downgraded)
@@ -425,7 +456,12 @@ if (dryRun) {
   const file = path.join(REPORTS, `${rep.day}.md`)
   fs.writeFileSync(file, rep.text, 'utf-8')
   log(`报告已写入 ${file}`)
-  await report(data)
+  // 上报结果回填 lastRun 并再落一次盘 —— 面板要能显示「上报到云端成没成」
+  const upload = await report(data)
+  const st = loadNasState()
+  st.lastRun = nasState.lastRun
+  st.lastRun.upload = { at: new Date().toISOString(), ok: upload.ok, error: upload.error ?? null }
+  saveNasState({ ...st, lastError: null })
 }
 
 const drift = results.filter((r) => r.verdict === 'drift')

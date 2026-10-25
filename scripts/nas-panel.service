@@ -1,0 +1,25 @@
+# NAS 探针面板常驻服务 —— 安装(在 NAS 上):
+#   sudo install -m 644 scripts/nas-panel.service /etc/systemd/system/nas-panel.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now nas-panel
+#   curl -s http://127.0.0.1:8789/api/state | head -c 200
+#
+# %h = User= 的 home(systemd specifier),换用户/换 home 不用改这里。
+# 默认 0.0.0.0:8789(家庭内网);要鉴权加 Environment=PANEL_TOKEN=…,
+# 改后 systemctl daemon-reload && systemctl restart nas-panel。
+# ⚠ 面板能触发登录命令与探针,只在内网用,路由器上不要做端口映射。
+[Unit]
+Description=MemorySQL NAS probe panel (black-box CLI login + upload monitor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=logic
+ExecStart=%h/local/node-v22.22.1-linux-x64/bin/node %h/apps/MemorySQL/scripts/nas-panel.mjs
+Restart=always
+RestartSec=5
+# 面板本身无状态(状态都在 ~/.memorysql-nas),重启无损
+Environment=PANEL_PORT=8789
+
+[Install]
+WantedBy=multi-user.target

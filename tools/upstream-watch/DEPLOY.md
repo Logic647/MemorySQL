@@ -81,6 +81,16 @@ chmod 600 ~/.memorysql-nas/probe.env
 1. **没有新会话,检查到的只是旧格式** —— agent 升级本身不触发任何检测,格式变更只在该版本实际写数据时暴露。runner 因此把「升级 → 逼最小会话」做成原子步骤;数据 mtime 早于版本更新时间时,ok 会被降级成 🟠 stale(`tools/upstream-watch/nas-freshness.mjs`),**宁可黄也不假绿**。看板出现 🟠 = 该 agent 可能登录过期,需人工 SSH 上 NAS 重登后手动跑一轮。
 2. **NAS 侧报告写 `~/memorysql-nas-reports/`(仓库外)** —— 写进仓库会弄脏工作区,让 runner 开头的每日 `git pull` 挂掉。版本元数据在 `~/.memorysql-nas/versions.json`。
 
+### NAS 探针面板(`http://<nas>:8789`)—— 浏览器里的统一登录 + 上报监测
+
+SSH 之外的第二入口,`scripts/nas-panel.mjs`(零依赖,与探针同机):
+
+- **统一登录**:五家 CLI 各一个「发起登录」按钮 → 后台跑该家的 login 命令,URL/ASCII 二维码流式显示在页面(手机打开也能扫);CLI 坚持要 TUI 时,卡片上直接给 SSH 备用命令
+- **上报监测**:每家的版本/登录态(最近最小会话成败)/判定/数据日期;探针上轮时间、云端上报成败、历史报告在线看;「跑一轮探针」按钮 = 手动触发完整链路并实时看输出
+- **数据源**:全部来自 `~/.memorysql-nas/versions.json` 的 `lastRun`(nas-probe 每轮落盘的 结构化摘要)—— 面板无自身状态,重启无损
+- **常驻**:`scripts/nas-panel.service`(systemd,`%h` 展开 home),`sudo install -m 644 scripts/nas-panel.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now nas-panel`
+- **安全**:登录命令走 LOGIN_TARGETS 白名单(POST id 必须命中表项,无任意命令路径);报告接口只允许 `YYYY-MM-DD.md` 基名(防穿越);默认绑 0.0.0.0 家庭内网无鉴权(与 ollama/nas-admin 同 posture),设 `PANEL_TOKEN` 即启用 Bearer/?token= 鉴权。**⚠ 面板能触发命令执行,只在内网用,路由器不要做端口映射**
+
 ## 部署到阿里云(实测环境)
 
 实测:Node v20.20.2 / linux-x64,`api.github.com` 直连可用(200,成功率 100%,均 310ms),**无需代理**。
