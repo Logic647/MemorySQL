@@ -48,9 +48,9 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt in
 git clone https://github.com/Logic647/MemorySQL.git ~/apps/memorysql && cd ~/apps/memorysql && npm install
 
 # 3. 五家 CLI + 各登录一次(**唯一需要人的步骤**,登录态持久在各自 home 目录)
-npm i -g @qoder-ai/qoder-cli @tencent-ai/codebuddy-code @qwen-code/qwen-code @google/gemini-cli @moonshot-ai/kimi-cli
-#   ⚠ 包名是调研值 —— 部署时先 `npm view <name> version` 核对,404 就查官方文档;
-#   表驱动配置在 scripts/nas-probe.mjs 的 NAS_AGENTS(升级/版本/会话三条命令都在那)
+#    包名/bin 名按 2026-10-25 npm registry 实查;Qoder CN 变体另装 @qodercn-ai/qoderclicn(bin qodercn)
+#    ⚠ npm 上无 scope 的 `kimi-code` 是第三方抢注的 Groq 代理工具,官方包带 @moonshot-ai scope
+npm i -g @qoder-ai/qodercli @tencent-ai/codebuddy-code @qwen-code/qwen-code @google/gemini-cli @moonshot-ai/kimi-code
 
 # 4. 裸跑验证(登录并各产生一次会话后:五家应 🟢,开发机专属五家 🟡 是正常)
 node --experimental-strip-types upstream/check.ts
