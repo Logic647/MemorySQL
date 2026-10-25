@@ -26,6 +26,14 @@
 
 **待办:** ①NAS 实测校准 `NAS_AGENTS` 的 npm 包名/CLI 参数(表内已注明是调研值,报错先 `npm view` 核对)②登录后裸跑 check.ts 验证五家 🟢 ③端到端验收:台账注入假必需列→NAS 跑→看板 🔴→恢复;挪走数据目录→stale 而非 ok;dev+nas 双源互不覆盖(冒烟已测,真机再过一遍)④NAS 探针时段唤醒策略(NAS 有 suspend 习惯)。
 
+**首日实战(当日部署完成,探针两轮 dry-run,收获全在计划外):**
+- **上线第一天就抓到真实漂移**:codebuddy `codebuddy -p`(国内版免登录可跑)写出真实会话,文档调研版 parser 解析 **0 条** → 🔴。真机形态:type=message + **顶层** role/content + content 块 `input_text`/`output_text`(OpenAI Responses 风格)+ **毫秒** epoch 时间戳,非 Claude 的 .message 壳 —— parser 已按真机样本加法式校准并锁 fixture(84001b6),NAS 复测 🟢。**台账「本机未装,格式来自文档调研」的预言成真,这正是管线存在的意义**
+- **🟠 stale 防线真机自证**:gemini 在 NAS 上有旧 `~/.gemini` 数据 → 检查报 🟢(json 源弱判定),但数据早于版本更新时间 → 被 applyFreshness 正确降级 🟠,没有假绿
+- **npm 包名两处踩坑实锤**:qoder 真名 `@qoder-ai/qodercli`(bin `qoder`);**npm 上无 scope 的 `kimi-code` 是第三方抢注的 Groq 代理工具**(装了 `kimi --help` 直接是别家产品),官方是 `@moonshot-ai/kimi-code`(bin `kimi`)——两者都写进 NAS_AGENTS 注释与 DEPLOY.md
+- **Ubuntu 的 dfsg Node 不能跑 strip-types**:apt 的 nodejs 22.22.1(`+dfsg` 重打包)删了内置 amaro,`--experimental-strip-types` 报 `ERR_NO_TYPESCRIPT`;解法=官方 tarball(npmmirror 下载)解压到 `~/local/` + symlink 进 `/usr/local/bin`。**别用 NodeSource 脚本链**(被 Mimosa 提交守卫拦 curl|bash,且用户态安装本就更可控)
+- **探针两级 bug 首跑即撞出**:①check.ts 退出码 1/2 是设计行为,两台探针此前都当崩溃——真漂移当天探针恰好缺席,已修 ②claude-parser 链上 6 处无扩展名 import 在 Node 22(NAS)严格解析下炸、Node 24(开发机)宽容掩盖,已补 `.ts`
+- NAS 环境事实:Ubuntu 26.04.1、官方 Node v22.22.1 用户态安装、五家 CLI 已装(qoder 1.1.78/codebuddy 2.176.0/qwen 0.26.1/gemini 0.65.0/kimi 2.3.2)、NAS 上本就有 zcode+opencode 真实数据(🟢 白捡两家);cron 已装(每日 10:37,绝对路径 node);**上报端点暂注释**(PROBE_ENDPOINT),待云端多源版部署后启用——旧版单槽会互冲
+
 ---
 
 ## 2026-10-25 · Tauri 评估落地:最小 spike 实测(体积结论强化、内存收益有限,维持「现在不迁」)
