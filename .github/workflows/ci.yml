@@ -111,8 +111,9 @@ jobs:
 
       # 语义组件 zip:语义检索的原生栈已排除出安装包,这里按 runner 平台打出
       # native-runtime-<plat>-<arch>.zip,随 artifact 上传;tag 时补挂到 Release。
+      # 脚本是 .ts(Node ≥23.6 原生跑 type stripping,runner 为 Node 24)
       - name: Build native runtime zip (semantic)
-        run: node scripts/gen-native-runtime.mjs --out dist
+        run: node scripts/gen-native-runtime.ts --out dist
 
       - name: Upload installer artifact (Windows)
         uses: actions/upload-artifact@v4

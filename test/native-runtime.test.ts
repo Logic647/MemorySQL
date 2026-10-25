@@ -5,8 +5,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import AdmZip from 'adm-zip'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-// @ts-expect-error 构建脚本是 .mjs 无类型声明;测试里当纯函数用
-import { collectClosure, keepOrtEntry } from '../scripts/gen-native-runtime.mjs'
+// 用 .ts 而非 .mjs:vitest 经 vite 加载 .mjs 在 CI Windows 上稳定炸
+// SyntaxError(v4.1.11);脚本本体已改为 .ts(Node ≥23.6 原生 type stripping)
+import { collectClosure, keepOrtEntry } from '../scripts/gen-native-runtime'
 import {
   downloadNativeRuntime,
   isRuntimeCompatible,

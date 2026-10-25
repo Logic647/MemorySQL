@@ -9,9 +9,13 @@
  * 二进制(~200MB),只保留目标平台的 bin/napi-v3/<plat>/<arch>,不裁剪的话
  * zip 会到 ~70MB。
  *
- * 用法:node scripts/gen-native-runtime.mjs [--out dist] [--platform win32] [--arch x64]
+ * 用法:node scripts/gen-native-runtime.ts [--out dist] [--platform win32] [--arch x64]
  * 产物:<out>/native-runtime-<platform>-<arch>.zip(zip 根含 manifest.json + node_modules/…)
  *      manifest 的 appVersion 必须与运行中的应用版本一致(升级后重下组件)。
+ *
+ * ⚠ 用 .ts 而非 .mjs 是刻意的:Node ≥23.6 原生跑 type stripping(CI/本机均
+ * Node 24),而单测要 import 这里的纯函数 —— 测试经 vitest import .mjs 在
+ * CI Windows 上稳定炸 SyntaxError(v4.1.11,根因未明),纯 TS 链路则一路绿。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -22,10 +26,20 @@ import AdmZip from 'adm-zip'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(HERE, '..')
 
+interface LockPackage {
+  version?: string
+  dependencies?: Record<string, string>
+  optionalDependencies?: Record<string, string>
+}
+
+interface LockFile {
+  packages?: Record<string, LockPackage>
+}
+
 /** 从 lock 的 packages 树收集依赖闭包(含 optionalDependencies;按 Node 解析回溯嵌套)。 */
-export function collectClosure(lock, rootName) {
+export function collectClosure(lock: LockFile, rootName: string): string[] {
   const packages = lock.packages ?? {}
-  const resolveFrom = (dir, name) => {
+  const resolveFrom = (dir: string, name: string): string | null => {
     let d = dir
     for (;;) {
       const cand = d ? `${d}/node_modules/${name}` : `node_modules/${name}`
@@ -37,14 +51,14 @@ export function collectClosure(lock, rootName) {
   }
   const root = resolveFrom('', rootName)
   if (!root) throw new Error(`package-lock 中找不到 ${rootName}`)
-  const seen = new Set()
+  const seen = new Set<string>()
   const queue = [root]
   while (queue.length) {
-    const cur = queue.shift()
+    const cur = queue.shift() as string
     if (seen.has(cur)) continue
     seen.add(cur)
     const meta = packages[cur] ?? {}
-    for (const sec of ['dependencies', 'optionalDependencies']) {
+    for (const sec of ['dependencies', 'optionalDependencies'] as const) {
       for (const name of Object.keys(meta[sec] ?? {})) {
         const r = resolveFrom(cur, name)
         if (r && !seen.has(r)) queue.push(r)
@@ -55,15 +69,15 @@ export function collectClosure(lock, rootName) {
 }
 
 /** onnxruntime-node 包内只留**目标平台**的推理二进制。rel 为相对包根的 POSIX 路径。 */
-const ORT_BIN_KEEP = { win32: ['x64'], linux: ['x64'], darwin: ['arm64', 'x64'] }
-export function keepOrtEntry(rel, platform) {
+const ORT_BIN_KEEP: Record<string, string[]> = { win32: ['x64'], linux: ['x64'], darwin: ['arm64', 'x64'] }
+export function keepOrtEntry(rel: string, platform: string): boolean {
   if (!rel.startsWith('bin/napi-v3/')) return true
   const rest = rel.slice('bin/napi-v3/'.length)
   const [plat, archDir = ''] = rest.split('/')
   return plat === platform && (ORT_BIN_KEEP[platform] ?? []).includes(archDir)
 }
 
-function walk(dir, out = []) {
+function walk(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name)
     if (e.isDirectory()) walk(p, out)
@@ -72,14 +86,14 @@ function walk(dir, out = []) {
   return out
 }
 
-export async function main() {
+async function main(): Promise<void> {
   const args = process.argv.slice(2)
-  const argOf = (name) => {
+  const argOf = (name: string): string | null => {
     const i = args.indexOf(name)
     return i >= 0 ? args[i + 1] : null
   }
-  const appPkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf-8'))
-  const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf-8'))
+  const appPkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf-8')) as { version: string }
+  const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf-8')) as LockFile
   const platform = argOf('--platform') ?? process.platform
   const arch = argOf('--arch') ?? process.arch
   const outDir = path.resolve(ROOT, argOf('--out') ?? 'dist')
@@ -88,10 +102,16 @@ export async function main() {
 
   const closure = collectClosure(lock, 'fastembed').sort()
   const zip = new AdmZip()
-  const manifest = { appVersion: appPkg.version, platform, arch, packages: [], generatedAt: new Date().toISOString() }
+  const manifest = {
+    appVersion: appPkg.version,
+    platform,
+    arch,
+    packages: [] as Array<{ name: string; version: string }>,
+    generatedAt: new Date().toISOString()
+  }
 
   for (const key of closure) {
-    const meta = lock.packages[key] ?? {}
+    const meta = lock.packages?.[key] ?? {}
     const srcDir = path.join(ROOT, key)
     if (!fs.existsSync(srcDir)) {
       // 平台相关的 optional 包在当前 runner 未装(如 @anush008/tokenizers-<plat>)——
@@ -116,7 +136,7 @@ export async function main() {
 }
 
 const invokedDirectly =
-  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  process.argv[1] != null && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 if (invokedDirectly) {
   main().catch((err) => {
     console.error(err)
