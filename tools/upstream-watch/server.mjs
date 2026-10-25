@@ -24,6 +24,7 @@ import { summarize } from './summarize.mjs'
 import { ledgerFingerprint, compareFingerprints } from './fingerprint.mjs'
 import { mapLimit } from './map-limit.mjs'
 import { mergeProbes } from './merge-probes.mjs'
+import { probeHealthView } from './probe-health.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 // STATE 可用环境变量覆盖,默认仍在 service 目录里。
@@ -244,7 +245,11 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
   if (!auth(req, res)) return
 
-  if (url.pathname === '/api/state') return json(res, 200, state)
+  if (url.pathname === '/api/state') {
+    // probeHealth 现算不落盘:age 随时间流逝,存进 state.json 的 age 会撒谎
+    // (state 每次写盘都会把它带上,读回来就是旧时刻的"健康")。
+    return json(res, 200, { ...state, probeHealth: probeHealthView(state.probeSources) })
+  }
 
   /**
    * 本机黑盒探针上报。云端只有白盒(关键词粗筛,必然有误报),黑盒探测真实
@@ -357,6 +362,14 @@ const server = http.createServer((req, res) => {
   // 返回 index.html + 200,探针据此误判「上报成功」。假成功比直接失败更糟。
   if ((url.pathname === '/' || url.pathname === '/index.html') && req.method === 'GET') {
     const html = fs.readFileSync(path.join(HERE, 'web', 'index.html'), 'utf-8')
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    return res.end(html)
+  }
+
+  // 黑盒探针中心(聚合平台):源心跳 + agent×源 判定矩阵 + 登录态面板。
+  // 与主看板同一 token(统一登录),只允许 GET,理由同上。
+  if ((url.pathname === '/probe' || url.pathname === '/probe.html') && req.method === 'GET') {
+    const html = fs.readFileSync(path.join(HERE, 'web', 'probe.html'), 'utf-8')
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
     return res.end(html)
   }

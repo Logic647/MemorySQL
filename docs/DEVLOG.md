@@ -41,6 +41,8 @@
 - 🟠 stale 降级真机自证(gemini 旧数据被降级,不假绿)
 - **遗留运维问题:开发机计划任务不可靠**——10-24 错过未补跑(StartWhenAvailable=False/WakeToRun=False),10-25 12:06 补跑被拒(0x800710E0「操作员拒绝请求」)。先于本次改造存在;dev 源已手动补报,看板数据是新的。修复建议:任务计划程序 GUI 勾选「错过计划开始后尽快启动」(GUI 改不改变注册身份;命令行 Set-ScheduledTask 会把它重注册成管理员任务,违背"非管理员注册只在登录态跑"的现状)。dev 源的家(zcode/opencode/codex/claudecode/hermes)本就有白盒 changelog 兜底,此缺口可容忍
 
+**黑盒探针中心 `/probe`(同日追加,用户要的聚合平台):** 多源上线后马上暴露两个运维盲点——①探针自己失联没人管(恰好 dev 计划任务就真错过了两天,看板照常发绿)②想知道「NAS 上哪家 CLI 该重登」得 SSH 上 NAS 翻报告。新增看板第二页(`web/probe.html`,与主看板同套浅色主题、各自内联 CSS):**源心跳**(probe-health.mjs 现算注入 /api/state,不落盘——存下来的 age 是谎言;≤36h 正常/≤72h 迟到/>72h 失联/空上报单独一态「比失联更可疑」)、**agent×源 判定矩阵**(每家由谁看守、双源判定并排,点单元看 detail)、**登录态面板**(🟠 集中呈现+处置指引,不用 SSH)、**统一登录**(两页共用 localStorage.msql_token,首次访问给 token 输入框,登录一次全站通用;URL ?token= 仍优先便于书签)。**开发顺序坑自记:页面脚本曾在 load() 之前调渲染函数,STATE=null 直接 TypeError 整页空白——HTML 内联 JS 无任何 typecheck/bundler 把关,冒烟测试加了 `new Function(script)` 编译断言**(只编译不执行,同类事故 DEVLOG 已记过两次)。vitest **483:483**(+8)。部署:服务器 `git pull && pm2 restart msql-upstream-watch`,入口在主看板筛选条右侧
+
 ---
 
 ## 2026-10-25 · Tauri 评估落地:最小 spike 实测(体积结论强化、内存收益有限,维持「现在不迁」)

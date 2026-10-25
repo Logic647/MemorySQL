@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>黑盒探针中心 · MemorySQL 上游监控</title>
+<style>
+/* 与主看板(index.html)同一套浅色主题 —— 复制而非引用:服务是零依赖单文件
+   部署,两个页面各自内联,改主题时两边同步。 */
+:root{
+  --bg:#f7f8fa; --surface:#fff; --surface-2:#fafbfc;
+  --border:#e4e7ec; --border-strong:#d0d5dd;
+  --fg:#1a202c; --fg-2:#475467; --fg-3:#8a94a6;
+  --accent:#2563eb; --accent-soft:#eff4ff;
+  --high:#d92d20; --high-soft:#fef3f2;
+  --med:#b54708; --med-soft:#fffaeb;
+  --low:#475467; --ok:#067647; --ok-soft:#ecfdf3;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.06);
+  --radius:10px;
+  --mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font:14px/1.55 -apple-system,'Segoe UI','Microsoft YaHei',sans-serif;
+  padding:28px 32px 60px;max-width:1400px;margin-inline:auto;
+}
+h1{font-size:19px;font-weight:650;margin:0 0 3px;letter-spacing:-.01em}
+.sub{color:var(--fg-3);font-size:13px;margin-bottom:20px}
+.sub b{color:var(--fg-2);font-weight:600}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.top{display:flex;gap:10px;align-items:baseline;justify-content:space-between;flex-wrap:wrap;margin-bottom:6px}
+
+/* 探针源心跳卡 */
+.srcs{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 22px}
+.src{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:12px 16px;min-width:250px;flex:1;max-width:430px;
+}
+.src .nm{font-weight:650;font-size:13.5px;display:flex;align-items:center;gap:8px}
+.src .row{display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;margin-top:6px}
+.src .k{font-size:11px;color:var(--fg-3);width:44px;flex:none}
+.src .v{font-size:12px;color:var(--fg-2);font-variant-numeric:tabular-nums}
+.dot{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block}
+.dot.ok{background:#12b76a}
+.dot.late{background:#f79009}
+.dot.lost,.dot.empty{background:var(--high)}
+.src.bad{border-color:#fecdca;background:#fffbfb}
+
+/* 登录态/新鲜度面板 */
+.stalebox{
+  background:#fffaeb;border:1px solid #f9dbaf;border-radius:var(--radius);
+  padding:12px 16px;margin:0 0 22px;font-size:13px;line-height:1.7;color:#93370d;
+}
+.stalebox .k{font-weight:650;display:block;margin-bottom:2px}
+.stalebox code{font-family:var(--mono);font-size:11.5px;background:#fff;padding:0 5px;border-radius:4px;border:1px solid #f9dbaf}
+.stalebox.none{background:var(--surface);border-color:var(--border);color:var(--fg-3)}
+
+/* 判定矩阵 */
+.matrix{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+        box-shadow:var(--shadow);overflow:auto}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap}
+th{background:var(--surface-2);font-size:11.5px;color:var(--fg-2);font-weight:650;
+   position:sticky;top:0;border-bottom:1px solid var(--border-strong)}
+td.ag{font-family:var(--mono);font-weight:600}
+td.ag .nm{font-family:inherit;font-weight:400;color:var(--fg-3);margin-left:7px;font-size:11px}
+tr:hover td{background:var(--surface-2)}
+.cell{display:inline-flex;gap:6px;align-items:baseline}
+.cell .v{font-family:var(--mono);font-size:11px;color:var(--fg-3)}
+.cell.no{color:var(--fg-3);opacity:.55}
+.miss{color:var(--fg-3);opacity:.35}
+.badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:5px;border:1px solid transparent;white-space:nowrap}
+.b-ok{color:var(--ok);background:var(--ok-soft);border-color:#abefc6}
+.b-high{color:var(--high);background:var(--high-soft);border-color:#fecdca}
+.b-medium{color:var(--med);background:var(--med-soft);border-color:#fedf89}
+.b-none{color:var(--fg-3);background:var(--surface-2);border-color:var(--border)}
+.b-bb{color:#667085;background:var(--surface-2);border-color:var(--border-strong)}
+.b-checker{color:#6941c6;background:#f4f3ff;border-color:#d9d6fe}
+
+/* 详情抽屉:点矩阵单元看 detail */
+.detail{
+  margin-top:14px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+  padding:10px 13px;font-family:var(--mono);font-size:11.5px;color:var(--fg-2);
+  min-height:20px;white-space:pre-wrap;word-break:break-word;
+}
+.legend{margin:16px 2px 0;font-size:11.5px;color:var(--fg-3);line-height:1.9}
+.legend b{color:var(--fg-2);font-weight:600}
+
+/* 统一登录:两页共用同一 token(localStorage.msql_token),一次登录全站通用 */
+.login{
+  margin:30px auto;max-width:430px;background:var(--surface);border:1px solid var(--border-strong);
+  border-radius:12px;box-shadow:var(--shadow);padding:26px 28px;text-align:center;
+}
+.login p{color:var(--fg-2);font-size:13px;margin:0 0 14px}
+.login input{
+  width:100%;padding:9px 11px;border:1px solid var(--border-strong);border-radius:8px;
+  background:var(--surface-2);font:13px var(--mono);margin-bottom:12px;
+}
+.login input:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+button{font:inherit;font-size:13px;font-weight:550;cursor:pointer;
+  border:1px solid var(--border-strong);background:var(--surface);color:var(--fg-2);
+  padding:8px 15px;border-radius:8px;transition:.14s}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.primary:hover{background:#1d4ed8;color:#fff}
+@media (max-width:720px){body{padding:20px 16px 48px}.src{min-width:100%}}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>黑盒探针中心</h1>
+  <div style="font-size:12.5px"><a href="./">← 总体看板</a></div>
+</div>
+<div class="sub" id="sub">聚合各探针源(dev / nas)的上报:谁在报、报了什么、每家 agent 由谁看守。</div>
+
+<div id="login" style="display:none" class="login">
+  <p>黑盒探针中心与看板共用同一 token(即探针上报的 PROBE_TOKEN)。<br>登录一次,两个页面通用。</p>
+  <input id="tokin" type="password" placeholder="粘贴 token" />
+  <button class="primary" id="tokgo">进入</button>
+</div>
+
+<div id="app" style="display:none">
+  <div class="srcs" id="srcs"></div>
+  <div id="stalebox"></div>
+  <div class="matrix"><table id="mtx"></table></div>
+  <div class="detail" id="detail">点击上方矩阵里的任意判定单元,这里显示它的完整 detail。</div>
+  <div class="legend" id="legend">
+    <b>判定</b>:🟢 匹配 · 🔴 漂移(需适配发版) · 🟣 检查器故障 · 🟠 数据过期(多半登录过期) · 🟡 本机未装 · ⚪ 仅黑盒 ·
+    <span class="miss">—</span> 该源未报这家<br>
+    <b>心跳</b>:<span class="dot ok"></span> 正常(≤36h) · <span class="dot late"></span> 迟到(≤72h,探针机器该看了) ·
+    <span class="dot lost"></span> 失联(>72h,黑盒数据不可信) · <span class="dot empty"></span> 空上报(探针活着但交了白卷)<br>
+    数据源:各探针源自己的上报;合并口径见主看板。
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const tok = new URLSearchParams(location.search).get('token') ?? localStorage.getItem('msql_token') ?? '';
+const U = (p) => p + (tok ? '?token=' + encodeURIComponent(tok) : '');
+const H = tok ? { Authorization: 'Bearer ' + tok } : {};
+
+const esc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* 统一登录:与主看板同一 localStorage 键。URL 带 token 时优先 URL(便于书签分享),
+   输入框登录则写入 localStorage 并剥掉 query,避免错 URL token 反复覆盖正确值。 */
+function showLogin() { $('#login').style.display = 'block'; }
+$('#tokgo').onclick = () => {
+  const v = $('#tokin').value.trim();
+  if (!v) return;
+  localStorage.setItem('msql_token', v);
+  location.href = location.pathname;
+};
+$('#tokin').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#tokgo').click(); });
+
+/* 源 id → 人话。新源(第三台探针)没有映射时显示原始 id。 */
+const SRC_LABEL = { dev: '本机 · 开发机', nas: 'NAS · 黑盒站' };
+const VERDICT = {
+  ok:            ['b-ok','🟢 匹配'],
+  drift:         ['b-high','🔴 漂移'],
+  checker_error: ['b-checker','🟣 检查器故障'],
+  stale:         ['b-medium','🟠 数据过期'],
+  absent:        ['b-none','🟡 本机未装'],
+  blackbox_only: ['b-bb','⚪ 仅黑盒']
+};
+const HEALTH = {
+  ok:    ['正常', ''],
+  late:  ['迟到', '—— 探针错过了一轮,去那台机器看看 cron / 计划任务'],
+  lost:  ['失联', '—— 超过两天没有上报,黑盒数据已不可信'],
+  empty: ['空上报', '—— 探针跑过但交了白卷,比失联更可疑']
+};
+
+function ago(iso) {
+  const h = (Date.now() - Date.parse(iso)) / 3600000;
+  if (Number.isNaN(h)) return iso;
+  if (h < 1) return Math.max(1, Math.round(h * 60)) + ' 分钟前';
+  if (h < 48) return Math.round(h) + ' 小时前';
+  return Math.round(h / 24) + ' 天前';
+}
+
+let STATE = null;
+
+async function load() {
+  let r;
+  try { r = await fetch(U('/api/state'), { headers: H }); }
+  catch (e) { $('#sub').textContent = '加载失败:' + e.message; return; }
+  if (r.status === 401) { showLogin(); $('#sub').textContent = '需要 token 才能查看。'; return; }
+  STATE = await r.json();
+  $('#app').style.display = 'block';
+  renderSources();
+  renderStale();
+  renderMatrix();
+}
+
+function renderSources() {
+  const ps = STATE.probeSources ?? {};
+  const ph = STATE.probeHealth ?? {};
+  const keys = Object.keys(ps);
+  $('#srcs').innerHTML = keys.length ? keys.map(k => {
+    const h = ph[k] ?? { state: 'empty', checkedAt: ps[k]?.checkedAt ?? null, count: 0, ageHours: null };
+    const [hl, hint] = HEALTH[h.state] ?? [h.state, ''];
+    const bad = h.state !== 'ok';
+    return `<div class="src ${bad ? 'bad' : ''}">
+      <div class="nm"><span class="dot ${h.state}"></span>${esc(SRC_LABEL[k] ?? k)}
+        <span style="font-weight:400;color:var(--fg-3);font-size:11.5px;font-family:var(--mono)">${esc(k)}</span></div>
+      <div class="row"><span class="k">状态</span><span class="v"><b>${hl}</b> ${esc(hint)}</span></div>
+      <div class="row"><span class="k">上报</span><span class="v">${h.checkedAt ? esc(String(h.checkedAt).slice(0, 16).replace('T', ' ')) + ' · ' + esc(ago(h.checkedAt)) : '从未'}</span></div>
+      <div class="row"><span class="k">判定数</span><span class="v">${h.count} 家</span></div>
+    </div>`;
+  }).join('') : '<div class="src"><div class="nm">尚无任何探针源上报过</div></div>';
+}
+
+/* NAS 侧登录态:🟠 stale 集中呈现 —— 不用 SSH 上 NAS 就知道哪家 CLI 该重登 */
+function renderStale() {
+  const stale = (STATE.probe?.results ?? []).filter(x => x.verdict === 'stale');
+  const box = $('#stalebox');
+  if (!stale.length) {
+    box.className = 'stalebox none';
+    box.innerHTML = '✅ 无数据过期的 agent —— 各探针源的数据都出自当前安装版本。';
+    return;
+  }
+  box.className = 'stalebox';
+  box.innerHTML = `<span class="k">⚠ ${stale.length} 家数据过期(多半是该机器上的 CLI 登录过期)</span>` +
+    stale.map(s =>
+      `<div><code>${esc(s.id)}</code> v${esc(s.version ?? '?')} · 数据 ${esc(String(s.dataAt ?? '?').slice(0, 10))} —— ${esc(s.detail)}</div>`
+    ).join('') +
+    `<div style="margin-top:6px;font-size:12px">处置:SSH 到对应源机器重新登录该 CLI,再手动跑一轮探针(nas: node ~/apps/MemorySQL/scripts/nas-probe.mjs)。</div>`;
+}
+
+function renderMatrix() {
+  const ps = STATE.probeSources ?? {};
+  const cols = Object.keys(ps);
+  // 行序:以合并视图(优先级胜者)为主轴,补上只出现在单源里的 agent
+  const rows = [];
+  const seen = new Set();
+  for (const r of STATE.probe?.results ?? []) { rows.push(r.id); seen.add(r.id); }
+  for (const [src, p] of Object.entries(ps))
+    for (const r of p?.results ?? [])
+      if (!seen.has(r.id)) { rows.push(r.id); seen.add(r.id); }
+
+  const nameOf = (id) => {
+    for (const p of Object.values(ps)) {
+      const r = (p?.results ?? []).find(x => x.id === id);
+      if (r?.name) return r.name;
+    }
+    return '';
+  };
+
+  let html = '<tr><th>agent</th>' + cols.map(c => `<th>${esc(SRC_LABEL[c] ?? c)}</th>`).join('') + '</tr>';
+  for (const id of rows) {
+    html += `<tr><td class="ag">${esc(id)}<span class="nm">${esc(nameOf(id))}</span></td>`;
+    for (const c of cols) {
+      const r = (ps[c]?.results ?? []).find(x => x.id === id);
+      if (!r) { html += `<td><span class="miss">—</span></td>`; continue; }
+      const [cls, label] = VERDICT[r.verdict] ?? ['b-none', r.verdict];
+      const meta = [r.version ? 'v' + esc(r.version) : '', r.dataAt ? '数据 ' + esc(String(r.dataAt).slice(0, 10)) : '']
+        .filter(Boolean).join(' · ');
+      html += `<td><span class="cell" onclick="showDetail('${esc(c)}','${esc(id)}')" style="cursor:pointer"
+        title="${esc(r.detail ?? '')}">
+        <span class="badge ${cls}">${label}</span>${meta ? `<span class="v">${meta}</span>` : ''}</span></td>`;
+    }
+    html += '</tr>';
+  }
+  $('#mtx').innerHTML = html;
+}
+
+window.showDetail = (src, id) => {
+  const r = (STATE.probeSources?.[src]?.results ?? []).find(x => x.id === id);
+  $('#detail').textContent = r
+    ? `[${src}] ${id} · ${r.verdict} · v${r.version ?? '?'} · 数据 ${r.dataAt ?? '?'}\n${r.detail ?? ''}`
+    : '未找到该单元';
+};
+
+load();
+</script>
+</body>
+</html>

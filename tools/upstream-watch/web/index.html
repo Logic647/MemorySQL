@@ -204,6 +204,17 @@ textarea{
 }
 textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
 .empty{text-align:center;padding:60px 20px;color:var(--fg-3)}
+/* 统一登录表单(与 /probe 同一实现):inline-flex 一行,不打断页面结构 */
+.loginbox{
+  display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;
+  padding:14px 18px;background:var(--surface);border:1px solid var(--border-strong);
+  border-radius:10px;box-shadow:var(--shadow);font-size:13px;color:var(--fg-2);
+}
+.loginbox input{
+  padding:8px 11px;border:1px solid var(--border-strong);border-radius:8px;
+  background:var(--surface-2);font:13px var(--mono);width:260px;
+}
+.loginbox input:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
 @media (max-width:720px){
   body{padding:20px 16px 48px}
   .stat{min-width:72px;padding:8px 11px}
@@ -231,6 +242,7 @@ textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
   <span class="chip" data-f="llm" aria-pressed="false">LLM 判有影响</span>
   <span class="chip" data-f="absent" aria-pressed="false">本机未装</span>
   <span class="spacer"></span>
+  <a href="./probe" style="font-size:12.5px;align-self:center">黑盒探针中心 →</a>
   <span id="probetime" style="font-size:12px;color:var(--fg-3)"></span>
 </div>
 
@@ -259,10 +271,28 @@ const esc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&l
 async function load() {
   try {
     const r = await fetch(U('/api/state'), { headers: H });
-    if (r.status === 401) { $('#sub').innerHTML = '鉴权失败 —— 若经 nginx 访问应无需 token;直连请带 <code>?token=</code>'; return; }
+    if (r.status === 401) { showLogin(); return; }
     STATE = await r.json();
   } catch (e) { $('#sub').textContent = '加载失败:' + e.message; return; }
   render();
+}
+
+/* 统一登录:token 存 localStorage.msql_token,与 /probe(黑盒探针中心)共用 ——
+   登录一次两个页面通用。URL 带 token 时优先 URL(书签分享),表单登录则剥掉
+   query 再跳,避免错误 URL token 反复压过 localStorage 里正确的值。 */
+function showLogin() {
+  $('#sub').innerHTML = `<div class="loginbox">
+    该看板需要 token(与探针上报的 PROBE_TOKEN 同一凭据),登录一次两个页面通用。
+    <input id="tokin" type="password" placeholder="粘贴 token">
+    <button onclick="saveTok()">进入</button>
+  </div>`;
+  document.getElementById('tokin').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveTok(); });
+}
+function saveTok() {
+  const v = document.getElementById('tokin')?.value.trim();
+  if (!v) return;
+  localStorage.setItem('msql_token', v);
+  location.href = location.pathname;
 }
 
 function stats() {
