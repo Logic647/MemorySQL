@@ -13,8 +13,8 @@
 语义组件 20MB 转按需下载)。**另注意:内存收益远小于体积收益**——Tauri 壳
 托盘驻留实测 152MB private(Electron 全功能 406MB),WebView2 六子进程并不
 比 Electron 轻多少。**建议保持关注 + 设定重评触发条件**(见文末),若将来
-启动,从 `out/tauri-spike/` 骨架续做,走「Tauri 壳 + Node 侧车」半步路线
-保住插件生态,而不是直接全 Rust 重写。
+启动,按「Spike 实测」节的方法与数字重建原型(骨架已随评估结束清除),走
+「Tauri 壳 + Node 侧车」半步路线保住插件生态,而不是直接全 Rust 重写。
 
 ## 体积测算(2026-10-25 实测 + 估算)
 
@@ -70,8 +70,10 @@ cargo release 首次全量 ~4 分钟、增量 43 秒;NSIS 由 tauri CLI 自动�
    否则 0 命中(正确行为);exe 被驻留进程锁定时 `tauri build` 报 os error 5;
    Mimosa 拦「env/argv 路径 → Command/fs」污点流,spike 改编译期常量路径。
 
-**磁盘占用**:spike 产物在 `out/tauri-spike/`(gitignored):cargo target
-1.24GB + 库快照 652MB,不需要可直接删目录。
+**清理(2026-10-25 当日,评估定案后)**:用户拍板不走该路线,spike 目录
+(1.97GB)与本次安装的 Rust 工具链(rustup/cargo 共 ~980MB)已全部删除、
+用户 PATH 还原,H/C 盘空间全额回收。**本节数字为删除前实测,作存档**;
+将来若重做,方法(静态 ui/ + rusqlite bundled + Node 侧车)与本节可直接对照。
 
 ## 架构映射表(逐块评估)
 

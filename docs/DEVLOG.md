@@ -25,6 +25,8 @@
 6. 环境事实:本机 **VS2026 MSVC 现成**(G 盘,vswhere 确认),rustup minimal + stable-msvc 一次装好;tauri CLI 自动下载 NSIS **直连 GitHub 成功**(未走镜像);cargo release 首次全量 ~4 分钟/增量 43 秒;**真库已涨到 683MB**(v0.7.0 后继续增长,快照时点 651.7MB)
 7. spike 磁盘代价:cargo target 1.24GB + 库快照 652MB(共 ~1.9GB,在 `out/`,不需要整目录删)
 
+**同日收尾:** 用户看过实测后拍板**不走 Tauri 路线**——`out/tauri-spike/` 整目录(1.97GB)已删,本次安装的 Rust 工具链已 `rustup self uninstall`(~/.rustup 591MB + ~/.cargo 389MB),用户 PATH 的 cargo 条目一并还原,H/C 盘空间全额回收。本条与 `tauri-feasibility.md`「Spike 实测」节作为**数字存档保留**;将来若立项,按该节方法重建原型即可。
+
 ---
 
 ## 2026-10-25 · v0.7.0 发版收尾:用户测试反馈 9 项 + CI 两个真坑(.mjs 加载 / rebuild 产物膨胀)
