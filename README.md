@@ -50,16 +50,20 @@
 
 ## ✨ 特性
 
-- **会话自动捕获** —— 10 家 agent 开箱支持(Codex / ZCode / Claude Code / Hermes / Gemini / Cursor / OpenCode / Qwen Code / Kimi CLI / CodeBuddy Code),增量监听零手动操作
+- **会话自动捕获** —— 10 家 agent 开箱支持(Codex / ZCode / Claude Code / Hermes / Gemini / Cursor / OpenCode / Qwen Code / Kimi CLI / CodeBuddy Code),增量监听零手动操作,默认全开
 - **最后一次对话时间** —— 每条会话并排显示「开始」与「最后」,一眼分出「上周开始、今早还在聊」和「上周就结束了」
+- **项目滚动总结** —— 每个项目定期把新会话总结成 摘要+待办+决策(hindsight 式),agent 用 `memory_get_project_digest` 读这一份即可接手,不必翻大量历史会话;**默认关闭**,开启后 LLM 素材先脱敏再发送,不配 LLM 也能纯本地规则总结
+- **LLM 引擎聚合** —— 智谱 GLM(免费)/ SiliconFlow 免费档 / DeepSeek / MiMo / 本地反代(OpenCode Zen / CLIProxyAPI)一键预置,任意 OpenAI 兼容端点可自定义;供会话摘要、项目总结、记忆精炼共用,不可用时自动降级本地规则
 - **MCP 续接包** —— 画像 + 长期记忆 + 项目状态 + 最近会话 + **上一棒交接摘要**,一次调用恢复全部上下文
-- **交接简报** —— `memory_get_project_brief` 自动汇编项目当前进展/决策/待办,换 agent 接手零成本
-- **语义检索** —— sqlite-vec + 本地 embedding(bge-small-zh),字面搜不到的概念性提问也能召回
+- **交接简报** —— `memory_get_project_brief` 自动汇编项目当前进展/决策/待办(有滚动总结时置顶引用),换 agent 接手零成本
+- **语义检索** —— sqlite-vec + 本地 embedding(bge-small-zh),字面搜不到的概念性提问也能召回;推理组件与模型均首次启用时按需下载
 - **收工汇报闭环** —— `memory_log_progress` 结构化记录做了什么/下一步/卡在哪,人工确认后进正式记忆
 - **自动项目日志** —— `vault/devlog/` 按项目生成开发日志(时间线 + 决策 + 待办)
 - **托盘常驻 + 全局秒搜** —— 关窗即驻留(MCP 保持在线),任意界面 `Alt+Shift+M` 唤起秒搜
 - **记忆治理** —— 收工汇报候选确认、LLM 冲突检测、手动改名/归档/续接链管理
 
+> **v0.7.0 变更**:新增 项目滚动总结(默认关闭)/ LLM 引擎聚合(免费 API 预置 + 反代 + 自定义)/ 设置页插件分组折叠 / 会话页按检测数排序;安装包从 105.5MB 瘦身到 **99.5MB**(语义推理组件约 20MB 改为首次启用时下载,模型本就如此);另附 [Tauri 迁移可行性评估](docs/tauri-feasibility.md)。升级不丢数据、自动更新直达。
+>
 > **v0.6.0 变更**:下线了「笔记」与「知识图谱」两个功能(长期使用后判断实用性不高),界面收敛为「会话 / 记忆」两栏。连带移除 CodeMirror 与 cytoscape,renderer 产物从 2.79 MB 降到 0.68 MB。升级不会丢数据——旧笔记文件与 `notes` 表都保留在磁盘上,只是不再被读写。
 
 ## 📦 安装
@@ -81,12 +85,13 @@
 
 验证连通:`curl http://127.0.0.1:8642/health`
 
-## 🧩 MCP 工具(7 个)
+## 🧩 MCP 工具(8 个)
 
 | 工具 | 用途 |
 |---|---|
 | `memory_get_context` | 续接包:画像 + 记忆(agent 过滤)+ 项目 + 最近会话 + 上一棒摘要 |
-| `memory_get_project_brief` | 项目交接简报 |
+| `memory_get_project_brief` | 项目交接简报(有滚动总结时置顶引用) |
+| `memory_get_project_digest` | 项目滚动总结:摘要 + 待办 + 决策 + 覆盖范围(需用户在设置中开启) |
 | `memory_list_sessions` | 会话枚举(项目/agent/时间过滤,带 id) |
 | `memory_get_session` | 完整消息时间线回读(full 模式去截断) |
 | `memory_search` | 全文检索会话/消息/记忆 + 本地语义补足 |

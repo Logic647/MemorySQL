@@ -40,6 +40,36 @@ export interface Overview {
   memories: number
 }
 
+// project-digest(项目滚动总结)
+export interface DigestProjectState {
+  projectId: number
+  name: string
+  status: string
+  lastDigestAt: number | null
+  lastError: string | null
+  hasDigest: number
+  uncovered: number
+}
+
+export interface DigestStatusInfo {
+  enabled: boolean
+  quietMinutes: number
+  projects: DigestProjectState[]
+}
+
+export interface DigestLatest {
+  projectId: number
+  projectName: string
+  summary: string
+  todos: Array<{ content: string; status: string }>
+  decisions: string[]
+  model: string
+  periodStart: number | null
+  periodEnd: number | null
+  sessionsCovered: number
+  createdAt: number
+}
+
 export const api = {
   listSessions: (agentType: string, opts?: { archived?: boolean }): Promise<SessionSummaryRow[]> =>
     window.memorysql.invoke('core-schema:sessions:list', {
@@ -95,6 +125,20 @@ export const api = {
       files: string[]
       message?: string
     }>,
+  // project-digest(项目滚动总结)
+  digestStatus: (): Promise<DigestStatusInfo> =>
+    window.memorysql.invoke('project-digest:status') as Promise<DigestStatusInfo>,
+  digestRun: (projectId: number): Promise<{ ok: boolean; queued?: boolean }> =>
+    window.memorysql.invoke('project-digest:runNow', { projectId }) as Promise<{
+      ok: boolean
+      queued?: boolean
+    }>,
+  digestLatest: (projectId: number): Promise<DigestLatest | null> =>
+    window.memorysql.invoke('project-digest:latest', { projectId }) as Promise<DigestLatest | null>,
+  onDigestChanged: (cb: (p: { projectId: number }) => void): (() => void) =>
+    window.memorysql.on('push:digest', (...args: unknown[]) => {
+      cb((args[0] ?? {}) as { projectId: number })
+    }),
   onSessionsChanged: (cb: () => void): (() => void) => window.memorysql.on('push:sessions:changed', cb),
   // core-launcher (开机自启动)
   launcherGet: (): Promise<{ supported: boolean; openAtLogin: boolean; launchHidden: boolean }> =>
@@ -178,6 +222,7 @@ export const api = {
     model?: string
     dims?: number
     rows?: number
+    runtimeMissing?: boolean
   }> =>
     window.memorysql.invoke('semantic-search:status') as Promise<{
       enabled: boolean
@@ -186,6 +231,14 @@ export const api = {
       model?: string
       dims?: number
       rows?: number
+      runtimeMissing?: boolean
+    }>,
+  semanticInstallRuntime: (): Promise<{ ok: boolean; message?: string; available?: boolean; version?: string }> =>
+    window.memorysql.invoke('semantic-search:installRuntime') as Promise<{
+      ok: boolean
+      message?: string
+      available?: boolean
+      version?: string
     }>,
   semanticReindex: (): Promise<{ embedded: number; removed: number; rows: number; ok: boolean }> =>
     window.memorysql.invoke('semantic-search:reindex') as Promise<{
@@ -207,6 +260,12 @@ export const api = {
       ok: boolean
       models?: string[]
       message?: string
+    }>,
+  llmTestConnection: (cfg?: Record<string, unknown>): Promise<{ ok: boolean; message: string; ms?: number }> =>
+    window.memorysql.invoke('summarizer-llm:testConnection', cfg) as Promise<{
+      ok: boolean
+      message: string
+      ms?: number
     }>,
   // storage relocation
   hostDataDir: (dir?: string, reset?: boolean): Promise<{ ok: boolean; relaunching?: boolean }> =>

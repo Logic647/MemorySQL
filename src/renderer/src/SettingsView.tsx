@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
+import { LLM_PRESETS, presetById } from '../../shared/llm-presets'
+import { groupedPlugins } from './plugin-groups'
 
 type Provider = 'none' | 'openai' | 'anthropic' | 'ollama'
 
 const PROVIDER_LABEL: Record<Provider, string> = {
   none: '本地规则(默认,无 LLM)',
-  openai: 'OpenAI 兼容 API',
+  openai: 'OpenAI 兼容 API(智谱/SiliconFlow/DeepSeek/MiMo/本地反代…)',
   anthropic: 'Anthropic API',
   ollama: 'Ollama 本地模型'
 }
@@ -37,6 +39,7 @@ const PLUGIN_DESC: Record<string, string> = {
   'memory-core': '记忆管理 —— 增删改、LLM 精炼、冲突检测',
   'memory-dispatch': '记忆分发 —— 生成各 agent 可用的记忆文件',
   'project-devlog': '自动项目日志 —— 按项目生成 Markdown 日志文件(vault/devlog)',
+  'project-digest': '项目总结 —— 滚动总结+待办(hindsight 式),LLM 可选、默认关闭',
   'semantic-search': '语义检索 —— 本地向量模型,字面未命中时补足召回',
   'summarizer-llm': 'LLM 摘要引擎(可选,自动降级)',
   'summarizer-rules': '本地规则摘要(默认,零依赖)'
@@ -64,7 +67,18 @@ export default function SettingsView() {
   const [pluginList, setPluginList] = useState<Array<{ id: string; name: string; version: string; enabled: boolean; external: boolean }>>([])
   const [loadErrors, setLoadErrors] = useState<string[]>([])
   const [pluginsDir, setPluginsDir] = useState('')
+  // 分组折叠状态:纯 UI 偏好存 localStorage;默认仅「核心数据」展开,
+  // 其余折叠 —— 13 个捕获插件是列表噪音的大头
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('msql.pluginGroups') ?? '{}') as Record<string, boolean>
+    } catch {
+      return {}
+    }
+  })
   const [category, setCategory] = useState<Category>('通用')
+  const [llmTesting, setLlmTesting] = useState(false)
+  const [llmTest, setLlmTest] = useState<{ ok: boolean; message: string } | null>(null)
 
   const load = useCallback(async () => {
     setCfg(await api.llmGetConfig())
@@ -95,11 +109,35 @@ export default function SettingsView() {
 
   const set = (key: string, value: string): void => setCfg((c) => (c ? { ...c, [key]: value } : c))
 
+  const togglePlugin = useCallback((p: { id: string; name: string }, next: boolean): void => {
+    // optimistic:先翻开关再等 IPC;失败回滚,不能让界面显示一个并未生效的状态
+    setPluginList((prev) => prev.map((q) => (q.id === p.id ? { ...q, enabled: next } : q)))
+    setMsg(`${p.name} 已${next ? '启用' : '停用'},重启生效`)
+    void api.hostPluginEnable(p.id, next).catch((err) => {
+      setPluginList((prev) => prev.map((q) => (q.id === p.id ? { ...q, enabled: !next } : q)))
+      setMsg(`操作失败: ${String(err)}`)
+    })
+  }, [])
+
   const saveLlm = useCallback(async () => {
     if (!cfg) return
     await api.llmSetConfig(cfg)
     setCfg(await api.llmGetConfig())
-    setMsg(`摘要引擎已保存(${String(cfg.provider)})`)
+    setMsg(`LLM 引擎已保存(${String(cfg.provider)})`)
+  }, [cfg])
+
+  const testConn = useCallback(async () => {
+    if (!cfg) return
+    setLlmTesting(true)
+    setLlmTest(null)
+    try {
+      // 直接测界面当前值(未保存的草稿也生效;掩码 Key 在主进程被跳过不覆盖)
+      setLlmTest(await api.llmTestConnection(cfg))
+    } catch (e) {
+      setLlmTest({ ok: false, message: `测试请求失败: ${String(e)}` })
+    } finally {
+      setLlmTesting(false)
+    }
   }, [cfg])
 
   if (!cfg) return <div className="empty detail-empty">加载中…</div>
@@ -240,7 +278,7 @@ export default function SettingsView() {
                   <li>
                     验证连通:浏览器或终端访问 <code>http://127.0.0.1:端口/health</code>,返回 ok 即在线。
                   </li>
-                  <li>工具调用入口:memory_get_context(续接包)、memory_search、memory_write 等 7 个工具。</li>
+                  <li>工具调用入口:memory_get_context(续接包)、memory_search、memory_write 等 8 个工具。</li>
                 </ol>
               </div>
               <label className="field">
@@ -297,9 +335,9 @@ export default function SettingsView() {
         {category === '智能引擎' && (
           <>
             <section>
-              <h3>摘要引擎</h3>
+              <h3>LLM 引擎</h3>
               <p className="hint">
-                默认本地规则,零成本零依赖。切换为 LLM 后新导入的会话用模型生成标题与摘要;LLM 不可用时自动降级回规则。
+                默认本地规则,零成本零依赖。配置后由 会话摘要、项目总结(开启后)、记忆精炼 共用;LLM 不可用时自动降级回本地规则,数据不出本机。
               </p>
               <label className="field">
                 <span>引擎</span>
@@ -315,7 +353,42 @@ export default function SettingsView() {
               {provider === 'openai' && (
                 <>
                   <label className="field">
-                    <span>API Key{Boolean(cfg.hasOpenaiKey) && '(已保存,留空保持不变)'}</span>
+                    <span>预设(选后自动填 Base URL 与模型,可手改)</span>
+                    <select
+                      value={String(cfg.preset ?? '')}
+                      onChange={(e) => {
+                        const id = e.target.value
+                        const p = presetById(id)
+                        setCfg((c) => {
+                          if (!c) return c
+                          if (!p) return { ...c, preset: '' }
+                          return {
+                            ...c,
+                            preset: id,
+                            openaiBaseUrl: p.baseUrl || c.openaiBaseUrl,
+                            openaiModel: p.model
+                          }
+                        })
+                      }}
+                    >
+                      <option value="">(不使用预设,手填)</option>
+                      {LLM_PRESETS.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {presetById(String(cfg.preset ?? ''))?.note && (
+                    <p className="hint">{presetById(String(cfg.preset ?? ''))?.note}</p>
+                  )}
+                  <label className="field">
+                    <span>
+                      API Key
+                      {presetById(String(cfg.preset ?? ''))?.keyless
+                        ? '(该预设无需 Key,可留空)'
+                        : Boolean(cfg.hasOpenaiKey) && '(已保存,留空保持不变)'}
+                    </span>
                     <input
                       type="password"
                       value={String(cfg.openaiKey ?? '')}
@@ -395,11 +468,17 @@ export default function SettingsView() {
                 </>
               )}
 
-              <button className="btn btn-accent btn-small" onClick={() => void saveLlm()}>
-                保存摘要引擎
-              </button>
+              <div className="field-row">
+                <button className="btn btn-accent btn-small" onClick={() => void saveLlm()}>
+                  保存 LLM 引擎
+                </button>
+                <button className="btn btn-small" disabled={llmTesting} onClick={() => void testConn()}>
+                  {llmTesting ? '测试中…' : '测试连接'}
+                </button>
+                {llmTest && <span className={llmTest.ok ? 'ok-tag' : 'hint'}>{llmTest.message}</span>}
+              </div>
               {Boolean(cfg.available) && provider !== 'none' && (
-                <span className="ok-tag">✓ 已就绪,新导入将使用 LLM 摘要</span>
+                <span className="ok-tag">✓ 已就绪 · 会话摘要与记忆精炼将使用 LLM</span>
               )}
             </section>
 
@@ -407,9 +486,21 @@ export default function SettingsView() {
               <h3>语义检索(本地向量)</h3>
               <p className="hint">
                 sqlite-vec + bge-small-zh 本地 embedding(全程离线):memory_search 字面未命中时按语义补足召回。
-                首次启用会下载 ~100MB 模型,缓存于数据目录 fastembed-cache;停用后纯关键词检索照常。
+                为缩小安装包,原生推理组件(约 15MB)与模型(约 100MB)都在首次启用时下载,缓存于数据目录;
+                停用后纯关键词检索照常。
               </p>
               <SemanticSection onMsg={setMsg} />
+            </section>
+
+            <section>
+              <h3>项目总结(滚动摘要 + 待办)</h3>
+              <p className="hint">
+                定期把每个项目「上次总结之后的新会话」滚动总结成 摘要+待办+决策:会话页项目组头显示总结状态并可展开查看;
+                agent 用 memory_get_project_digest 读这一份即可接手,不必翻大量历史会话。
+                <strong>默认关闭</strong>;开启后,LLM 引擎可用时素材<strong>脱敏后</strong>发送至所选 provider,
+                未配置 LLM 则用本地规则总结(零外发)。
+              </p>
+              <DigestSection onMsg={setMsg} />
             </section>
           </>
         )}
@@ -501,34 +592,36 @@ export default function SettingsView() {
                 ))}
               </div>
             )}
-            {pluginList.map((p) => (
-              <div key={p.id} className="plugin-row">
-                <div className="plugin-main">
-                  <div className="field-row" style={{ margin: 0 }}>
-                    <label className="switch">
-                      <input
-                        type="checkbox"
-                        checked={p.enabled}
-onChange={(e) => {
-                  const next = e.target.checked
-                  setPluginList((prev) => prev.map((q) => (q.id === p.id ? { ...q, enabled: next } : q)))
-                  setMsg(`${p.name} 已${next ? '启用' : '停用'},重启生效`)
-                  void api.hostPluginEnable(p.id, next).catch((err) => {
-                    setPluginList((prev) => prev.map((q) => (q.id === p.id ? { ...q, enabled: !next } : q)))
-                    setMsg(`操作失败: ${String(err)}`)
-                  })
-}}
-                      />
-                      <span className="slider" />
-                    </label>
+            {groupedPlugins(pluginList).map(({ group, plugins }) => {
+              const isCollapsed = collapsed[group.id] ?? group.id !== 'core'
+              const on = plugins.filter((p) => p.enabled).length
+              return (
+                <div key={group.id} className="plugin-group">
+                  <button
+                    className="plugin-group-head"
+                    onClick={() =>
+                      setCollapsed((prev) => {
+                        const next = { ...prev, [group.id]: !isCollapsed }
+                        try {
+                          localStorage.setItem('msql.pluginGroups', JSON.stringify(next))
+                        } catch {
+                          /* 隐私模式写不进就算了,只影响本会话记忆 */
+                        }
+                        return next
+                      })
+                    }
+                  >
+                    <span className={`chev ${isCollapsed ? '' : 'open'}`}>▸</span>
+                    <span className="plugin-group-label">{group.label}</span>
                     <span className="mono-tag">
-                      {p.name} ({p.id}@{p.version}){p.external ? ' · 外部' : ''}
+                      {on}/{plugins.length} 启用
                     </span>
-                  </div>
-                  {PLUGIN_DESC[p.id] && <div className="plugin-desc">{PLUGIN_DESC[p.id]}</div>}
+                  </button>
+                  {!isCollapsed && plugins.map((p) => <PluginRow key={p.id} p={p} onToggle={togglePlugin} />)}
                 </div>
-              </div>
-            ))}
+              )
+            })}
+            {pluginList.length === 0 && <p className="hint">插件列表加载中…</p>}
             <button className="btn btn-small" onClick={() => void window.memorysql.invoke('memorysql:host:openPluginsDir')}>
               打开插件目录
             </button>
@@ -539,6 +632,31 @@ onChange={(e) => {
 
         {msg && <div className="kb-msg">{msg}</div>}
       </div>
+      </div>
+    </div>
+  )
+}
+
+function PluginRow({
+  p,
+  onToggle
+}: {
+  p: { id: string; name: string; version: string; enabled: boolean; external: boolean }
+  onToggle: (p: { id: string; name: string }, next: boolean) => void
+}) {
+  return (
+    <div className="plugin-row">
+      <div className="plugin-main">
+        <div className="field-row" style={{ margin: 0 }}>
+          <label className="switch">
+            <input type="checkbox" checked={p.enabled} onChange={(e) => onToggle(p, e.target.checked)} />
+            <span className="slider" />
+          </label>
+          <span className="mono-tag">
+            {p.name} ({p.id}@{p.version}){p.external ? ' · 外部' : ''}
+          </span>
+        </div>
+        {PLUGIN_DESC[p.id] && <div className="plugin-desc">{PLUGIN_DESC[p.id]}</div>}
       </div>
     </div>
   )
@@ -834,9 +952,11 @@ function SemanticSection({ onMsg }: { onMsg: (s: string) => void }) {
     model?: string
     dims?: number
     rows?: number
+    runtimeMissing?: boolean
   } | null>(null)
   const [pending, setPending] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
+  const [installing, setInstalling] = useState(false)
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -898,6 +1018,113 @@ function SemanticSection({ onMsg }: { onMsg: (s: string) => void }) {
           {busy ? '重建中…' : '重建语义索引'}
         </button>
       )}
+      {status.runtimeMissing && (
+        <button
+          className="btn btn-accent btn-small"
+          disabled={installing}
+          style={{ marginTop: 8 }}
+          onClick={() => {
+            setInstalling(true)
+            void api
+              .semanticInstallRuntime()
+              .then((r) =>
+                onMsg(
+                  r.ok
+                    ? `语义组件已就绪(v${r.version ?? ''})${r.available ? ',语义检索即时启用' : ',重启应用后生效'}`
+                    : (r.message ?? '下载失败')
+                )
+              )
+              .catch((err) => onMsg(`下载失败: ${String(err)}`))
+              .finally(() => {
+                setInstalling(false)
+                void load()
+              })
+          }}
+        >
+          {installing ? '下载中…(约 15MB)…' : '下载语义组件(~15MB)'}
+        </button>
+      )}
+    </>
+  )
+}
+
+function DigestSection({ onMsg }: { onMsg: (s: string) => void }) {
+  const [st, setSt] = useState<{
+    enabled: boolean
+    quietMinutes: number
+    projects: Array<{ projectId: number; name: string; uncovered: number; lastDigestAt: number | null }>
+  } | null>(null)
+  const [quiet, setQuiet] = useState('')
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const s = await api.digestStatus()
+      setSt(s)
+      setQuiet(String(s.quietMinutes))
+    } catch {
+      setSt(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  if (!st) return <p className="hint">加载中…</p>
+  const covered = st.projects.filter((p) => (p.lastDigestAt ?? 0) > 0).length
+  const pending = st.projects.filter((p) => p.uncovered > 0).length
+  return (
+    <>
+      <div className="field-row">
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={st.enabled}
+            onChange={(e) => {
+              const next = e.target.checked
+              // 插件在触发时刻读取设置,开关即时生效,无需重启
+              setSt((prev) => (prev ? { ...prev, enabled: next } : prev))
+              void api
+                .hostPluginSetting('project-digest', 'enabled', next)
+                .then(() => {
+                  onMsg(
+                    next
+                      ? '项目总结已开启(即时生效):新会话安静期后自动总结,会话页项目组头出现状态徽标'
+                      : '项目总结已关闭:不再自动总结,也不再发送任何数据'
+                  )
+                  void load()
+                })
+                .catch((err) => {
+                  setSt((prev) => (prev ? { ...prev, enabled: !next } : prev))
+                  onMsg(`操作失败: ${String(err)}`)
+                })
+            }}
+          />
+          <span className="slider" />
+        </label>
+        <span className="mono-tag">
+          {st.enabled
+            ? `已开启 · ${covered}/${st.projects.length} 个项目已有总结 · ${pending} 个项目待追赶`
+            : '已关闭(默认)· 不总结、不外发任何数据'}
+        </span>
+      </div>
+      <div className="field-row">
+        <label className="field" style={{ maxWidth: 320 }}>
+          <span>安静期(分钟)—— 新会话入库后安静多久才自动总结</span>
+          <input value={quiet} onChange={(e) => setQuiet(e.target.value.replace(/\D/g, ''))} />
+        </label>
+        <button
+          className="btn btn-small"
+          onClick={() =>
+            void api
+              .hostPluginSetting('project-digest', 'quietMinutes', Math.max(1, Number(quiet) || 30))
+              .then(() => onMsg('安静期已保存,即时生效'))
+              .catch((e) => onMsg(`保存失败: ${String(e)}`))
+          }
+        >
+          保存
+        </button>
+      </div>
     </>
   )
 }

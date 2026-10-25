@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+/**
+ * 打包「语义组件」zip —— 语义检索的原生栈(fastembed → onnxruntime-node /
+ * @anush008/tokenizers / @huggingface/* 等)从安装包剥离后,首次启用时下载
+ * (见 docs/DEVLOG 2026-10-25 瘦身条)。
+ *
+ * 闭包从 package-lock.json(v3 packages 树)以 fastembed 为根 BFS 收集,
+ * 嵌套 node_modules 按 Node 解析规则逐级回溯;onnxruntime-node 包内带全平台
+ * 二进制(~200MB),只保留目标平台的 bin/napi-v3/<plat>/<arch>,不裁剪的话
+ * zip 会到 ~70MB。
+ *
+ * 用法:node scripts/gen-native-runtime.mjs [--out dist] [--platform win32] [--arch x64]
+ * 产物:<out>/native-runtime-<platform>-<arch>.zip(zip 根含 manifest.json + node_modules/…)
+ *      manifest 的 appVersion 必须与运行中的应用版本一致(升级后重下组件)。
+ */
+import fs from 'node:fs'
+import path from 'node:path'
+import process from 'node:process'
+import { fileURLToPath } from 'node:url'
+import AdmZip from 'adm-zip'
+
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+const ROOT = path.join(HERE, '..')
+
+/** 从 lock 的 packages 树收集依赖闭包(含 optionalDependencies;按 Node 解析回溯嵌套)。 */
+export function collectClosure(lock, rootName) {
+  const packages = lock.packages ?? {}
+  const resolveFrom = (dir, name) => {
+    let d = dir
+    for (;;) {
+      const cand = d ? `${d}/node_modules/${name}` : `node_modules/${name}`
+      if (packages[cand]) return cand
+      if (!d) return null
+      const i = d.lastIndexOf('/node_modules/')
+      d = i >= 0 ? d.slice(0, i) : ''
+    }
+  }
+  const root = resolveFrom('', rootName)
+  if (!root) throw new Error(`package-lock 中找不到 ${rootName}`)
+  const seen = new Set()
+  const queue = [root]
+  while (queue.length) {
+    const cur = queue.shift()
+    if (seen.has(cur)) continue
+    seen.add(cur)
+    const meta = packages[cur] ?? {}
+    for (const sec of ['dependencies', 'optionalDependencies']) {
+      for (const name of Object.keys(meta[sec] ?? {})) {
+        const r = resolveFrom(cur, name)
+        if (r && !seen.has(r)) queue.push(r)
+      }
+    }
+  }
+  return [...seen]
+}
+
+/** onnxruntime-node 包内只留**目标平台**的推理二进制。rel 为相对包根的 POSIX 路径。 */
+const ORT_BIN_KEEP = { win32: ['x64'], linux: ['x64'], darwin: ['arm64', 'x64'] }
+export function keepOrtEntry(rel, platform) {
+  if (!rel.startsWith('bin/napi-v3/')) return true
+  const rest = rel.slice('bin/napi-v3/'.length)
+  const [plat, archDir = ''] = rest.split('/')
+  return plat === platform && (ORT_BIN_KEEP[platform] ?? []).includes(archDir)
+}
+
+function walk(dir, out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name)
+    if (e.isDirectory()) walk(p, out)
+    else out.push(p)
+  }
+  return out
+}
+
+export async function main() {
+  const args = process.argv.slice(2)
+  const argOf = (name) => {
+    const i = args.indexOf(name)
+    return i >= 0 ? args[i + 1] : null
+  }
+  const appPkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf-8'))
+  const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf-8'))
+  const platform = argOf('--platform') ?? process.platform
+  const arch = argOf('--arch') ?? process.arch
+  const outDir = path.resolve(ROOT, argOf('--out') ?? 'dist')
+
+  if (!(platform in ORT_BIN_KEEP)) throw new Error(`不支持的平台: ${platform}`)
+
+  const closure = collectClosure(lock, 'fastembed').sort()
+  const zip = new AdmZip()
+  const manifest = { appVersion: appPkg.version, platform, arch, packages: [], generatedAt: new Date().toISOString() }
+
+  for (const key of closure) {
+    const meta = lock.packages[key] ?? {}
+    const srcDir = path.join(ROOT, key)
+    if (!fs.existsSync(srcDir)) {
+      // 平台相关的 optional 包在当前 runner 未装(如 @anush008/tokenizers-<plat>)——
+      // CI 每平台各自构建,本 runner 没有就说明目标平台也不需要它
+      console.warn(`跳过(本机未安装,平台相关 optional): ${key}`)
+      continue
+    }
+    manifest.packages.push({ name: key, version: meta.version ?? '' })
+    for (const f of walk(srcDir)) {
+      const rel = path.relative(srcDir, f).split(path.sep).join('/')
+      if (key === 'node_modules/onnxruntime-node' && !keepOrtEntry(rel, platform)) continue
+      zip.addLocalFile(f, path.posix.dirname(path.posix.join(key, rel)))
+    }
+  }
+
+  zip.addFile('manifest.json', Buffer.from(JSON.stringify(manifest, null, 2)))
+  fs.mkdirSync(outDir, { recursive: true })
+  const out = path.join(outDir, `native-runtime-${platform}-${arch}.zip`)
+  zip.writeZip(out)
+  const mb = (fs.statSync(out).size / 1024 / 1024).toFixed(1)
+  console.log(`native runtime zip: ${out} (${mb} MB, ${manifest.packages.length} packages, v${appPkg.version} ${platform}-${arch})`)
+}
+
+const invokedDirectly =
+  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error(err)
+    process.exit(1)
+  })
+}

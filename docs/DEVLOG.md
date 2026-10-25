@@ -4,6 +4,50 @@
 
 ---
 
+## 2026-10-25 · v0.7.0:项目滚动总结 + LLM 引擎聚合 + 插件分组/检测数 + 安装包瘦身(105.5→99.5MB)
+
+**本版主题:让 agent「少读会话、多读结论」,并诚实瘦身。** 用户提出四件事:体积(评估换栈)、hindsight 式项目总结+待办、免费 API 聚合(参考 opencode Zen 反代生态)、插件分类折叠与捕获按检测数显示;另补充硬要求:**LLM 总结必须有总开关、默认关闭**。
+
+**体积结论先行(解剖实测):** 安装包 105.5MB 里约 85MB 是 Electron 底子压缩后的大小,「换前端栈」对体积无意义(renderer 产物仅 0.68MB);唯一数量级变化是迁 Tauri(~15-25MB)但等于全部重写。经用户确认走「先瘦身 + Tauri 出评估文档」路线,评估见 `docs/tauri-feasibility.md`(结论:现在不迁,设了三条重评触发条件)。
+
+**一、LLM 引擎聚合(summarizer-llm v0.2)**
+- 预设注册表 `src/shared/llm-presets.ts`(纯数据,主进程+设置页共用):智谱 GLM(免费,`glm-4.7-flash`,注意 `/models` 列不出免费模型需手填)、SiliconFlow 免费档(`Qwen/Qwen3-8B`)、DeepSeek、MiMo(`mimo-v2.6-flash`)、**本地反代**(`127.0.0.1:8787/v1` 免 key,配 opencode2api / CLIProxyAPI / opencode-free-proxy,模型列表动态拉取不写死)、OpenAI 官方、自定义
+- MiMo 兼容落地:OpenAI 兼容请求有 key 时双发 `Authorization + api-key` 认证头;token 字段默认只发 `max_tokens`(OpenAI 严格模式对双字段同发 400),MiMo 预设声明 `tokens:'both'` 双发(旧经验验证过无害)
+- `llm-refine` 服务加 `describe()`(产物标注来源模型)与 `system/maxTokens` 覆盖;新 IPC `testConnection`(真发 512 token 补全,给推理模型留思考余量)接受未保存草稿配置(掩码 Key 不落盘不覆盖)
+- 设置区改名「LLM 引擎」,注明会话摘要/项目总结/记忆精炼共用
+
+**二、project-digest 插件(hindsight 式滚动总结,默认关闭)**
+- **隐私总开关** `project-digest:enabled` 默认 false:关闭时不挂任何自动触发、会话页不渲染总结 UI、MCP 工具返回开启指引(工具数稳定 8 个);开启且 LLM 可用 → 素材 redact 脱敏后发送;LLM 不可用 → **规则式本地总结零外发**(隐私敏感用户的纯本线路线)
+- 表:`project_digests`(产物历史)+ `project_digest_state`(status/last_digest_at/last_covered_ts/last_error);时间约定:period_*/last_covered_ts 用秒(会话域),created_at/last_digest_at 用毫秒
+- 触发:`ingest:result` → 按项目 30 分钟安静期防抖(设置可改);启动 3 分钟后补跑(>24h 未总结且有未覆盖会话);单飞串行队列;手动 = 会话页项目组头「总结」按钮 / IPC runNow / CLI `--digest`(显式意图绕过总开关)
+- 输入:上一版总结(滚动续写)+ 覆盖窗口新会话(≤20/次,超出留到下轮;每会话 标题+摘要+首用户 300 字+末助手 400 字+统计);prompt 24K 字符软上限,超限逐级丢弃正文(末助手→首用户→既有摘要)
+- 输出 JSON **括号配平**解析(复用看板踩坑经验,不退回贪婪正则):summary/todos(滚动结转,LLM 标完成态)/decisions/candidates;candidates 以 `source='project-digest:<id>'` 去重入库走现有候选→确认链路
+- 产物:DB 权威 + `vault/digest/<项目>.md`(幂等覆盖);MCP 新工具 `memory_get_project_digest`(agent 读这一份代替翻会话),`memory_get_project_brief` 头部置顶引用(带 table-exists 守卫,插件停用不炸)
+- UI:项目组头徽标四态(未总结 dim / 最后总结相对时间 / ⟳ 总结中 / 点击展开卡片显示摘要+待办+决策),`push:digest` 事件驱动刷新;设置页「项目总结」段(开关即时生效——监听常挂、开火时才读开关 + 安静期设置)
+
+**三、插件分组折叠 + 会话页按检测数**
+- `src/shared/builtin-plugins.ts`:内置插件 id 清单(主入口启动时核对一致性报日志;放 shared 是因为主入口 import electron 测试环境加载不了)
+- `src/renderer/src/plugin-groups.ts`:七组(核心数据/摘要引擎/会话捕获×14/项目与记忆/检索与服务/同步与备份/系统)+ 外部插件动态组;折叠状态存 localStorage,默认仅「核心数据」展开;单测断言**每个内置插件恰好归属一组**(新增插件漏登记变红)
+- 捕获**本就默认全开**(`plugin.<id>.enabled` 默认 true,无需改动);会话页 Agent chips 与「捕获状态」按检测数降序、0 条沉底 dim(title 提示「装好该 agent 后自动导入」),排序纯函数 `chips-order.ts` 单测锁定
+
+**四、语义组件可选化(瘦身主刀)**
+- 语义原生栈(onnxruntime-node/fastembed/@huggingface/@anush008)从三平台 files 排除;`scripts/gen-native-runtime.mjs` 从 package-lock 以 fastembed 为根 BFS 收依赖闭包(嵌套按 Node 规则回溯),onnxruntime-node 只留目标平台 `bin/napi-v3/<plat>/<arch>`,打出 `native-runtime-<plat>-<arch>.zip`(**实测 win32-x64:20.0MB/54 包**;平台相关 optional 包在非目标 runner 上自动跳过)
+- 运行侧 `src/main/core/native-runtime.ts`:下载(本版本 GitHub Release asset,`MEMORYSQL_NATIVE_RUNTIME_URL` 可覆盖)→ manifest 校验(appVersion+平台+架构严格相等,升级后重下)→ 临时目录解压→原子换目录(旧 DLL 可能仍被进程映射,清理 best-effort 不把成功安装误报成失败)→ `createRequire` 从该树加载
+- `semantic-search` v0.2:初始化改**懒加载可重试**——dev 直接 import node_modules,打包版回落 native-runtime;组件缺失 status=`runtimeMissing`,设置页出「下载语义组件」按钮,**下载后即时装载无需重启**;sqlite-vec(1MB)留在包内
+- CI:package job 各平台加 gen 步骤,zip 随 artifact 上传;tag 时 `gh release upload --clobber` 挂草稿
+- **验收实测**:asar 内四包 0 条目、unpacked 只剩 better-sqlite3+sqlite-vec;**NSIS Setup 105.5 → 99.5MB**,app.asar 15→8MB,unpacked 23→3MB,win-unpacked 357→329MB;真 zip 解压后 onnxruntime-node 原生模块与 fastembed 从运行时树加载成功(N-API 跨 Electron ABI 稳定);模型下载+全量嵌入留作发版后装机验收(与 0.5.5 自动更新验收同模式)
+- **顺带修掉潜伏坑:`out/anim`(宣传片渲染物料 33MB)会被 `out/**` 正向规则整个打进 asar**——CI 一直干净是因为构建时该目录不存在,本地一打就中;三平台已加 `!out/anim/**` 排除
+
+**五、踩坑与新知**
+- 模板字符串里 `[${cond ? 'x' : ' '}]` 手滑写成 `' ']} → ']}`,]掉进插值里导致模板串未闭合,后面 120 行全报语法错——判错要**先信第一个报错位置之前**有个未闭合的结构
+- 测试替身的 settings 必须**复刻 PluginContext 的 `<pluginId>:` 键前缀**,否则读写键对不上、现象是「开关不生效」
+- 同步 throw 的函数不能用 `.rejects.toThrow` 断言(调用当场炸,matcher 根本接不住),要用 `expect(() => fn()).toThrow`
+- Mimosa 依旧拦 `db.exec(migration.up)` 直跑(命令注入误报),测试一律走生产 `Db.migrate` 过
+
+**验收:** typecheck 0 错;vitest **453:453**(42 文件;新增 project-digest 19 + llm-presets 16 + plugin-groups/chips 8 + native-runtime 8);import:scan 与 GUI 截图随发版验收补。README(特性/8 工具/0.7.0 变更)、PRIVACY(项目总结默认关+LLM 出口表+组件下载披露)、`docs/tauri-feasibility.md` 已同步。
+
+---
+
 ## 2026-10-23 · 发帖物料更新:五平台文案(掘金/CSDN/知乎/贴吧/小黑盒)对齐 v0.6.0
 
 **背景:** 用户确定本轮发帖渠道为 稀土掘金 / CSDN / 知乎 / 百度贴吧 / 小黑盒,要求按项目现况重写。旧物料成文于 v0.5.0 时代(9-13),数字已全面过时。

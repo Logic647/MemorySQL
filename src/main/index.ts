@@ -10,6 +10,7 @@ import {
   GENERATE_DEVLOG,
   HEADLESS_SCAN,
   LAUNCH_HIDDEN,
+  RUN_DIGEST,
   SEMANTIC_REINDEX,
   SYNC_FOLDER
 } from './core/cli-args'
@@ -41,10 +42,12 @@ import memoryCore from '../plugins/memory-core'
 import memoryDispatch from '../plugins/memory-dispatch'
 import syncFolder from '../plugins/sync-folder'
 import projectDevlog from '../plugins/project-devlog'
+import projectDigest from '../plugins/project-digest'
 import semanticSearch from '../plugins/semantic-search'
 import captureWatcher from '../plugins/capture-watcher'
 import importChat from '../plugins/import-chat'
 import type { MemorySQLPlugin } from './core/plugin-host'
+import { BUILTIN_PLUGIN_IDS } from '../shared/builtin-plugins'
 import { setupSpotlight, type SpotlightController } from './spotlight'
 import {
   applyUpdaterEvent,
@@ -86,8 +89,19 @@ const BUILTIN_PLUGINS = [
   memoryDispatch,
   syncFolder,
   projectDevlog,
+  projectDigest,
   semanticSearch
 ]
+
+// shared/builtin-plugins.ts 是设置页分组与单测的对齐基准;启动时核对一次,
+// 不一致只报日志(开发期可见),避免两份清单悄悄漂移
+{
+  const ids = BUILTIN_PLUGINS.map((p) => p.manifest.id).sort().join(',')
+  const want = [...BUILTIN_PLUGIN_IDS].sort().join(',')
+  if (ids !== want) {
+    console.error('[plugins] BUILTIN_PLUGINS 与 shared/builtin-plugins.ts 不一致:\n  main  :', ids, '\n  shared:', want)
+  }
+}
 
 // 命令行参数解析集中在 core/cli-args(路径类参数在那里做存在性校验)
 
@@ -195,6 +209,14 @@ async function runHeadlessScan(): Promise<void> {
       results['devlog'] = await host.invoke('project-devlog:generate')
     } catch (err) {
       results['devlog'] = { error: String(err) }
+    }
+  }
+  if (RUN_DIGEST) {
+    try {
+      // 显式 CLI 执行 = 用户意图:绕过 project-digest:enabled 总开关
+      results['digest'] = await host.invoke('project-digest:runAll')
+    } catch (err) {
+      results['digest'] = { error: String(err) }
     }
   }
   if (SEMANTIC_REINDEX) {
@@ -612,6 +634,11 @@ function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
     if (!win.isDestroyed()) win.webContents.send('push:sessions:changed')
   })
 
+  // project-digest 状态推送:总结开始/完成时刷新会话页的项目徽标
+  events.on('digest:changed', (...args: unknown[]) => {
+    if (!win.isDestroyed()) win.webContents.send('push:digest', args[0] ?? null)
+  })
+
   ipcMain.handle('memorysql:invoke', (_event, channel: string, payload: unknown) => {
     // host (infra) channels share the renderer bridge but bypass plugin space
     if (typeof channel === 'string' && channel.startsWith('memorysql:host:')) {
@@ -640,6 +667,7 @@ app.whenReady().then(async () => {
       EXPORT_ARCHIVE_DEST !== null ||
       DISPATCH ||
       GENERATE_DEVLOG ||
+      RUN_DIGEST ||
       SEMANTIC_REINDEX
     ) {
       await runHeadlessScan()

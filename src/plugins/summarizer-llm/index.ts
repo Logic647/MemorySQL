@@ -1,12 +1,17 @@
+import { LLM_PRESETS, presetById } from '../../shared/llm-presets'
 import type { MemorySQLPlugin, SummarizerProvider } from '../../main/core/plugin-host'
 import { redactWithCount } from '../../main/core/redact'
 import type { RawMessage } from '../../shared/types'
+
+const LLM_PRESET_IDS = LLM_PRESETS.map((p) => p.id)
 
 /** LLM provider ids the settings UI offers. */
 export type LlmProviderId = 'none' | 'openai' | 'anthropic' | 'ollama'
 
 export interface LlmConfig {
   provider: LlmProviderId
+  /** OpenAI 兼容预设 id('' = 未选);认证/token 策略跟随预设 */
+  preset: string
   openaiKey: string
   openaiBaseUrl: string
   openaiModel: string
@@ -19,6 +24,7 @@ export interface LlmConfig {
 
 export const LLM_DEFAULTS: LlmConfig = {
   provider: 'none',
+  preset: '',
   openaiKey: '',
   openaiBaseUrl: 'https://api.openai.com/v1',
   openaiModel: 'gpt-4o-mini',
@@ -68,7 +74,55 @@ export function parseLlmResponse(text: string): { title: string; summary: string
   return { title: title.replace(/^["']|["']$/g, '').slice(0, 80), summary: lines.slice(1).join('\n').slice(0, 600) }
 }
 
-async function callLlm(cfg: LlmConfig, transcript: string, maxTokens = 300): Promise<string> {
+/**
+ * OpenAI 兼容请求三件套(纯函数,兼容策略由单测锁定):
+ *
+ * 认证 —— 有 key 时同时发 `Authorization: Bearer` 与 `api-key` 双头:MiMo 只认
+ * api-key,其他家认 Bearer,多余的头一律被忽略(双发已在 check-llm/看板链路长期
+ * 验证)。免 key 预设(本地反代/自定义网关)两个头都不发。
+ *
+ * token 上限 —— 默认只发 `max_tokens`(OpenAI 严格模式对两字段同发会 400);
+ * 需要 `max_completion_tokens` 的家(MiMo)由预设声明 tokens:'both'。
+ */
+export function openaiCompatRequest(
+  cfg: Pick<LlmConfig, 'preset' | 'openaiBaseUrl' | 'openaiKey' | 'openaiModel'>,
+  transcript: string,
+  maxTokens: number,
+  system: string = SYSTEM_PROMPT
+): { url: string; headers: Record<string, string>; body: Record<string, unknown> } {
+  const key = cfg.openaiKey.trim()
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (key) {
+    headers.Authorization = `Bearer ${key}`
+    headers['api-key'] = key
+  }
+  const body: Record<string, unknown> = {
+    model: cfg.openaiModel,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: transcript }
+    ],
+    temperature: 0.2,
+    max_tokens: maxTokens
+  }
+  if ((presetById(cfg.preset)?.tokens ?? 'max_tokens') === 'both') {
+    body.max_completion_tokens = maxTokens
+  }
+  return {
+    url: `${cfg.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`,
+    headers,
+    body
+  }
+}
+
+/** OpenAI 兼容端点是否就绪:Base URL 必填;key 仅对非免 key 预设必填。 */
+export function isOpenaiReady(cfg: Pick<LlmConfig, 'preset' | 'openaiBaseUrl' | 'openaiKey'>): boolean {
+  if (cfg.openaiBaseUrl.trim().length === 0) return false
+  if (cfg.openaiKey.trim().length > 0) return true
+  return presetById(cfg.preset)?.keyless === true
+}
+
+async function callLlm(cfg: LlmConfig, transcript: string, maxTokens = 300, system?: string): Promise<string> {
   transcript = redactWithCount(transcript).text
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 45_000)
@@ -77,17 +131,10 @@ async function callLlm(cfg: LlmConfig, transcript: string, maxTokens = 300): Pro
     let headers: Record<string, string>
     let body: unknown
     if (cfg.provider === 'openai') {
-      url = `${cfg.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`
-      headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.openaiKey}` }
-      body = {
-        model: cfg.openaiModel,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: transcript }
-        ],
-        temperature: 0.2,
-        max_tokens: maxTokens
-      }
+      const plan = openaiCompatRequest(cfg, transcript, maxTokens, system)
+      url = plan.url
+      headers = plan.headers
+      body = plan.body
     } else if (cfg.provider === 'anthropic') {
       url = `${cfg.anthropicBaseUrl.replace(/\/$/, '')}/v1/messages`
       headers = {
@@ -98,7 +145,7 @@ async function callLlm(cfg: LlmConfig, transcript: string, maxTokens = 300): Pro
       body = {
         model: cfg.anthropicModel,
         max_tokens: maxTokens,
-        system: SYSTEM_PROMPT,
+        system: system ?? SYSTEM_PROMPT,
         messages: [{ role: 'user', content: transcript }]
       }
     } else {
@@ -108,7 +155,7 @@ async function callLlm(cfg: LlmConfig, transcript: string, maxTokens = 300): Pro
         model: cfg.ollamaModel,
         stream: false,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: system ?? SYSTEM_PROMPT },
           { role: 'user', content: transcript }
         ],
         options: { temperature: 0.2 }
@@ -141,7 +188,7 @@ const plugin: MemorySQLPlugin = {
   manifest: {
     id: 'summarizer-llm',
     name: 'Summarizer: LLM (optional)',
-    version: '0.1.0'
+    version: '0.2.0'
   },
 
   init(ctx) {
@@ -159,7 +206,7 @@ const plugin: MemorySQLPlugin = {
       available: () => {
         const cfg = getConfig()
         if (cfg.provider === 'none') return false
-        if (cfg.provider === 'openai') return cfg.openaiKey.trim().length > 0
+        if (cfg.provider === 'openai') return isOpenaiReady(cfg)
         if (cfg.provider === 'anthropic') return cfg.anthropicKey.trim().length > 0
         return cfg.ollamaUrl.trim().length > 0
       },
@@ -175,10 +222,50 @@ const plugin: MemorySQLPlugin = {
     // so a configured LLM wins and everything falls back to rules otherwise
     ctx.summarizer.registerProvider(provider)
 
-    // raw completion access for other plugins (memory refinement etc.)
+    // raw completion access for other plugins (memory refinement, project
+    // digest etc.). system/maxTokens 可覆盖 —— 会话摘要走默认 SYSTEM_PROMPT,
+    // 其他用途传自己的系统提示词;describe() 给调用方标注产物来源模型。
     ctx.services.provide('llm-refine', {
       available: () => provider.available(),
-      refine: async (prompt: string): Promise<string> => callLlm(getConfig(), prompt, 2000)
+      refine: async (prompt: string, opts?: { system?: string; maxTokens?: number }): Promise<string> =>
+        callLlm(getConfig(), prompt, opts?.maxTokens ?? 2000, opts?.system),
+      describe: (): string => {
+        const cfg = getConfig()
+        if (cfg.provider === 'openai') return cfg.openaiModel || 'openai-compat'
+        if (cfg.provider === 'anthropic') return cfg.anthropicModel || 'anthropic'
+        if (cfg.provider === 'ollama') return `ollama:${cfg.ollamaModel}`
+        return 'llm'
+      }
+    })
+
+    // 真发一次补全的连通性自检 —— listModels 只证明鉴权通过,不证明模型能用。
+    // 接受可选的未保存配置(UI 直接测界面当前值,不落盘;掩码 Key 会被跳过)。
+    ctx.ipc.handle('testConnection', async (payload) => {
+      const cfg = getConfig()
+      const patch = (payload ?? {}) as Partial<LlmConfig>
+      const masked = (k: string): boolean => k.endsWith('Key')
+      for (const key of Object.keys(LLM_DEFAULTS) as Array<keyof LlmConfig>) {
+        const v = patch[key]
+        if (typeof v !== 'string' || (masked(key) && v.startsWith('•'))) continue
+        if (key === 'provider' && !['none', 'openai', 'anthropic', 'ollama'].includes(v)) continue
+        if (key === 'preset' && !LLM_PRESET_IDS.includes(v) && v !== '') continue
+        // 全部字段都是 string,经 Record 视图写入以通过 keyof 的索引赋值检查
+        ;(cfg as unknown as Record<string, string>)[key] = v
+      }
+      if (cfg.provider === 'none') return { ok: false as const, message: '请先选择 LLM 引擎' }
+      if (!provider.available()) return { ok: false as const, message: '配置不完整(缺 API Key 或 Base URL)' }
+      const t0 = Date.now()
+      try {
+        // 512 上限给推理型模型留出思考 token(MiMo 实测一次推理就烧 ~136)
+        const text = await callLlm(cfg, '连通性测试,请直接回复两个字符:ok', 512)
+        const ms = Date.now() - t0
+        if (!text.trim()) {
+          return { ok: false as const, message: `服务有响应但内容为空(${ms}ms),可能是推理型模型被 token 上限截断`, ms }
+        }
+        return { ok: true as const, message: `连接成功(${ms}ms):${text.trim().slice(0, 40)}`, ms }
+      } catch (e) {
+        return { ok: false as const, message: `连接失败:${String(e instanceof Error ? e.message : e)}` }
+      }
     })
 
     // fetch available models from the configured provider
@@ -239,12 +326,14 @@ const plugin: MemorySQLPlugin = {
     ctx.ipc.handle('setConfig', (payload) => {
       const next = (payload ?? {}) as Partial<LlmConfig>
       const VALID_PROVIDERS = new Set<string>(['none', 'openai', 'anthropic', 'ollama'])
+      const VALID_PRESETS = new Set<string>(['', ...LLM_PRESET_IDS])
       for (const key of Object.keys(LLM_DEFAULTS) as Array<keyof LlmConfig>) {
         if (!(key in next)) continue
         const value = next[key]
         // every field is a string; anything else would poison available()/URL building
         if (typeof value !== 'string') continue
         if (key === 'provider' && !VALID_PROVIDERS.has(value)) continue
+        if (key === 'preset' && !VALID_PRESETS.has(value)) continue
         // masked values from the UI never overwrite a stored key
         if ((key === 'openaiKey' || key === 'anthropicKey') && value.startsWith('•')) continue
         ctx.settings.set(key, value)

@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import { Brain, Settings2, History } from 'lucide-react'
 import appIcon from './assets/icon.png'
 import type { SearchHit, SessionSummaryRow } from '../../shared/types'
-import { api, type Overview, type SessionDetail } from './api'
+import { api, type DigestLatest, type DigestStatusInfo, type Overview, type SessionDetail } from './api'
 import { edgeScrollDelta } from './drag-autoscroll'
+import { orderAgentChips } from './chips-order'
 import MemoriesView from './MemoriesView'
 import SettingsView from './SettingsView'
 
@@ -192,6 +193,12 @@ export default function App() {
 
   const [relayPick, setRelayPick] = useState<{ id: number; project: string } | null>(null)
 
+  // 项目滚动总结:总开关关闭时 digestInfo.enabled=false,组头不渲染任何总结 UI
+  const [digestInfo, setDigestInfo] = useState<DigestStatusInfo | null>(null)
+  const [digestCards, setDigestCards] = useState<Record<number, DigestLatest | null>>({})
+  const [openDigest, setOpenDigest] = useState<Set<number>>(new Set())
+  const openDigestRef = useRef<Set<number>>(new Set())
+
   const refresh = useCallback(async () => {
     setSessions(await api.listSessions(filter, { archived: showArchived }))
     setOverview(await api.overview())
@@ -226,6 +233,48 @@ export default function App() {
   useEffect(() => {
     void api.mcpStatus().then(setMcp).catch(() => setMcp(null))
   }, [])
+
+  const refreshDigest = useCallback(async (): Promise<void> => {
+    try {
+      setDigestInfo(await api.digestStatus())
+      // 展开中的卡片同步刷新内容(总结刚完成时能看到新产物)
+      for (const pid of openDigestRef.current) {
+        void api
+          .digestLatest(pid)
+          .then((d) => setDigestCards((prev) => ({ ...prev, [pid]: d })))
+          .catch(() => {})
+      }
+    } catch {
+      setDigestInfo(null)
+    }
+  }, [])
+
+  // 总结开始/完成都会推 digest:changed —— 徽标与卡片跟着刷新
+  useEffect(() => {
+    void refreshDigest()
+    return api.onDigestChanged(() => void refreshDigest())
+  }, [refreshDigest])
+
+  const toggleDigestCard = useCallback((projectId: number): void => {
+    setOpenDigest((prev) => {
+      const next = new Set(prev)
+      if (next.has(projectId)) next.delete(projectId)
+      else next.add(projectId)
+      openDigestRef.current = next
+      return next
+    })
+    void api
+      .digestLatest(projectId)
+      .then((d) => setDigestCards((prev) => ({ ...prev, [projectId]: d })))
+      .catch(() => {})
+  }, [])
+
+  const runDigestNow = useCallback(
+    (projectId: number): void => {
+      void api.digestRun(projectId).then(() => void refreshDigest())
+    },
+    [refreshDigest]
+  )
 
   // startup auto-check pushes state here — show a non-blocking banner outside Settings
   useEffect(() => {
@@ -661,35 +710,53 @@ export default function App() {
             <>
           <div className="side-section">
             <div className="side-title">Agent</div>
-            {['all', ...CAPTURE_PLUGINS.filter(({ id }) => enabledCaptures[id] !== false).map(({ id }) => id.replace('capture-', ''))].map((a) => {
-              const stat = overview?.byAgent.find((x) => x.agent_type === a)
-              const count = a === 'all'
-                ? overview?.byAgent.reduce((n, x) => n + x.sessions, 0) ?? 0
-                : stat?.sessions ?? 0
-              return (
-                <button
-                  key={a}
-                  className={`side-item ${filter === a ? 'active' : ''}`}
-                  onClick={() => setFilter(a)}
-                >
-                  {a === 'all' ? '全部' : a}
-                  <span className="count">{count}</span>
-                </button>
+            {/*「显示取决于检测到了多少」:数量降序,0 条沉底弱化(捕获对所有已启用
+                agent 默认开启,0 条 = 本机未装/未用到,不是故障) */}
+            {(() => {
+              const counts = new Map((overview?.byAgent ?? []).map((x) => [x.agent_type, x.sessions]))
+              const chips = orderAgentChips(
+                CAPTURE_PLUGINS.filter(({ id }) => enabledCaptures[id] !== false).map(({ id }) => id.replace('capture-', '')),
+                counts
               )
-            })}
+              return ['all', ...chips.map((c) => c.agent)].map((a) => {
+                const count = a === 'all'
+                  ? overview?.byAgent.reduce((n, x) => n + x.sessions, 0) ?? 0
+                  : counts.get(a) ?? 0
+                return (
+                  <button
+                    key={a}
+                    className={`side-item ${filter === a ? 'active' : ''} ${a !== 'all' && count === 0 ? 'dim' : ''}`}
+                    title={a !== 'all' && count === 0 ? '未检测到会话 —— 装好该 agent 后自动导入' : undefined}
+                    onClick={() => setFilter(a)}
+                  >
+                    {a === 'all' ? '全部' : a}
+                    <span className="count">{count}</span>
+                  </button>
+                )
+              })
+            })()}
           </div>
 
           <div className="side-section">
             <div className="side-title">捕获状态</div>
-            {CAPTURE_PLUGINS.filter(({ id }) => enabledCaptures[id] !== false).map(({ id, label }) => (
-              <div key={id} className="capture-status">
-                <span className={`dot ${statuses[id]?.startsWith('错误') ? 'err' : 'ok'}`} />
-                <div>
-                  <div className="capture-name">{label}</div>
-                  <div className="capture-detail">{statuses[id] ?? '…'}</div>
-                </div>
-              </div>
-            ))}
+            {(() => {
+              const counts = new Map((overview?.byAgent ?? []).map((x) => [x.agent_type, x.sessions]))
+              const ordered = [...CAPTURE_PLUGINS.filter(({ id }) => enabledCaptures[id] !== false)].sort(
+                (x, y) => (counts.get(y.id.replace('capture-', '')) ?? 0) - (counts.get(x.id.replace('capture-', '')) ?? 0)
+              )
+              return ordered.map(({ id, label }) => {
+                const n = counts.get(id.replace('capture-', '')) ?? 0
+                return (
+                  <div key={id} className={`capture-status ${n === 0 ? 'dim' : ''}`}>
+                    <span className={`dot ${statuses[id]?.startsWith('错误') ? 'err' : 'ok'}`} />
+                    <div>
+                      <div className="capture-name">{label}</div>
+                      <div className="capture-detail">{statuses[id] ?? '…'}</div>
+                    </div>
+                  </div>
+                )
+              })
+            })()}
           </div>
 
           <div className="side-section">
@@ -884,6 +951,61 @@ export default function App() {
                         )
                       )
                     }
+                    // 项目滚动总结徽标(总开关开启才渲染;未分配项目组无 projectId 不参与)
+                    const dPid = rows[0]?.projectId ?? null
+                    const dOn = digestInfo?.enabled === true && dPid != null
+                    const dst = dPid != null ? digestInfo?.projects.find((p) => p.projectId === dPid) : undefined
+                    const badge =
+                      dst?.status === 'running'
+                        ? { cls: 'running', text: '⟳ 总结中', title: '正在生成滚动总结' }
+                        : dst?.lastDigestAt
+                          ? {
+                              cls: 'ok',
+                              text: `✓ ${fmtRelative(dst.lastDigestAt / 1000)}`,
+                              title: `上次总结: ${fmtTime(dst.lastDigestAt / 1000)}${dst.lastError ? `\n${dst.lastError}` : ''}(点击展开/收起)`
+                            }
+                          : {
+                              cls: 'dim',
+                              text: '未总结',
+                              title: '有会话待总结;新会话安静期后自动生成,或点「总结」立即生成(点击展开)'
+                            }
+                    const card = dPid != null ? digestCards[dPid] : undefined
+                    const digestCardNode =
+                      dOn && dPid != null && openDigest.has(dPid) ? (
+                        <div key={`${project}-digest`} className="digest-card">
+                          {card ? (
+                            <>
+                              <div className="digest-card-head">
+                                <span className="mono-tag">滚动总结 · {card.model}</span>
+                                <span className="hint">
+                                  覆盖 {fmtShort(card.periodStart)} ~ {fmtShort(card.periodEnd)} · {card.sessionsCovered} 会话 · 生成于{' '}
+                                  {fmtTime(card.createdAt / 1000)}
+                                </span>
+                              </div>
+                              <pre className="digest-summary">{card.summary}</pre>
+                              {card.todos.length > 0 && (
+                                <div className="digest-todos">
+                                  {card.todos.map((t, i) => (
+                                    <div key={i} className={`digest-todo ${t.status === 'done' ? 'done' : ''}`}>
+                                      [{t.status === 'done' ? 'x' : ' '}] {t.content}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {card.decisions.length > 0 && (
+                                <div className="digest-decisions">
+                                  {card.decisions.map((d, i) => (
+                                    <div key={i}>· {d}</div>
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <div className="empty">该项目的总结还没生成 —— 点组头右侧「总结」立即生成一次</div>
+                          )}
+                        </div>
+                      ) : null
+
                     return [
                       <div
                         key={`${project}-head`}
@@ -913,7 +1035,32 @@ export default function App() {
                       >
                         {project}
                         <span className="group-count">{rows.length}</span>
+                        {dOn && (
+                          <span
+                            className={`digest-badge ${badge.cls}`}
+                            title={badge.title}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              toggleDigestCard(dPid as number)
+                            }}
+                          >
+                            {badge.text}
+                          </span>
+                        )}
+                        {dOn && (
+                          <button
+                            className="btn btn-small digest-now"
+                            title="立即总结该项目的新会话(LLM 引擎未配置时为本地规则总结,零外发)"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              runDigestNow(dPid as number)
+                            }}
+                          >
+                            总结
+                          </button>
+                        )}
                       </div>,
+                      ...(digestCardNode ? [digestCardNode] : []),
                       ...body,
                     ]
                   })

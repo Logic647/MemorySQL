@@ -250,6 +250,49 @@ body {
   border-radius: 999px; padding: 0 8px; line-height: 18px;
 }
 .group-subhead { padding: 6px 14px 2px; font-size: 11px; color: var(--msql-fg-dim); display: flex; gap: 6px; align-items: center; }
+
+/* ---------- 项目滚动总结(digest) ---------- */
+.digest-badge {
+  margin-left: 6px; font-size: var(--msql-fs-xs); font-weight: 400; letter-spacing: 0;
+  border-radius: 999px; padding: 0 8px; line-height: 18px; cursor: pointer;
+  border: 1px solid transparent; transition: background var(--msql-t-fast), border-color var(--msql-t-fast);
+}
+.digest-badge.dim { color: var(--msql-fg-dim); background: rgba(255, 255, 255, 0.06); }
+.digest-badge.ok { color: #8fd6a8; background: rgba(90, 200, 130, 0.12); }
+.digest-badge.running { color: #e8c97a; background: rgba(230, 190, 90, 0.12); }
+.digest-badge.running::before { content: '↻'; display: inline-block; margin-right: 3px; animation: msql-spin 1.1s linear infinite; }
+@keyframes msql-spin { to { transform: rotate(360deg); } }
+.digest-badge:hover { border-color: rgba(255, 255, 255, 0.22); }
+.digest-now { margin-left: 2px; opacity: 0; transition: opacity var(--msql-t-fast); }
+.group-head:hover .digest-now { opacity: 1; }
+.digest-card {
+  margin: 4px 14px 8px; padding: 10px 14px;
+  background: var(--msql-glass);
+  border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md);
+}
+.digest-card-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.digest-summary { white-space: pre-wrap; font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); margin: 4px 0 8px; }
+.digest-todos { display: flex; flex-direction: column; gap: 3px; font-size: var(--msql-fs-sm); margin-bottom: 6px; }
+.digest-todo { color: var(--msql-fg); font-family: var(--msql-font-mono); }
+.digest-todo.done { color: var(--msql-fg-dim); text-decoration: line-through; }
+.digest-decisions { display: flex; flex-direction: column; gap: 3px; font-size: var(--msql-fs-sm); color: var(--msql-fg-dim); }
+
+/* ---------- 插件分组折叠 ---------- */
+.plugin-group { margin-bottom: 6px; border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md); overflow: hidden; }
+.plugin-group-head {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.04); border: none; color: var(--msql-fg);
+  font-size: var(--msql-fs-md); cursor: pointer; text-align: left;
+}
+.plugin-group-head:hover { background: rgba(255, 255, 255, 0.07); }
+.plugin-group-label { font-weight: 600; flex: 1; }
+.plugin-group .plugin-row { padding: 6px 12px; border-top: 1px solid var(--msql-glass-border); }
+.chev { display: inline-block; transition: transform var(--msql-t-fast); color: var(--msql-fg-dim); }
+.chev.open { transform: rotate(90deg); }
+
+/* ---------- 会话侧栏:0 会话的 agent 弱化 ---------- */
+.side-item.dim, .capture-status.dim { opacity: .45; }
+
 .relay-fold {
   margin: 4px 14px; padding: 6px 12px; text-align: left; width: calc(100% - 28px);
   background: var(--msql-accent-soft); border: 1px dashed rgba(79, 140, 255, 0.3);

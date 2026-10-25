@@ -66,23 +66,32 @@ Hermes、Qwen Code、Kimi CLI、CodeBuddy、WorkBuddy、Qoder 等),把它们产�
 
 | 场景 | 发出什么 | 发给谁 |
 |---|---|---|
-| **启用 LLM 摘要** | 对话**摘录**(见下) | 你在设置里配置的 OpenAI / Anthropic / 本地 Ollama |
+| **启用 LLM 引擎** | 对话**摘录**(见 3.1) | 你在设置里配置的提供商(智谱 / SiliconFlow / DeepSeek / MiMo / 本地反代 / OpenAI / Anthropic / 自定义端点 / 本地 Ollama) |
+| **项目总结(默认关闭)** | 项目会话的**定点摘录**(先脱敏,构成见 3.1) | 同上:当前 LLM 引擎;未配置 LLM 时用本地规则总结,**零外发** |
 | **检查更新** | 版本查询请求 | `api.github.com`(公开 API) |
+| **首次启用语义检索** | 下载约 20MB 推理组件 zip 与约 100MB 模型 | `github.com` Releases(组件)与 `huggingface.co`(模型);下载内容进入数据目录,不回传任何数据 |
 | **MCP 连接** | 本机 stdio 进程启动 | 无网络 |
 
-内置的 LLM 提供商只有三个:**OpenAI**、**Anthropic**、**Ollama**(本地模型,不联网)。
-OpenAI 与 Anthropic 两项的 **Base URL 可改**,所以也可以指向任何 OpenAI 兼容的自建或第三方服务
-(此时数据会发往**你填的那个地址**,而不是 OpenAI 官方)。
+LLM 引擎(供会话摘要、项目总结、记忆精炼共用)支持预设与自定义:**智谱 GLM、
+SiliconFlow、DeepSeek、小米 MiMo、本地反代(如 OpenCode Zen 的反代网关)、
+OpenAI、Anthropic、任意 OpenAI 兼容自定义端点、本地 Ollama**。除 Ollama 外,
+Base URL 均可改 —— 数据实际发往**你填的那个地址**。反代预设默认指向
+`127.0.0.1`,此时数据只到本机的反代进程,由该反代自行决定后续去向。
 
-**未配置任何 provider 时,所有摘要功能自动降级为纯本地规则,不会退回联网。**
+**未配置任何 provider 时,所有摘要/总结功能自动降级为纯本地规则,不会退回联网;
+项目总结功能本身默认关闭,需在设置中显式开启。**
 
 ### 3.1 发给 LLM 的具体内容
 
-**不是完整对话,是定点摘录**。每次摘要请求构造的 transcript 只包含:
+**不是完整对话,是定点摘录**。会话摘要请求的 transcript 只包含:
 
 - 前两条用户消息(分别截断到 800 / 300 字符)
 - 最后一条 assistant 回复(截断到 600 字符)
 - 一个统计行(消息总数、工具调用数)
+
+项目滚动总结(开启后)的素材是:上一版总结 + 每个新会话的 标题/已有摘要/
+首条用户消息(300 字符)/末条助手回复(400 字符)/统计行,单次至多 20 个会话、
+总量约 2.4 万字符软截断。
 
 **发送前会经过脱敏**(`redact`),移除的内容包括:API 密钥(`sk-`、`sk-proj-`、AWS AKIA、
 GitHub token `ghp_`/`gho_` 等)、PEM 私钥块、邮箱地址。
@@ -142,8 +151,12 @@ HTTP 请求的进程,都可以读取你的**全部原始内容**。
 
 ## 7. 第三方组件
 
-- **本地推理**(语义检索):ONNX 模型,`onnxruntime-node` **完全本地运行,不联网**。
-- 依赖的原生库(better-sqlite3 / sqlite-vec / tokenizers)均为开源库,随应用分发。
+- **本地推理**(语义检索):ONNX 模型,`onnxruntime-node` **完全本地运行,推理本身不联网**。
+- 为缩小安装包,推理组件(约 20MB)与模型(约 100MB)在首次启用语义检索时从
+  GitHub Releases / HuggingFace 下载到数据目录(`native-runtime/`、`fastembed-cache/`),
+  之后全程离线;下载是单向的,不回传任何数据。
+- 依赖的原生库(better-sqlite3 / sqlite-vec)随应用分发,其余语义栈随组件包分发,
+  清单见组件包内 `manifest.json`。
 - 完整的依赖清单见仓库的 `package.json` / `package-lock.json`。
 
 ## 8. 我们如何处理安全问题

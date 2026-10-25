@@ -109,6 +109,11 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npx electron-vite build && npx electron-builder --mac --${{ matrix.arch }}
 
+      # 语义组件 zip:语义检索的原生栈已排除出安装包,这里按 runner 平台打出
+      # native-runtime-<plat>-<arch>.zip,随 artifact 上传;tag 时补挂到 Release。
+      - name: Build native runtime zip (semantic)
+        run: node scripts/gen-native-runtime.mjs --out dist
+
       - name: Upload installer artifact (Windows)
         uses: actions/upload-artifact@v4
         if: matrix.platform == 'win'
@@ -118,6 +123,7 @@ jobs:
             dist/MemorySQL-Setup-*.exe
             dist/MemorySQL-Setup-*.exe.blockmap
             dist/latest.yml
+            dist/native-runtime-*.zip
           if-no-files-found: error
 
       - name: Upload installer artifact (Linux)
@@ -130,6 +136,7 @@ jobs:
             dist/*.deb
             dist/*.tar.gz
             dist/latest-linux.yml
+            dist/native-runtime-*.zip
           if-no-files-found: warn
 
       # dmg = installer for humans, zip = the payload electron-updater replaces
@@ -144,4 +151,13 @@ jobs:
             dist/*.dmg
             dist/*.zip
             dist/latest-mac.yml
+            dist/native-runtime-*.zip
           if-no-files-found: error
+
+      # 语义组件 zip 挂到发版草稿(electron-builder 已建的 draft release);
+      # 语义检索首次启用时按「应用版本+平台+架构」精确下载这一份。
+      - name: Attach native runtime zips to release (tag only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" dist/native-runtime-*.zip --clobber --repo Logic647/MemorySQL

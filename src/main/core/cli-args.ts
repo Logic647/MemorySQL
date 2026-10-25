@@ -9,6 +9,7 @@ import path from 'node:path'
  *   --sync <dir>         与指定网盘文件夹做增量同步
  *   --dispatch <file>    把一份对话文本作为会话导入(见 import-chat 插件)
  *   --devlog             生成项目日志
+ *   --digest             为所有有新会话的项目生成滚动总结(显式执行,不受总开关限制)
  *   --reindex            重建语义索引
  *   --export-archive <p> 导出 .msqlv 归档到指定文件
  *   --hidden             开机自启:只驻留托盘
@@ -24,6 +25,7 @@ function argValue(flag: string): string | null {
 export const HEADLESS_SCAN = process.argv.includes('--scan')
 export const DISPATCH = process.argv.includes('--dispatch')
 export const GENERATE_DEVLOG = process.argv.includes('--devlog')
+export const RUN_DIGEST = process.argv.includes('--digest')
 export const SEMANTIC_REINDEX = process.argv.includes('--reindex')
 export const LAUNCH_HIDDEN = process.argv.includes('--hidden')
 

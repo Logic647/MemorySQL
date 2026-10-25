@@ -217,6 +217,30 @@ export function createMcpTools(deps: {
     return parts.join('\n')
   }
 
+  /**
+   * 项目滚动总结(project-digest 插件的表;跨插件直读,带存在性守卫 ——
+   * 插件停用/表未建时静默跳过,brief 退回纯规则汇编)。
+   * 有总结时它是简报第一公民:agent 先读这段,不必逐个翻会话。
+   */
+  const latestProjectDigest = (projectId: number | null): string | null => {
+    if (projectId == null) return null
+    try {
+      const row = sqlite
+        .prepare(
+          `SELECT summary, todos FROM project_digests WHERE project_id = ? AND deleted = 0 ORDER BY created_at DESC LIMIT 1`
+        )
+        .get(projectId) as { summary: string; todos: string } | undefined
+      if (!row) return null
+      const todos = JSON.parse(row.todos || '[]') as Array<{ content: string; status?: string }>
+      const open = todos.filter((t) => t.status !== 'done')
+      const lines = ['\n## 项目滚动总结(定期生成 —— 先读这段,不必逐个翻会话)', row.summary]
+      if (open.length > 0) lines.push(`待办: ${open.map((t) => t.content).join(' / ')}`)
+      return lines.join('\n')
+    } catch {
+      return null
+    }
+  }
+
   const buildBrief = (args: Record<string, unknown>): string => {
     const keyword = typeof args.project === 'string' ? args.project : undefined
     const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
@@ -231,6 +255,9 @@ export function createMcpTools(deps: {
     if (project?.path) parts.push(`- 路径: ${project.path}`)
     if (project?.tech_stack) parts.push(`- 技术栈: ${project.tech_stack}`)
     if (agent) parts.push(`- 面向 agent: ${agent}(记忆含全局)`)
+
+    const digest = latestProjectDigest(projectId)
+    if (digest) parts.push(digest)
 
     parts.push('\n## 最近会话(接棒上下文)')
     if (sessions.length > 0) {
