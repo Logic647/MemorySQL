@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-10-25 · v0.7.0 发版收尾:用户测试反馈 9 项 + CI 两个真坑(.mjs 加载 / rebuild 产物膨胀)
+
+**用户手测反馈 9 项(全部落地,vitest 459:459):**
+- **首次总结读全部会话**:runDigest 改「消化循环」——一次触发连续消化多批(20 个/批)直到清空未覆盖会话,轮数上限 10(=200 个/次防失控),每轮推进水位(last_covered_ts),中途失败已消化部分不重复;message 带「N 会话(M 轮)」
+- **总结改详细**:`DIGEST_SYSTEM_PROMPT` 重写为「写给对项目一无所知、即将接手的 agent」——必含 项目是什么/技术要点与结构/关键决策与坑/当前进度/环境与命令,summary 上限 10 行→1500 字(解析截断 4000→6000),maxTokens 2000→4000;滚动续写语义不变(过时删、新信息并入,不追加流水账)
+- **顶栏「项目总结」按钮 + 弹窗**:左列项目(状态徽标)右列最新总结全文+「立即总结该项目」;开关未开时弹窗给开启指引
+- **会话按项目折叠**:点组头折叠/展开(chev 箭头),localStorage `msql.projectGroups` 记住;折叠态组头仍是拖拽目标
+- **Agent 栏不显示 0 条 agent**(原为沉底 dim;「捕获状态」诊断区保留 dim)
+- **select 下拉暗色修复**:全局 select/option 配色(默认白底刺眼)
+- **测试连接 bug(真 bug)**:testConnection 曾用 `provider.available()` 判可用——它读**已保存**配置,未保存的草稿永远报「配置不完整」;抽 `isLlmReady(cfg)` 纯函数评估**传入的这份**(掩码 Key 跳过后回退已存值),回归用例锁死
+- **设置页「立即总结全部项目」**:新 IPC `queueAll` 入队所有有未覆盖会话的项目(串行后台,进度走 push:digest),CLI `runAll` 保持阻塞语义
+
+**CI 坑一:vitest 加载 .mjs 在 CI Windows 稳定 SyntaxError。** 症状:`test/native-runtime.test.ts`(全仓唯一 import `.mjs` 的测试)套件级 `SyntaxError: Invalid or unexpected token` **无位置**,仅 CI Windows 挂(本机 Windows 绿、ubuntu 绿),vitest/node 版本逐一核对一致、esbuild/vite ssr transform 手动探测全过、文件字节 md5 与库内一致——根因未最终定位。**修法是结构性的:gen-native-runtime `.mjs`→`.ts`**(Node ≥23.6 原生 type stripping,CI/本机均 Node 24),测试走纯 TS 链路,坑整个消失。**教训:测试别 import `.mjs` 构建脚本;要么 .ts 单源(Node ≥23.6 直接跑),要么 spawn。**
+
+**CI 坑二:linux 语义组件 zip 229.7MB(本地 20.8MB)——两层排查,真凶是 CUDA provider。** 第一层推测 CI 的 `npx electron-rebuild` 中间产物混入,加了 `build//deps//*.o/*.obj` 排除——无效(zip 仍 229.7MB)。给 gen 加「>3MB 条目打印」诊断行推上 CI,日志直接点名:**`bin/napi-v3/linux/x64/libonnxruntime_providers_cuda.so` 327MB**(npm 的 onnxruntime-node linux 包自带 CUDA provider 共享库;CPU 推理永不加载,ORT 加载 provider 失败自动回落内置 EP)。排除 `libonnxruntime_providers_*` 后 linux zip 229.7→**20.9MB**;同一次还排掉 win 包的 `DirectML.dll`(GPU 后端,yml 早排除过,gen 对齐)→ win zip 20→**11.0MB**。**教训:体积异常别猜,先让构建日志把大文件名列出来;npm 原生包可能带全量 GPU 后端。**
+
+**发版流程:** tag 重打四次(① ci 失败于 .mjs 坑 ② linux zip 229MB(rebuild 推测修) ③ 仍 229MB,诊断行锁定 CUDA provider,修复 ④ 转正);期间两次取消被取代的孤儿 tag run 给新 run 让路。**最终资产 15 项全公网 200**:三平台安装包 + latest*.yml + blockmap + 三平台 native-runtime zip(win 11.0 / linux 20.9 / darwin-arm64 25.4MB)。`publish-release.mjs` 删重草稿转正:https://github.com/Logic647/MemorySQL/releases/tag/v0.7.0 。**装机验收待办:自动更新 0.6.0→0.7.0、首次启用语义检索的组件下载流(~11-25MB,`MEMORYSQL_NATIVE_RUNTIME_URL` 可旁路)、LLM 真调用下的 digest 质量。**
+
+---
+
 ## 2026-10-25 · v0.7.0:项目滚动总结 + LLM 引擎聚合 + 插件分组/检测数 + 安装包瘦身(105.5→99.5MB)
 
 **本版主题:让 agent「少读会话、多读结论」,并诚实瘦身。** 用户提出四件事:体积(评估换栈)、hindsight 式项目总结+待办、免费 API 聚合(参考 opencode Zen 反代生态)、插件分类折叠与捕获按检测数显示;另补充硬要求:**LLM 总结必须有总开关、默认关闭**。
