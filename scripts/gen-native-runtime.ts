@@ -77,6 +77,26 @@ export function keepOrtEntry(rel: string, platform: string): boolean {
   return plat === platform && (ORT_BIN_KEEP[platform] ?? []).includes(archDir)
 }
 
+/**
+ * 任意闭包包内都剔除的路径:CI 上 `npx electron-rebuild` 会在 gen 之前跑,
+ * linux 上对 onnxruntime-node 走源码重编译,build/ 里几百 MB 中间产物——
+ * 不剔除的话 linux 组件 zip 从 ~21MB 膨胀到 ~230MB(实测踩坑)。deps/ 是
+ * 各原生包携带的 C/C++ 源码树,运行时同样不需要。
+ */
+const PKG_PATH_EXCLUDE: RegExp[] = [/^build\//, /^deps\//, /\.o$/, /\.obj$/]
+
+/** tokenizers 平台包名里与平台/架构对应的标识;非目标平台的平台包整包跳过。 */
+const TOKENIZER_PLATFORM_TAG: Record<string, string> = {
+  win32: 'win32-x64',
+  linux: 'linux-x64',
+  darwin: 'darwin-universal'
+}
+export function isTokenizerPlatformPkg(key: string, platform: string): boolean {
+  if (!/^node_modules\/@anush008\/tokenizers-/.test(key)) return true
+  const tag = TOKENIZER_PLATFORM_TAG[platform] ?? ''
+  return key.includes(tag)
+}
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name)
@@ -113,9 +133,13 @@ async function main(): Promise<void> {
   for (const key of closure) {
     const meta = lock.packages?.[key] ?? {}
     const srcDir = path.join(ROOT, key)
+    if (!isTokenizerPlatformPkg(key, platform)) {
+      console.warn(`跳过(非目标平台的 tokenizers 平台包): ${key}`)
+      continue
+    }
     if (!fs.existsSync(srcDir)) {
-      // 平台相关的 optional 包在当前 runner 未装(如 @anush008/tokenizers-<plat>)——
-      // CI 每平台各自构建,本 runner 没有就说明目标平台也不需要它
+      // 平台相关的 optional 包在当前 runner 未装——CI 每平台各自构建,
+      // 本 runner 没有就说明目标平台由 lock 里对应平台包装载
       console.warn(`跳过(本机未安装,平台相关 optional): ${key}`)
       continue
     }
@@ -123,6 +147,7 @@ async function main(): Promise<void> {
     for (const f of walk(srcDir)) {
       const rel = path.relative(srcDir, f).split(path.sep).join('/')
       if (key === 'node_modules/onnxruntime-node' && !keepOrtEntry(rel, platform)) continue
+      if (PKG_PATH_EXCLUDE.some((re) => re.test(rel))) continue
       zip.addLocalFile(f, path.posix.dirname(path.posix.join(key, rel)))
     }
   }
