@@ -216,6 +216,50 @@ describe('parseClaudeJsonl (codebuddy reuse)', () => {
     expect(s!.agentType).toBe('codebuddy')
     expect(s!.externalId).toBe('cb-1')
   })
+
+  /**
+   * CodeBuddy ≥2.x 的真实形态(2026-10-25 NAS 真机实测样本,见
+   * claude-parser.ts 头注释):type='message' + 顶层 role/content +
+   * content 块 input_text/output_text + **毫秒** epoch 时间戳 +
+   * file-history-snapshot 等非会话行。文档调研版 parser 对它解析 0 条
+   * —— NAS 黑盒探针上线第一天抓到的真实漂移,本用例锁住校准。
+   */
+  it('parses CodeBuddy ≥2.x message/role shape with ms-epoch timestamps', () => {
+    const lines = [
+      JSON.stringify({
+        id: 'm1',
+        timestamp: 1792931601848,
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'Reply with exactly: ok' }],
+        sessionId: 'cb2-1',
+        cwd: '/home/logic/apps/MemorySQL'
+      }),
+      JSON.stringify({
+        timestamp: 1792931601956,
+        type: 'file-history-snapshot',
+        snapshot: { trackedFileBackups: {} }
+      }),
+      JSON.stringify({
+        id: 'm2',
+        parentId: 'm1',
+        timestamp: 1792931602093,
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'ok' }],
+        sessionId: 'cb2-1'
+      })
+    ]
+    const s = parseClaudeJsonl('cb2.jsonl', lines.join('\n'), 'codebuddy')
+    expect(s, '真实形态必须解析出会话(NAS 探针曾对它报漂移)').not.toBeNull()
+    expect(s!.externalId).toBe('cb2-1')
+    expect(s!.cwd).toBe('/home/logic/apps/MemorySQL')
+    expect(s!.startedAt).toBe(1792931601) // ms → 秒,与全链路口径一致
+    expect(s!.endedAt).toBe(1792931602)
+    expect(s!.messages).toHaveLength(2)
+    expect(s!.messages[0]).toMatchObject({ role: 'user', content: 'Reply with exactly: ok' })
+    expect(s!.messages[1]).toMatchObject({ role: 'assistant', content: 'ok' })
+  })
 })
 
 describe('parseQwenJsonl', () => {

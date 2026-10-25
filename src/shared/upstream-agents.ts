@@ -429,7 +429,10 @@ export const AGENTS: AgentContract[] = [
         fileMatch: '**/*.jsonl',
         requiredPaths: [],
         parser: 'claude',
-        note: '复用 parseClaudeJsonl(Claude 兼容);本机未装,格式来自文档调研'
+        note:
+          '复用 parseClaudeJsonl(Claude 兼容);2026-10-25 NAS 真机校准:CodeBuddy ≥2.x 实际写 ' +
+          'type=message + 顶层 role/content + content 块 input_text/output_text + 毫秒 epoch 时间戳' +
+          '(非 .message 壳),parser 已按真机样本校准并锁 fixture;未登录也会写会话文件(登录错误作为 assistant 消息落盘)'
       }
     },
     mcp: {

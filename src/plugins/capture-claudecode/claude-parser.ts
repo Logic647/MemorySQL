@@ -7,19 +7,32 @@ import { safeDir, walkWithin } from '../../main/core/safe-path.ts'
  *   { type: 'user'|'assistant'|'summary'|'system'|…,
  *     message: { role, content: string | Array<{type:'text'|'tool_use'|'tool_result', …}> },
  *     timestamp: ISO, sessionId, cwd, isSidechain? }
+ *
+ * CodeBuddy Code ≥2.x(~/.codebuddy/projects)是**同目录布局的另一形态**
+ * (2026-10-25 NAS 真机实测:文档调研版 parser 对真实数据解析 0 条,这是
+ * capture-codebuddy 的首次真机校准):
+ *   { type: 'message', role: 'user'|'assistant',
+ *     content: [{type:'input_text'|'output_text', text}],
+ *     timestamp: **毫秒 epoch**(非 ISO), sessionId, cwd }
+ *   会话消息内嵌在顶层(无 .message 壳);另有 type:'file-history-snapshot'
+ *   等非会话行,按既有规则跳过。
  */
 interface ClaudeLine {
   type?: string
+  role?: string
   message?: { role?: string; content?: unknown }
-  timestamp?: string
+  content?: unknown
+  timestamp?: string | number
   sessionId?: string
   cwd?: string
   isSidechain?: boolean
 }
 
-function isoToEpoch(iso?: string): number | undefined {
-  if (!iso) return undefined
-  const t = Date.parse(iso)
+function toEpoch(ts?: string | number): number | undefined {
+  // CodeBuddy 写毫秒 epoch;Claude 系写 ISO 字符串
+  if (typeof ts === 'number') return Number.isFinite(ts) ? Math.floor(ts / 1000) : undefined
+  if (!ts) return undefined
+  const t = Date.parse(ts)
   return Number.isNaN(t) ? undefined : Math.floor(t / 1000)
 }
 
@@ -31,7 +44,12 @@ function contentToMessages(role: 'user' | 'assistant', content: unknown, ts?: nu
   }
   if (!Array.isArray(content)) return out
   for (const part of content as Array<{ type?: string; text?: string; name?: string; input?: unknown }>) {
-    if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
+    // 'text' = Claude 系;'input_text'/'output_text' = CodeBuddy ≥2.x(OpenAI Responses 风格)
+    if (
+      (part.type === 'text' || part.type === 'input_text' || part.type === 'output_text') &&
+      typeof part.text === 'string' &&
+      part.text.trim()
+    ) {
       out.push({ role, content: part.text, ts })
     } else if (part.type === 'tool_use' && typeof part.name === 'string') {
       out.push({
@@ -66,7 +84,7 @@ export function parseClaudeJsonl(
     } catch {
       continue
     }
-    const ts = isoToEpoch(entry.timestamp)
+    const ts = toEpoch(entry.timestamp)
     // sidechain (subagent) lines contribute neither messages nor timestamps
     if (!entry.isSidechain) {
       if (ts && (!endedAt || ts > endedAt)) endedAt = ts
@@ -75,9 +93,17 @@ export function parseClaudeJsonl(
       if (entry.cwd && !cwd) cwd = entry.cwd
     }
 
-    if ((entry.type === 'user' || entry.type === 'assistant') && entry.message && !entry.isSidechain) {
+    // Claude 系:type=user|assistant + message.content;
+    // CodeBuddy ≥2.x:type=message + 顶层 role/content(见文件头注释)
+    if (!entry.isSidechain && (entry.type === 'user' || entry.type === 'assistant') && entry.message) {
       const role = entry.type === 'user' ? 'user' : 'assistant'
       messages.push(...contentToMessages(role, entry.message.content, ts))
+    } else if (
+      entry.type === 'message' &&
+      (entry.role === 'user' || entry.role === 'assistant') &&
+      !entry.isSidechain
+    ) {
+      messages.push(...contentToMessages(entry.role as 'user' | 'assistant', entry.content, ts))
     }
   }
 
