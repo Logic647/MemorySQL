@@ -81,9 +81,20 @@ export function keepOrtEntry(rel: string, platform: string): boolean {
  * 任意闭包包内都剔除的路径:CI 上 `npx electron-rebuild` 会在 gen 之前跑,
  * linux 上对 onnxruntime-node 走源码重编译,build/ 里几百 MB 中间产物——
  * 不剔除的话 linux 组件 zip 从 ~21MB 膨胀到 ~230MB(实测踩坑)。deps/ 是
- * 各原生包携带的 C/C++ 源码树,运行时同样不需要。
+ * 各原生包携带的 C/C++ 源码树,运行时同样不需要。DirectML.dll 是 Windows
+ * GPU 推理后端(fastembed 默认 CPU,安装包 yml 早已排除,这里对齐)。
+ * libonnxruntime_providers_* 是 CUDA/TensorRT 等 GPU provider 共享库
+ * (linux 包内带了一个 327MB 的 cuda provider)——CPU 推理用不到,ORT
+ * 加载 provider 失败会自动回落内置 EP。
  */
-const PKG_PATH_EXCLUDE: RegExp[] = [/^build\//, /^deps\//, /\.o$/, /\.obj$/]
+const PKG_PATH_EXCLUDE: RegExp[] = [
+  /^build\//,
+  /^deps\//,
+  /\.o$/,
+  /\.obj$/,
+  /DirectML\.dll$/,
+  /libonnxruntime_providers_/
+]
 
 /** tokenizers 平台包名里与平台/架构对应的标识;非目标平台的平台包整包跳过。 */
 const TOKENIZER_PLATFORM_TAG: Record<string, string> = {
