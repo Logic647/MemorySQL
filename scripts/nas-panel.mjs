@@ -57,14 +57,17 @@ const LOGIN_TARGETS = [
 
 /**
  * 解析 probe.env 形式的 KEY=VALUE 文件(忽略注释/空行;值不剥引号——探针 env
- * 文件里没有引号形态)。导出供测试;面板用它把上报凭据注入探针子进程,
- * 凭据只经内存,面板自身不回显。
+ * 文件里没有引号形态)。行内注释按 bash source 语义剥:` #` 之后视为注释
+ * (踩过:env 里留了一行 `KEY=v  # 说明`,注释被原样当值带到面板上)。
+ * 导出供测试;面板用它把上报凭据注入探针子进程,凭据只经内存,面板不回显。
  */
 export function parseEnvFile(text) {
   const out = {}
   for (const line of String(text ?? '').split('\n')) {
-    const t = line.trim()
+    let t = line.trim()
     if (!t || t.startsWith('#')) continue
+    const hash = t.indexOf(' #')
+    if (hash > 0) t = t.slice(0, hash).trim()
     const i = t.indexOf('=')
     if (i <= 0) continue
     out[t.slice(0, i)] = t.slice(i + 1)

@@ -3,7 +3,9 @@
 #   sudo systemctl daemon-reload && sudo systemctl enable --now nas-panel
 #   curl -s http://127.0.0.1:8789/api/state | head -c 200
 #
-# %h = User= 的 home(systemd specifier),换用户/换 home 不用改这里。
+# 路径写绝对值:原设计用 %h(= User 的 home),但实测 Ubuntu 26.04 的 systemd
+# 在 ExecStart 里把 %h 展开成了 /root(service manager 自己的 home)而不是
+# User=logic 的 —— 203/EXEC 起不来。换机器/用户时改下面三处路径。
 # 默认 0.0.0.0:8789(家庭内网);要鉴权加 Environment=PANEL_TOKEN=…,
 # 改后 systemctl daemon-reload && systemctl restart nas-panel。
 # ⚠ 面板能触发登录命令与探针,只在内网用,路由器上不要做端口映射。
@@ -15,7 +17,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=logic
-ExecStart=%h/local/node-v22.22.1-linux-x64/bin/node %h/apps/MemorySQL/scripts/nas-panel.mjs
+ExecStart=/home/logic/local/node-v22.22.1-linux-x64/bin/node /home/logic/apps/MemorySQL/scripts/nas-panel.mjs
 Restart=always
 RestartSec=5
 # 面板本身无状态(状态都在 ~/.memorysql-nas),重启无损

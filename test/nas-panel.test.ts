@@ -22,6 +22,11 @@ describe('parseEnvFile', () => {
     const env = parseEnvFile('# 注释\nA=https://x/y\n\nB=with=equals\n')
     expect(env).toEqual({ A: 'https://x/y', B: 'with=equals' })
   })
+  it('行内注释按 bash 语义剥(` #` 之后),URL 不受损', () => {
+    const env = parseEnvFile('A=https://x/y  # 说明文字\nB=https://x/z#fragment\n')
+    // B 的 # 前没有空格 = 不是注释(bash 同语义),URL fragment 保留
+    expect(env).toEqual({ A: 'https://x/y', B: 'https://x/z#fragment' })
+  })
   it('空输入/坏行不炸,返回空对象或跳过', () => {
     expect(parseEnvFile('')).toEqual({})
     expect(parseEnvFile('novalue\n=x\nA=1')).toEqual({ A: '1' })
