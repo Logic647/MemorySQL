@@ -35,6 +35,14 @@ export type Verdict =
   | 'checker_error'
   | 'absent' /** 本机没装该 agent */
   | 'blackbox_only' /** 闭源,只能靠这里 */
+  /**
+   * 数据存在且 schema 匹配,但数据早于当前 agent 版本 —— **不能当验证结论**。
+   * check.ts 自身不产生它:本模块只知道"磁盘上的格式",不知道"磁盘上的格式是
+   * 哪个版本写的"。由 NAS 探针(scripts/nas-probe.mjs)在上报前降级产生 ——
+   * 那是陈旧数据假阴性的防线:agent 升级了但没跑出新会话(如登录过期)时,
+   * schema 检查会拿旧数据报 🟢,而那个 🟢 是旧版本的格式。
+   */
+  | 'stale'
 
 export interface CheckResult {
   id: string
@@ -346,7 +354,8 @@ const ICON: Record<Verdict, string> = {
   drift: '🔴',
   checker_error: '🟣',
   absent: '🟡',
-  blackbox_only: '⚪'
+  blackbox_only: '⚪',
+  stale: '🟠'
 }
 
 export function render(results: CheckResult[]): string {
@@ -366,10 +375,17 @@ export function render(results: CheckResult[]): string {
   const drift = results.filter((r) => r.verdict === 'drift')
   const broken = results.filter((r) => r.verdict === 'checker_error')
   const ok = results.filter((r) => r.verdict === 'ok')
+  const stale = results.filter((r) => r.verdict === 'stale')
   const skip = results.filter((r) => r.verdict === 'absent' || r.verdict === 'blackbox_only')
   L.push(
-    `汇总: 🟢 ${ok.length} 正常 · 🔴 ${drift.length} 漂移 · 🟣 ${broken.length} 检查器故障 · 🟡⚪ ${skip.length} 未验证`
+    `汇总: 🟢 ${ok.length} 正常 · 🔴 ${drift.length} 漂移 · 🟣 ${broken.length} 检查器故障` +
+      (stale.length ? ` · 🟠 ${stale.length} 数据过期` : '') +
+      ` · 🟡⚪ ${skip.length} 未验证`
   )
+  if (stale.length) {
+    L.push('', `🟠 ${stale.length} 家的数据早于当前版本,本次不作为验证结论:`)
+    for (const r of stale) L.push(`   - ${r.id}: ${r.detail}`)
+  }
   if (drift.length) {
     L.push('', `⚠ ${drift.length} 家疑似格式漂移,需适配后发版:`)
     for (const r of drift) L.push(`   - ${r.id}: ${r.detail}`)

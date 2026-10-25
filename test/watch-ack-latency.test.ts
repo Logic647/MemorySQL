@@ -43,7 +43,8 @@ function route(marker: string, len = 1600): string {
 }
 
 describe('/api/probe 的回执不等 LLM', () => {
-  const block = route("url.pathname === '/api/probe'")
+  // 窗口给足:probe 路由已带多源解析(source/probeSources/合并),1600 截不到回执段
+  const block = route("url.pathname === '/api/probe'", 3000)
 
   it('回执不在 recomputeSummary 的 finally 里', () => {
     // 旧形状:void recomputeSummary().finally(() => { ...; json(res, 200, …) })

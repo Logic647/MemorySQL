@@ -146,7 +146,9 @@ async function report(blackbox) {
     } catch (e) {
       log(`读不到本机台账,契约指纹留空: ${e?.message ?? e}`)
     }
-    const payload = { ...blackbox, ledgerHash: hash }
+    // source:'dev' —— 云端按 agent 合并多源(dev/nas),见 merge-probes.mjs。
+    // 旧版服务端忽略未知字段,向后兼容。
+    const payload = { ...blackbox, ledgerHash: hash, source: 'dev' }
 
     // ── 分类型重试(分类逻辑在 tools/upstream-watch/retry.mjs,可单测)──
     // 为什么要重试:本机到云端的链路**实测约一半的时候会 `fetch failed`**

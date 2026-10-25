@@ -23,6 +23,7 @@ import { evaluate, llmEnhance } from './evaluate.mjs'
 import { summarize } from './summarize.mjs'
 import { ledgerFingerprint, compareFingerprints } from './fingerprint.mjs'
 import { mapLimit } from './map-limit.mjs'
+import { mergeProbes } from './merge-probes.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 // STATE 可用环境变量覆盖,默认仍在 service 目录里。
@@ -35,7 +36,18 @@ const PORT = Number(process.env.PORT ?? 8788)
 const REFRESH_HOURS = Number(process.env.REFRESH_HOURS ?? 24)
 const TOKEN = process.env.AUTH_TOKEN ?? ''
 
-let state = { results: [], probe: null, summary: null, lastRunAt: null, running: false, error: null }
+let state = {
+  results: [],
+  // probe = 多源合并后的看板视图(结构不变,下游 summarize/UI 无感知);
+  // probeSources = 各来源('dev'/'nas'/…)最后一次上报的原样存档。
+  // 合并规则与"为什么不能单槽位"见 merge-probes.mjs 头注释。
+  probe: null,
+  probeSources: {},
+  summary: null,
+  lastRunAt: null,
+  running: false,
+  error: null
+}
 
 /**
  * 本机(云端)这份台账的契约指纹。
@@ -86,6 +98,14 @@ function loadState() {
   }
   // 读盘侧兜底:无论文件里写了什么,running 一律从 false 起步
   state.running = false
+  // 旧版 state.json 只有单槽 probe(那时探针只有开发机一个来源)。
+  // 收养为 dev 源,否则升级后第一次合并会把已有黑盒数据当成无源丢掉。
+  if (state.probe && !state.probeSources?.dev) {
+    state.probeSources = { dev: state.probe }
+  }
+  state.probeSources ??= {}
+  const merged = mergeProbes(state.probeSources)
+  if (merged) state.probe = merged
 }
 
 // 原子写:先写临时文件再 rename,避免进程被杀时留下半截 JSON
@@ -238,13 +258,22 @@ const server = http.createServer((req, res) => {
       try {
         const data = JSON.parse(body || '{}')
         if (!Array.isArray(data.results)) return json(res, 400, { error: 'bad payload' })
-        state.probe = {
+        // 来源标识:开发机探针旧版不传,按 dev;NAS 探针传 nas。
+        // 未知来源也照收(将来第三台探测机不必改这里),限长防垃圾。
+        const source =
+          typeof data.source === 'string' && data.source.trim()
+            ? data.source.trim().slice(0, 24)
+            : 'dev'
+        state.probeSources[source] = {
           checkedAt: data.checkedAt ?? new Date().toISOString(),
-          // 探针带上的是**开发机**那份台账的指纹;没有这个字段(旧版探针)时为 null,
+          // 探针带上的是**它那台机器**台账的指纹;没有这个字段(旧版探针)时为 null,
           // 面板会显示"未知"而不是"冲突" —— 见 compareFingerprints
           ledgerHash: typeof data.ledgerHash === 'string' ? data.ledgerHash : null,
           results: data.results.slice(0, 64) // 防御:别让人往 state 里灌垃圾
         }
+        // 重新合成看板视图。某源回传空 results 时 mergeProbes 返回 null,
+        // 此时保留旧视图 —— 空上报只存档,不把面板清空。
+        state.probe = mergeProbes(state.probeSources) ?? state.probe
         // 探针到达后必须重算摘要 —— 但**回执不等它**。
         //
         // 原实现在 `recomputeSummary().finally()` 里回 200,于是每次上报都要等
@@ -258,7 +287,12 @@ const server = http.createServer((req, res) => {
         // 代价是那 26 秒内面板显示的是上一轮的结论,所以回执里明说
         // summary:'pending',不假装已经一致。
         saveState()
-        json(res, 200, { ok: true, accepted: state.probe.results.length, summary: 'pending' })
+        json(res, 200, {
+          ok: true,
+          accepted: state.probeSources[source].results.length,
+          source,
+          summary: 'pending'
+        })
         // 刻意不 await:探针方要的是「收下了」,不是「顺便帮我算完摘要」。
         // 串行化在 refreshSummarySoon 里,这里不阻塞响应。
         void refreshSummarySoon()

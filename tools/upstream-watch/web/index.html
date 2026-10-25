@@ -251,7 +251,8 @@ const VERDICT = {
   drift:         ['b-high','漂移'],
   checker_error: ['b-checker','检查器故障'],
   absent:        ['b-none','本机未装'],
-  blackbox_only: ['b-bb','仅黑盒']
+  blackbox_only: ['b-bb','仅黑盒'],
+  stale:         ['b-medium','数据过期']
 };
 const esc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
@@ -302,9 +303,15 @@ function probeBar(id) {
   const p = (STATE.probe?.results || []).find(x => x.id === id);
   if (!p) return '';
   const [cls, label] = VERDICT[p.verdict] || ['b-none', p.verdict];
+  // src 由云端合并时标注:闭源五家只有 NAS 测得到,证据来源必须可见 ——
+  // 「NAS 已验证」和「本机已验证」是两种不同的证据
+  const srcLabel = p.src === 'nas' ? 'NAS' : '本机';
+  const meta = [p.version, p.dataAt ? '数据 ' + String(p.dataAt).slice(0, 10) : '']
+    .filter(Boolean).join(' · ');
   return `<div class="probe">
-    <span class="tag">黑盒</span>
+    <span class="tag">${srcLabel}</span>
     <span class="badge ${cls}">${label}</span>
+    ${meta ? `<span class="txt">${esc(meta)}</span>` : ''}
     <span class="txt">${esc(p.detail)}</span>
   </div>`;
 }
@@ -495,7 +502,7 @@ function match(r) {
   const p = (STATE.probe?.results || []).find(x => x.id === r.agentId);
   const s = llmState(r);
   if (FILTER === 'all') return true;
-  if (FILTER === 'attention') return r.risk === 'high' || r.risk === 'medium' || s.kind === 'hit' || (p && (p.verdict === 'drift' || p.verdict === 'checker_error'));
+  if (FILTER === 'attention') return r.risk === 'high' || r.risk === 'medium' || s.kind === 'hit' || (p && (p.verdict === 'drift' || p.verdict === 'checker_error' || p.verdict === 'stale'));
   if (FILTER === 'drift') return p && p.verdict === 'drift';
   if (FILTER === 'bb') return r.risk === 'unknown';
   if (FILTER === 'llm') return s.kind === 'hit' || s.kind === 'err';
@@ -508,8 +515,16 @@ function render() {
   $('#sub').innerHTML = R.length
     ? `白盒最近抓取 <b>${esc((STATE.lastRunAt || '').slice(0, 16).replace('T', ' '))}</b> · ${R.length} 家 agent${STATE.error ? ' · <span style="color:var(--high)">错误:' + esc(STATE.error) + '</span>' : ''}`
     : '尚无数据,点「立即刷新」抓一轮';
-  $('#probetime').textContent = STATE.probe?.checkedAt
-    ? '黑盒上报于 ' + STATE.probe.checkedAt.slice(0, 16).replace('T', ' ') : '';
+  // 双源各自的上报时间:闭源五家由 NAS 看守,「NAS 多久没报了」和
+  // 「本机多久没报了」要分开看 —— NAS 断了不会反映在本机时间上
+  const ps = STATE.probeSources || {};
+  const fmtAt = (s) => (s || '').slice(0, 16).replace('T', ' ');
+  const srcParts = [];
+  if (ps.dev?.checkedAt || STATE.probe?.checkedAt) {
+    srcParts.push('本机 ' + fmtAt(ps.dev?.checkedAt || STATE.probe?.checkedAt));
+  }
+  if (ps.nas?.checkedAt) srcParts.push('NAS ' + fmtAt(ps.nas.checkedAt));
+  $('#probetime').textContent = srcParts.length ? '黑盒 ' + srcParts.join(' · ') : '';
   void R;
   stats();
   $('#summary').innerHTML = summaryPanel();

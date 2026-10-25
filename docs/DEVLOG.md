@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-10-25 · NAS 黑盒探针:闭源 agent 漂移从「零信号」到「T+1 发现」+ 看板多源合并
+
+**背景:** 闭源 agent(qoder/codebuddy/workbuddy)无任何公开 changelog,开发机又没装,黑盒检查只能报 ⚪——看板上这三家等于无人看守。用户提出:把它们装到常驻 NAS(Ubuntu 24.04,`ssh nas` 免密)上,每天自动「升级 → 跑最小会话 → 黑盒检查 → 上报看板」,把盲区变成 T+1 的确定信号。评估结论:**可行**,且"即时发现"≠"即时适配"——检测延迟 ≈ max(软件更新滞后, 探针周期)≈ T+1 天,发现后适配仍是人工改 capture 插件→测试→发版;但对闭源三家是从 0 到 1。当日落地仓库侧全部改造(NAS 部署与五家 CLI 登录待用户参与)。
+
+**评估阶段摸清的事实(别人续接时不必重查):** ①`upstream/check.ts` 可在 Linux 纯 Node 跑:parser 依赖链只有 node 内置 + better-sqlite3(linux-x64 有 prebuild 无需编译),`import type` 被 strip-types 剥离不会拉进 electron;相对路径经 `os.homedir()` 展开,`~/.qoder` 等正是这些 CLI 在 Linux 的原生数据路径 ②五家 CLI 全官方支持 Linux(Qoder CLI 官网 / CodeBuddy `@tencent-ai/codebuddy-code` npm / qwen / gemini / kimi 均 npm);**WorkBuddy 无 Linux 版(仅 Win/macOS),盲区保留——用户拍板** ③云端 `/api/probe` 原是单槽位整体覆盖,两源上报会互相冲掉,是多源改造的唯一硬阻塞 ④json 形态源(gemini)的黑盒判定是弱判定(只验证目录存在,不验格式),本方案不改变这一点。
+
+**最大的坑 = 陈旧数据假阴性(本方案的立身之本):** 黑盒 schema 检查判的是「磁盘上的数据格式匹配台账」,不是「最新版本的格式匹配」——agent 升级了但没产生新会话(登录过期/配额尽/CLI 起不动),检查会拿旧版本写的旧数据报 🟢,看板上那颗 🟢 会被当成"当前版本已验证"。agent 升级本身不触发任何检测,格式变更只在该版本实际写数据时暴露——所以「升级 → 逼最小会话」必须是原子步骤,且新鲜度不足的 🟢 必须降级。
+
+**仓库改造:**
+- `upstream/check.ts`:Verdict 新增 `stale`(🟠 数据过期)——**check.ts 自身不产生它**(本模块只知道"磁盘上的格式",不知道"是哪个版本写的"),由 NAS 探针降级产生
+- `scripts/nas-probe.mjs`(新,NAS runner):`git pull --ff-only`(契约跟随 main,失败降级本地版)→ 逐家版本探测 → **版本变了才** `npm i -g @latest` 并跑最小会话(`-p "Reply with exactly: ok"`,180s 超时;没更新不跑,省额度)→ 子进程跑 check.ts → `applyFreshness` 降级 → 上报 `source:'nas'` → 报告写 `~/memorysql-nas-reports/`(**仓库外**,保 clone 干净让每日 git pull 顺)。dataRoots 从台账 localRoots 读(单一真相源);版本元数据持久 `~/.memorysql-nas/versions.json`;单家失败不中断其他家
+- `tools/upstream-watch/nas-freshness.mjs`(新,纯函数可单测):只 scrutinize ok——版本探测失败→stale;数据 mtime 早于版本更新时间→stale(详情点名"可能登录过期");扫描不到数据→stale;其余 ok 附 version/dataAt。**宁可黄也不假绿**
+- `tools/upstream-watch/merge-probes.mjs`(新):`/api/probe` 改多源——`state.probeSources` 原样存档,`state.probe` = 合并视图(下游 summarize/UI 结构零改动)。合并按 **verdict 优先级 drift > checker_error > stale > ok > absent/blackbox_only,不是按时间**:dev 的 🟢 盖不住 NAS 的 🔴,NAS 的 🟢 要能盖 dev 的 ⚪(后者正是 NAS 探针存在的意义);同级取 checkedAt 较新;胜者带 `src`(字段名刻意避开 `result.source`——那是 check.ts 的数据源路径);**空 results 的上报只存档不参与代表权**(否则一次失败探测把面板时间顶成"刚刚",底下是旧数据,又是"看起来有结论其实缺失"一族)。旧 state.json 单槽 probe 在 loadState 收养为 dev 源
+- `scripts/upstream-probe.mjs`:payload 加 `source:'dev'`(服务端对缺省字段按 dev 兼容,旧探针不升级也能报)
+- `web/index.html`:黑盒条 tag 改为来源(本机/NAS)+ 版本/数据日期;`probetime` 双源各自时间(NAS 断报不会藏在本机时间里);「只看需处理」筛选纳入 stale;VERDICT 表加 stale(🟠 b-medium)
+- 测试 +15(`watch-probe-merge.test.ts`:合并优先级/同级取新/空上报/垃圾防御/降级规则/mtime 扫描/真服务双源冒烟);**vitest 474:474**;typecheck 0
+- `watch-ack-latency.test.ts` 的源码文本断言窗口 1600→3000:probe 路由加长后 `json(res, 200` 被截到窗外——断言形状本身没变,是窗口要跟上(扫源码文本的断言第二次因路由加长破窗,下次加路由先想窗口)
+
+**NAS 部署清单已写进 `tools/upstream-watch/DEPLOY.md`**(「三台机器」节):NodeSource 装 Node 22 → clone → npm install → 五家 CLI + 各登录一次(**唯一需要用户的步骤**)→ 裸跑验证 → cron 每日 10:37(错开开发机 10:07)。
+
+**待办:** ①NAS 实测校准 `NAS_AGENTS` 的 npm 包名/CLI 参数(表内已注明是调研值,报错先 `npm view` 核对)②登录后裸跑 check.ts 验证五家 🟢 ③端到端验收:台账注入假必需列→NAS 跑→看板 🔴→恢复;挪走数据目录→stale 而非 ok;dev+nas 双源互不覆盖(冒烟已测,真机再过一遍)④NAS 探针时段唤醒策略(NAS 有 suspend 习惯)。
+
+---
+
 ## 2026-10-25 · Tauri 评估落地:最小 spike 实测(体积结论强化、内存收益有限,维持「现在不迁」)
 
 **背景:** v0.7.0 发版后按既定计划执行 Tauri 评估的实测部分——`docs/tauri-feasibility.md` 文末设想的「托盘 + MCP 服务 + 读库」三件事 spike,当天做完并回写文档(新增「Spike 实测」节)。

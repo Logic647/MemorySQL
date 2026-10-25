@@ -9,20 +9,23 @@
 - **白盒**(云端):抓 changelog → 关键词分级 → 标出哪些要重点看
 - **黑盒**(开发机):探测真实数据的 schema 漂移,给确定答案 —— `npm run upstream:check`
 
-两者互补:云端告诉你「可能变了」,黑盒告诉你「真的变了」。**对 4 家闭源 agent(qoder/codebuddy/workbuddy/zcode)只有黑盒可用**,看板会给它们一个「仅黑盒」行 + 手动粘贴 changelog 的入口。
+两者互补:云端告诉你「可能变了」,黑盒告诉你「真的变了」。**对 3 家闭源 agent(qoder/codebuddy/workbuddy)没有公开 changelog,只有黑盒可用**,看板会给它们一个「仅黑盒」行 + 手动粘贴 changelog 的入口。
 
-## ⚠️ 这套东西跑在两台机器上
+## ⚠️ 这套东西跑在三台机器上
 
 这是最容易搞混的地方,先记住这张表:
 
 | | 在哪跑 | 入口 | 产出 |
 |---|---|---|---|
 | **白盒**(抓 changelog + LLM 评估) | **云端服务器** | 服务端的定时任务 / `POST /api/refresh` | `state.results` |
-| **黑盒**(探真实数据) | **你的开发机** | `npm run upstream:check`(只看) / `npm run upstream:probe`(并上报) | POST 到云端 `/api/probe` → `state.probe` |
+| **黑盒**(探真实数据) | **你的开发机** | `npm run upstream:check`(只看) / `npm run upstream:probe`(并上报) | POST 到云端 `/api/probe`(带 `source:'dev'`) |
+| **NAS 黑盒**(看守闭源 + 开发机未装的 CLI) | **NAS**(Ubuntu) | cron 每日 10:37:`node scripts/nas-probe.mjs` | POST 到云端 `/api/probe`(带 `source:'nas'`) |
 
-**黑盒只能在本机跑** —— 因为它要去读 `~/.claude`、`~/.local/share/opencode/*.db` 这些真实 agent 数据,云端上根本没有。`scripts/upstream-probe.mjs` 就是这条链路的接头:本机跑黑盒 → POST 给云端 → 云端合并进 `state.probe` → 看板显示双栏。
+**黑盒只能在有 agent 数据的机器跑** —— 它要去读 `~/.claude`、`~/.local/share/opencode/*.db` 这些真实 agent 数据,云端上根本没有。`scripts/upstream-probe.mjs`(开发机)与 `scripts/nas-probe.mjs`(NAS)就是两条链路的接头。云端 `/api/probe` 已改**多源**:按 agent 合并两源(`tools/upstream-watch/merge-probes.mjs`),verdict 优先级 drift > checker_error > stale > ok > absent —— 开发机的 🟢 盖不住 NAS 的 🔴,NAS 的 🟢 能覆盖开发机的 ⚪;两源原始上报完整保留在 `state.probeSources`。
 
-所以两台机器都要有这份代码,各自 `git pull`:
+**NAS 与开发机的分工**:闭源五家 + 未装 CLI(qoder/codebuddy/qwencode/kimicli/gemini)由 NAS 看守;zcode/opencode/codex/claudecode/hermes 只有开发机测得了(NAS 上没有)。**WorkBuddy 无 Linux 版,盲区保留(2026-10-25 用户拍板)**。
+
+所以三台机器都要有(云端与 NAS 是各自用途的)这份代码:
 
 ```bash
 # 开发机(Windows)
@@ -33,7 +36,39 @@ npm run upstream:probe        # 跑黑盒 + 上报云端(需要云端 token)
 pm2 start tools/upstream-watch/server.mjs --name msql-upstream-watch
 ```
 
-**`npm run upstream:probe` 需要 Node ≥22.6** —— 它要执行 TS 检查器 `upstream/check.ts`(Node 20 不支持 `--experimental-strip-types`)。这是唯一必须在开发机跑、不能在云端跑的原因。
+**`npm run upstream:probe` 与 NAS 探针都需要 Node ≥22.6** —— 它们要执行 TS 检查器 `upstream/check.ts`(Node 20 不支持 `--experimental-strip-types`)。
+
+### NAS 部署清单(2026-10-25)
+
+```bash
+# 1. Node ≥22.6(Ubuntu 24.04 apt 默认 18,必须 NodeSource)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs
+
+# 2. clone + 依赖(better-sqlite3 有 linux-x64 prebuild,无需编译)
+git clone https://github.com/Logic647/MemorySQL.git ~/apps/memorysql && cd ~/apps/memorysql && npm install
+
+# 3. 五家 CLI + 各登录一次(**唯一需要人的步骤**,登录态持久在各自 home 目录)
+npm i -g @qoder-ai/qoder-cli @tencent-ai/codebuddy-code @qwen-code/qwen-code @google/gemini-cli @moonshot-ai/kimi-cli
+#   ⚠ 包名是调研值 —— 部署时先 `npm view <name> version` 核对,404 就查官方文档;
+#   表驱动配置在 scripts/nas-probe.mjs 的 NAS_AGENTS(升级/版本/会话三条命令都在那)
+
+# 4. 裸跑验证(登录并各产生一次会话后:五家应 🟢,开发机专属五家 🟡 是正常)
+node --experimental-strip-types upstream/check.ts
+
+# 5. token 放 env 文件(600),crontab 每日 10:37(错开开发机 10:07)
+mkdir -p ~/.memorysql-nas && cat > ~/.memorysql-nas/probe.env <<'EOF'
+PROBE_ENDPOINT=https://watch.logic-yjb.top
+PROBE_TOKEN=<与开发机 scripts/upstream-probe.env 同一 token>
+EOF
+chmod 600 ~/.memorysql-nas/probe.env
+# crontab -e 追加:
+#   37 10 * * * set -a; . $HOME/.memorysql-nas/probe.env; set +a; node $HOME/apps/memorysql/scripts/nas-probe.mjs >> $HOME/memorysql-probe.log 2>&1
+```
+
+**两条关键认知(为什么长这样):**
+
+1. **没有新会话,检查到的只是旧格式** —— agent 升级本身不触发任何检测,格式变更只在该版本实际写数据时暴露。runner 因此把「升级 → 逼最小会话」做成原子步骤;数据 mtime 早于版本更新时间时,ok 会被降级成 🟠 stale(`tools/upstream-watch/nas-freshness.mjs`),**宁可黄也不假绿**。看板出现 🟠 = 该 agent 可能登录过期,需人工 SSH 上 NAS 重登后手动跑一轮。
+2. **NAS 侧报告写 `~/memorysql-nas-reports/`(仓库外)** —— 写进仓库会弄脏工作区,让 runner 开头的每日 `git pull` 挂掉。版本元数据在 `~/.memorysql-nas/versions.json`。
 
 ## 部署到阿里云(实测环境)
 
