@@ -158,6 +158,13 @@ async function main(): Promise<void> {
   zip.writeZip(out)
   const mb = (fs.statSync(out).size / 1024 / 1024).toFixed(1)
   console.log(`native runtime zip: ${out} (${mb} MB, ${manifest.packages.length} packages, v${appPkg.version} ${platform}-${arch})`)
+  // 体积体检:>3MB 的条目打印出来 —— zip 意外膨胀时日志直接指出元凶
+  // (CI linux 曾出现 229MB vs 本地 19MB,见 DEVLOG 2026-10-25)
+  const big = zip
+    .getEntries()
+    .filter((e) => !e.isDirectory && e.header.size > 3 * 1024 * 1024)
+    .sort((a, b) => b.header.size - a.header.size)
+  for (const e of big) console.warn(`  大文件 ${(e.header.size / 1048576).toFixed(1)}MB  ${e.entryName}`)
 }
 
 const invokedDirectly =
