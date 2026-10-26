@@ -242,42 +242,91 @@ export function decodeDshFile(filePath: string): string | null {
 /**
  * 解压 DSH 默认的「拼接独立 zstd 帧」文件。
  *
- * Node 的 `zstdDecompressSync` / `createZstdDecompress` 遇到拼接流**只解第一帧**
- * (实测:整段喂进去只返回 header 那 28 字节),而 DSH 的物理编码是「header 一帧 +
- * 每批追加一帧」的拼接(见 session-persistence-jsonl README「Physical encoding」)。
+ * Node 的 `zstdDecompressSync` / `createZstdDecompress` 遇到拼接流**只解第一帧**,
+ * 而 DSH 的物理编码是「header 一帧 + 每批追加一帧」的拼接(见
+ * session-persistence-jsonl README「Physical encoding」)。所以必须自己切帧。
  *
- * 切帧依据是 `zstdDecompressSync(buf, { info: true })` 返回的 `engine.bytesWritten`
- * —— 它精确报告「这一帧吃掉了多少输入字节」。这样既不用手写 zstd 帧头解析,也不会
- * 被压缩载荷里偶然出现的帧魔数骗到(实测:载荷内嵌 `28 B5 2F FD` 与真帧混排时仍
- * 逐帧精确切分)。尾部残缺帧(崩溃留下的 torn frame)解压失败,按上游语义丢弃,
- * 前面已完整的帧照常保留。
+ * 两种切法都试过,最终选**确定性帧头解析**:
+ *   - 「试解看成功没」不行:zstd 截断前缀几乎总能解压成功并返回部分/零字节
+ *     (实测 252/252 个截断点),假魔数会被当成真帧头,后续真实帧全被丢掉。
+ *   - `info:true` 的 `bytesWritten` **依赖解压器对异常输入的行为**:本地 Node
+ *     24.15 遇到「完整帧 + 残缺帧」会正常返回第一帧,但 CI 上同为 Node 24 的
+ *     另一个 patch 版本直接抛错 → 连已完整的第一帧也丢了(CI 实测 1 失败)。
+ *     把切帧交给解码器,等于让它的错误处理策略决定我们丢多少数据。
+ *   - 帧头/块头解析是纯字节运算(RFC 8878),不依赖解压器;每帧再单独解压,
+ *     一帧坏不影响其他帧。尾部残缺帧自然无法通过边界校验 → 丢弃,与上游一致。
  */
 export function zstdDecompressFrames(buf: Buffer): Buffer {
   const parts: Buffer[] = []
-  let remaining = buf
-  // 防失控:每轮至少推进 1 字节,轮数不可能超过总字节数
-  let guard = buf.length + 1
-  while (remaining.length > 0 && guard-- > 0) {
-    let out: Buffer
-    let consumed: number
+  let p = 0
+  while (p < buf.length) {
+    const end = zstdFrameEnd(buf, p)
+    if (end < 0) break // 帧头/块头不自洽 —— 残缺尾帧,丢弃剩余
     try {
-      // `info: true` 返回 { buffer, engine },但 @types/node 的 zstd 重载仍声明
-      // 返回 NonSharedBuffer —— 类型与实际不符,这里显式收口。
-      const r = zlib.zstdDecompressSync(remaining, { info: true }) as unknown as {
-        buffer: Buffer
-        engine: { bytesWritten: number }
-      }
-      out = r.buffer
-      consumed = r.engine?.bytesWritten ?? 0
+      parts.push(zlib.zstdDecompressSync(buf.subarray(p, end)))
     } catch {
-      // 残缺尾帧或无法识别的数据:保留已解出的完整帧,停止
-      break
+      break // 边界自洽但内容损坏(checksum 不符等);保留已解出的帧
     }
-    if (out.length > 0) parts.push(out)
-    if (consumed <= 0) break // 无法推进,避免死循环
-    remaining = remaining.subarray(consumed)
+    p = end
   }
   return Buffer.concat(parts)
+}
+
+/** zstd 帧魔数 0xFD2FB528 的小端字节值。 */
+const ZSTD_MAGIC_LE = 0xfd2fb528
+
+/**
+ * 按 RFC 8878 帧格式算出 `buf` 从 `off` 起这一帧的**结束偏移**;不是完整合法帧返回 -1。
+ *
+ * 所有偏移先与 `buf.length` 比较再推进(不做无界累加),因此尾部残缺帧一定返回 -1。
+ * 校验项:魔数、Frame_Header 各字段长度、每个 Block 的类型(3 是保留值)与
+ * Block_Size、以及可选的 4 字节 checksum。
+ */
+function zstdFrameEnd(buf: Buffer, off: number): number {
+  const limit = buf.length
+  if (!Number.isSafeInteger(off) || off < 0 || off + 4 > limit) return -1
+  if (buf.readUInt32LE(off) !== ZSTD_MAGIC_LE) return -1
+
+  let p = off + 4
+  if (p >= limit) return -1
+  const fhd = buf[p]
+  p += 1
+  const fcsFlag = (fhd >> 6) & 3
+  const singleSegment = (fhd >> 5) & 1
+  const checksumFlag = (fhd >> 2) & 1
+  const dictIdFlag = fhd & 3
+
+  // Window_Descriptor(非单段)+ Dictionary_ID + Frame_Content_Size
+  const rest =
+    (singleSegment ? 0 : 1) +
+    [0, 1, 2, 4][dictIdFlag] +
+    (fcsFlag === 0 && singleSegment ? 1 : [0, 2, 4, 8][fcsFlag])
+  if (limit - p < rest) return -1
+  p += rest
+
+  for (;;) {
+    if (limit - p < 3) return -1
+    // Block_Header 是 3 字节**小端**(RFC 8878 §3.1.1.2):
+    // bit0 = Last_Block,bit1-2 = Block_Type,bit3-23 = Block_Size。
+    // 用 readUIntBE 会把 10 字节的载荷读成 663552,直接越界。
+    const bh = buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16)
+    p += 3
+    const lastBlock = bh & 1
+    const blockType = (bh >> 1) & 3
+    const blockSize = bh >> 3
+    if (blockType === 3) return -1 // 保留值,不是合法块
+    // RLE 块的载荷固定 1 字节;Raw / Compressed 按 Block_Size
+    const payload = blockType === 1 ? 1 : blockSize
+    if (limit - p < payload) return -1
+    p += payload
+    if (lastBlock === 1) break
+  }
+
+  if (checksumFlag === 1) {
+    if (limit - p < 4) return -1
+    p += 4
+  }
+  return p
 }
 
 /** 会话代数文件名:session.jsonl / session.vN.jsonl,各可选 .zstd。 */

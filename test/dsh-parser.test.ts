@@ -305,12 +305,52 @@ describe('zstdDecompressFrames(拼接帧切分)', () => {
     expect(got).toBe('{"one":1}\n')
   })
 
+  /**
+   * CI 回归:残缺尾帧在**任意**截断点都只能丢尾帧,不能连已完整的前帧一起丢。
+   *
+   * 上一版用 `zstdDecompressSync(buf, {info:true}).engine.bytesWritten` 切帧 ——
+   * 那依赖解压器对「完整帧 + 残缺帧」这种异常输入的行为。本地 Node 24.15 会
+   * 正常返回第一帧,但 CI 上同为 Node 24 的另一个 patch 版本**直接抛错**,
+   * 于是第一帧也丢了(CI 实测该用例唯一失败)。现在改为确定性帧头解析,
+   * 这里穷举所有截断点锁死行为。
+   */
+  it('任意截断点都保留已完整的前帧(CI 跨 Node patch 版本回归)', () => {
+    const f1 = zlib.zstdCompressSync(Buffer.from('{"one":1}\n'))
+    const f2 = zlib.zstdCompressSync(Buffer.from('{"two":2}\n'))
+    for (let cut = 1; cut < f2.length; cut += 1) {
+      const got = zstdDecompressFrames(Buffer.concat([f1, f2.subarray(0, cut)])).toString('utf-8')
+      expect(got, `截断点 ${cut} 丢了已完整的第一帧`).toBe('{"one":1}\n')
+    }
+  })
+
+  it('三帧且尾部残缺时保住前两帧', () => {
+    const frames = ['{"a":1}\n', '{"b":2}\n', '{"c":3}\n'].map((s) =>
+      zlib.zstdCompressSync(Buffer.from(s))
+    )
+    const all = Buffer.concat(frames)
+    const got = zstdDecompressFrames(all.subarray(0, all.length - 5)).toString('utf-8')
+    expect(got).toBe('{"a":1}\n{"b":2}\n')
+  })
+
   it('带 checksum 的帧也能解', () => {
     const payload = Buffer.from('{"c":1}\n')
     const f = zlib.zstdCompressSync(payload, {
       params: { [zlib.constants.ZSTD_c_checksumFlag]: 1 }
     })
     expect(zstdDecompressFrames(f).toString('utf-8')).toBe('{"c":1}\n')
+  })
+
+  it('大载荷(分块压缩)与大压缩级别也能正确切帧', () => {
+    const big = Buffer.from('z'.repeat(300_000))
+    const frames = [
+      zlib.zstdCompressSync(big),
+      zlib.zstdCompressSync(Buffer.from('{"tail":1}\n'), {
+        params: { [zlib.constants.ZSTD_c_compressionLevel]: 19 }
+      })
+    ]
+    const got = zstdDecompressFrames(Buffer.concat(frames))
+    expect(got.length).toBe(big.length + Buffer.byteLength('{"tail":1}\n'))
+    expect(got.subarray(big.length).toString('utf-8')).toBe('{"tail":1}\n')
   })
 
   it('空缓冲返回空', () => {
