@@ -19,6 +19,8 @@
 
 **发版后待验收(沿用 v0.7.0 的待办):** 自动更新链路、语义组件下载流、LLM digest 质量;dsh 本机未装,真机校准待用户装上后跑。
 
+**监控侧同步(同日核对,代码无需改动):** 台账在适配时就已含 dsh —— `upstream.kind='github'`、repo `deepseek-ai/deepseek-harness`、`monitor='tracked'`、`localRoots:[{resolver:'dsh'}]`(复用 `dshSessionsRoot`,只 import `dsh-parser.ts` 不拉插件 index)、`check.ts` 的 `RESOLVERS.dsh` 与 `parsers.dsh` 均已注册,共 **13 家**。**dsh 刻意不上 NAS**(用户定):它开源且有完整 release 正文,白盒 changelog 足够;NAS 只留给「闭源无 changelog + 开发机未装」的家。实测:开发机探针已上报 **13 家**,dsh 正确显示 🟡「本机未检测到源」(`~/.dsh` 确实不存在);上游抓取正常(实测拿到 `dsh-v0.2.1-rc.3`,正文完整,白盒关键词可评估)。**云端看板仍是 12 家** —— 服务器跑的是旧代码,`git pull + pm2 restart` 后才有 dsh 行(与 `/probe` 页同一批待部署)。另:**NAS 当日 SSH 全部被拒**(路由器限流 + 直连口也 Connection closed),其 cron 会在链路恢复后自动 pull 到 v0.7.1 —— dsh 属 `absent` 且 `tracked`,NAS 补报与否不影响看板结论(开发机源已覆盖)。
+
 ---
 
 ## 2026-10-26 · DeepSeek Harness(dsh)适配 —— 捕获 + 台账 + 连接向导（含子代理审查后的 7 个 P1 修复）
