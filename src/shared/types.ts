@@ -15,6 +15,7 @@ export type AgentType =
   | 'codebuddy'
   | 'workbuddy'
   | 'qoder'
+  | 'dsh'
   | (string & {})
 export type MessageRole = 'user' | 'assistant' | 'tool' | 'system'
 

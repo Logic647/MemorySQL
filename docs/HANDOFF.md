@@ -30,7 +30,7 @@
 
 ## 四、系统能力现状
 
-- **捕获矩阵(10 家)**:codex / zcode / hermes / claudecode(含 Claude Desktop 三源)/ qwencode / kimicli / codebuddy / gemini / cursor / opencode;另有 capture-watcher(登记式自定义,进 memories 表)与 import-chat(手动导入,进 sessions 表)
+- **捕获矩阵(13 家)**:codex / zcode / hermes / claudecode(含 Claude Desktop 三源)/ qwencode / kimicli / codebuddy / gemini / cursor / opencode / qoder / workbuddy / dsh(DeepSeek Harness);另有 capture-watcher(登记式自定义,进 memories 表)与 import-chat(手动导入,进 sessions 表)
 - **MCP 工具 7 个**:get_context(agent 过滤+交接摘要)、memory_list_sessions、memory_get_session(full)、memory_search(kind/agent/project/since)、memory_write(归因+tags/project)、memory_log_progress(收工汇报→候选记忆)、memory_get_project_brief
 - **服务端点**:Streamable HTTP `http://127.0.0.1:8642/mcp`(被占顺延 8643,设置页可见实际端口);stdio 客户端用 `resources/mcp-bridge.mjs` 桥
 - **语义检索**:fastembed bge-small-zh-v1.5 + sqlite-vec,水位增量同步,空闲 15min 释放模型

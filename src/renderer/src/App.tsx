@@ -32,7 +32,8 @@ const CAPTURE_PLUGINS: Array<{ id: string; label: string }> = [
   { id: 'capture-qoder', label: 'Qoder CLI' },
   { id: 'capture-gemini', label: 'Gemini CLI' },
   { id: 'capture-cursor', label: 'Cursor' },
-  { id: 'capture-opencode', label: 'OpenCode' }
+  { id: 'capture-opencode', label: 'OpenCode' },
+  { id: 'capture-dsh', label: 'DeepSeek Harness' }
 ]
 
 function fmtTime(ts: number | null | undefined): string {
@@ -1024,6 +1025,16 @@ export default function App() {
                                 </span>
                               </div>
                               <pre className="digest-summary">{card.summary}</pre>
+                              {card.perSession?.length > 0 && (
+                                <div className="digest-sessions">
+                                  <div className="digest-sessions-title">按会话</div>
+                                  {card.perSession.map((p, i) => (
+                                    <div key={i} className="digest-session">
+                                      <span className="sess-id">#{p.id}</span> {p.title || '(无标题)'} — {p.note}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                               {card.todos.length > 0 && (
                                 <div className="digest-todos">
                                   {card.todos.map((t, i) => (
@@ -1252,6 +1263,16 @@ export default function App() {
                             </span>
                           </div>
                           <pre className="digest-summary">{d.summary}</pre>
+                          {d.perSession?.length > 0 && (
+                            <div className="digest-sessions">
+                              <div className="digest-sessions-title">按会话</div>
+                              {d.perSession.map((p, i) => (
+                                <div key={i} className="digest-session">
+                                  <span className="sess-id">#{p.id}</span> {p.title || '(无标题)'} — {p.note}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           {d.todos.length > 0 && (
                             <div className="digest-todos">
                               {d.todos.map((t, i) => (

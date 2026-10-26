@@ -47,6 +47,11 @@ export interface JsonlExpect {
   requiredPaths: string[]
   /** 真实 parser 的注册名,黑盒检查据此调用(见 upstream/check.ts) */
   parser: string
+  /**
+   * 黑盒检查器发现样本时匹配的文件后缀(含压缩后缀),默认只找 `*.jsonl`。
+   * DSH 默认 `.jsonl.zstd`,需显式声明,否则 findFirst 会漏判成 absent。
+   */
+  fileSuffixes?: string[]
   note?: string
 }
 
@@ -500,6 +505,50 @@ export const AGENTS: AgentContract[] = [
       // 外层是 mcpSchema = z.object({ servers: z.record(z.string(), ...) }),故 jsonpath 是 $.mcp.servers.*
       requiredKeys: ['type', 'url'],
       valueHints: { type: 'http' }
+    },
+    riskKeywords: DEFAULT_RISK_KEYWORDS
+  },
+  {
+    id: 'dsh',
+    name: 'DeepSeek Harness',
+    agentType: 'dsh',
+    upstream: { kind: 'github', repo: 'deepseek-ai/deepseek-harness' },
+    monitor: 'tracked',
+    // 默认 ~/.dsh/sessions,DSH_HOME 可覆盖。会话根下是按 cwd 归组的
+    // `--<normalized-cwd>--/` 目录,里面是 `<encoded-id>/session.vN.jsonl[.zstd]`。
+    // 用 resolver 而非静态路径:home 位置随 DSH_HOME 变,探测链在插件里。
+    localRoots: [{ resolver: 'dsh' }],
+    source: {
+      kind: 'jsonl',
+      jsonl: {
+        fileMatch: 'session*.jsonl',
+        requiredPaths: [],
+        parser: 'dsh',
+        fileSuffixes: ['.jsonl', '.jsonl.zstd'],
+        note:
+          '2026-10-26 按上游源码逐条核实(deepseek-ai/deepseek-harness @ master):' +
+          '会话根 = dshHomePath("sessions")(dsh-home-paths → ~/.dsh,sessions),' +
+          '每会话一个 append-only JSONL 日志,默认 zstd(拼接的独立 checksum 帧,' +
+          'Node zstdDecompressSync 一次解);文件命名 session.jsonl(v0)/session.vN.jsonl,' +
+          '压缩加 .zstd;当前 SESSION_FORMAT_VERSION=4。首行=session 头(id/createdAt ms/cwd/delegationDepth),' +
+          '事件行=type+data(user/message 靠 data.source.kind==="user" 区分真人提示与注入上下文;' +
+          'assistant/message.content 块 text=正文/tool-call=工具调用;session/title→标题)。' +
+          '事件行含 seq/time(released v2 codec 的 EVENT_REQUIRED = type/seq/time/data,v4 委托它解码),' +
+          'time 是毫秒 epoch → 用作每条消息的 ts,并取最大值作 endedAt;' +
+          '历史代数与新代数**并存**于同一会话目录,运行时规则是选最高 vN,采集侧必须同口径(否则同一会话被多代数覆盖)。'
+      }
+    },
+    mcp: {
+      file: '.dsh/cordis.patch.yml',
+      jsonpath: '$.mcp.entry',
+      requiredKeys: ['serverName', 'transport', 'url'],
+      valueHints: { transport: 'streamable-http' },
+      note:
+        'YAML 格式,非 JSON —— 连接器做文本手术(见 agent-connect.ts upsertDshPatch)。' +
+        'dsh 的 MCP 配置是 `~/.dsh/cordis.patch.yml` 里的一个 insert 条目:' +
+        '`- id: memorysql / name: @deepseek-ai/dsh-mcp-client / config:{serverName,transport,url}`,' +
+        'transport 取 `streamable-http`(连本机 HTTP MCP;stdio 走 mcp-bridge 亦可,但 HTTP 更简)。' +
+        '台账号/文件形如 YAML,不做 JSONPath 回读校验,故 jsonpath 用占位说明'
     },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   }

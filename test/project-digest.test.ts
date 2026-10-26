@@ -8,7 +8,11 @@ import plugin from '../src/plugins/project-digest/index'
 import {
   buildDigestMd,
   buildDigestPrompt,
+  buildDigestSystemPrompt,
   buildRulesDigest,
+  digestLevel,
+  digestLevelFor,
+  DIGEST_LEVEL_SPECS,
   DIGEST_SOFT_CHAR_CAP,
   parseDigestResponse,
   shouldRunCatchup,
@@ -72,45 +76,113 @@ describe('buildDigestPrompt', () => {
   })
 })
 
+describe('digestLevel(详略随量分档)', () => {
+  it('会话少、上下文小 → brief;中等 → standard;多/大 → detailed', () => {
+    expect(digestLevel(3, 3000).level).toBe('brief')
+    expect(digestLevel(5, 9000).level).toBe('standard')
+    expect(digestLevel(12, 5000).level).toBe('detailed')
+    expect(digestLevel(4, 19000).level).toBe('detailed') // 上下文大也升 detailed
+  })
+
+  it('三档 targetChars/capChars/maxTokens 单调递增', () => {
+    expect(DIGEST_LEVEL_SPECS.brief.targetChars).toBeLessThan(DIGEST_LEVEL_SPECS.standard.targetChars)
+    expect(DIGEST_LEVEL_SPECS.standard.targetChars).toBeLessThan(DIGEST_LEVEL_SPECS.detailed.targetChars)
+    expect(DIGEST_LEVEL_SPECS.brief.maxTokens).toBeLessThan(DIGEST_LEVEL_SPECS.detailed.maxTokens)
+  })
+
+  it('detailed 档提示词要求按会话分类,且每档都有 perSession 要求', () => {
+    const b = buildDigestSystemPrompt(DIGEST_LEVEL_SPECS.brief)
+    const d = buildDigestSystemPrompt(DIGEST_LEVEL_SPECS.detailed)
+    expect(b).toContain('perSession')
+    expect(d).toContain('perSession')
+    expect(d).toContain('按会话分类')
+    // 目标字数写进了提示词
+    expect(d).toContain(String(DIGEST_LEVEL_SPECS.detailed.targetChars))
+  })
+})
+
+/**
+ * 回归:档位只升不降。
+ *
+ * 曾经按**本批**会话数选档,却用该档的 capChars 截断**累计全文** ——
+ * 23 会话项目第 1 轮(20 条)→detailed 存 4000 字,第 2 轮(3 条)→brief
+ * 截到 800 字,丢 3200;截断结果还作为 prev 回灌,永远回不去。
+ */
+describe('digestLevelFor(只升不降)', () => {
+  it('累计规模决定档位:大项目不会因后续小批次降档', () => {
+    // 已覆盖 20 个会话,再来 3 个 → 累计 23,应保持 detailed
+    expect(digestLevelFor(23, 2000).level).toBe('detailed')
+    // 单看本批 3 个只会是 brief —— 这正是旧 bug
+    expect(digestLevel(3, 2000).level).toBe('brief')
+  })
+
+  it('上一份总结比当前档位能容纳的更长时,升档以容纳它', () => {
+    // 旧数据上限 6000 字:brief(2000)/standard(4500)都装不下 → detailed
+    expect(digestLevelFor(1, 500, 6000).level).toBe('detailed')
+    expect(digestLevelFor(1, 500, 3000).level).toBe('standard')
+    // 短总结不触发升档
+    expect(digestLevelFor(1, 500, 100).level).toBe('brief')
+  })
+
+  it('不会因为 prev 为空而降档到比计算结果更低', () => {
+    expect(digestLevelFor(12, 500, 0).level).toBe('detailed')
+    expect(digestLevelFor(5, 100, 0).level).toBe('standard')
+  })
+})
+
 describe('parseDigestResponse(括号配平容错)', () => {
-  it('严格 JSON 直接过', () => {
-    const r = parseDigestResponse('{"summary":"ok","todos":[{"content":"t","status":"open"}],"decisions":["d"],"candidates":[]}')
+  const spec = DIGEST_LEVEL_SPECS.standard
+  it('严格 JSON 直接过,含 perSession', () => {
+    const r = parseDigestResponse(
+      '{"summary":"ok","perSession":[{"id":1,"title":"会话A","note":"做了登录"}],"todos":[{"content":"t","status":"open"}],"decisions":["d"],"candidates":[]}',
+      spec
+    )
     expect(r?.summary).toBe('ok')
     expect(r?.todos[0].status).toBe('open')
+    expect(r?.perSession[0]).toEqual({ id: 1, title: '会话A', note: '做了登录' })
   })
 
   it('markdown 围栏 + 前后解释文字都能抠出 JSON', () => {
     const text = '好的,以下是总结:\n```json\n{"summary":"s1","todos":[],"decisions":[],"candidates":[]}\n```\n希望有帮助'
-    expect(parseDigestResponse(text)?.summary).toBe('s1')
+    expect(parseDigestResponse(text, spec)?.summary).toBe('s1')
   })
 
   it('字符串里含花括号不破坏配平', () => {
     const text = '噪声 {"summary":"含 { 花括号 } 的文本","todos":[],"decisions":[],"candidates":[]}'
-    expect(parseDigestResponse(text)?.summary).toBe('含 { 花括号 } 的文本')
+    expect(parseDigestResponse(text, spec)?.summary).toBe('含 { 花括号 } 的文本')
   })
 
   it('两段 JSON 取第一段可解析的', () => {
     const text = '{"summary":"first","todos":[],"decisions":[],"candidates":[]} {"summary":"second"}'
-    expect(parseDigestResponse(text)?.summary).toBe('first')
+    expect(parseDigestResponse(text, spec)?.summary).toBe('first')
   })
 
   it('todo 状态归一 + 候选 kind 回落 fact', () => {
     const r = parseDigestResponse(
-      '{"summary":"s","todos":[{"content":"a","status":"done"},{"content":"b","status":"weird"}],"decisions":[],"candidates":[{"kind":"mood","content":"c"}]}'
+      '{"summary":"s","todos":[{"content":"a","status":"done"},{"content":"b","status":"weird"}],"decisions":[],"candidates":[{"kind":"mood","content":"c"}]}',
+      spec
     )
     expect(r?.todos.map((t) => t.status)).toEqual(['done', 'open'])
     expect(r?.candidates[0].kind).toBe('fact')
   })
 
   it('无 summary 或纯文本返回 null', () => {
-    expect(parseDigestResponse('{"todos":[]}')).toBeNull()
-    expect(parseDigestResponse('完全不是 JSON')).toBeNull()
-    expect(parseDigestResponse('')).toBeNull()
+    expect(parseDigestResponse('{"todos":[]}', spec)).toBeNull()
+    expect(parseDigestResponse('完全不是 JSON', spec)).toBeNull()
+    expect(parseDigestResponse('', spec)).toBeNull()
+  })
+
+  it('summary 按档位截断(detailed 上限更高)', () => {
+    const long = 'X'.repeat(10000)
+    const brief = parseDigestResponse(`{"summary":"${long}","todos":[],"decisions":[],"candidates":[]}`, DIGEST_LEVEL_SPECS.brief)
+    const det = parseDigestResponse(`{"summary":"${long}","todos":[],"decisions":[],"candidates":[]}`, DIGEST_LEVEL_SPECS.detailed)
+    expect(brief?.summary.length).toBe(DIGEST_LEVEL_SPECS.brief.capChars)
+    expect(det!.summary.length).toBeGreaterThan(brief!.summary.length)
   })
 })
 
 describe('buildRulesDigest(零外发降级)', () => {
-  it('会话清单 + 上版待办结转 + pendingProgress 进待办', () => {
+  it('会话清单 + 上版待办结转 + pendingProgress 进待办 + 按会话分类', () => {
     const prev = {
       summary: '旧总结',
       todos: [
@@ -124,6 +196,10 @@ describe('buildRulesDigest(零外发降级)', () => {
     expect(r.summary).toContain('旧总结')
     expect(r.todos.map((t) => t.content)).toEqual(['旧待办', 'agent 收工汇报: 剩收尾'])
     expect(r.candidates).toEqual([])
+    // 规则模式同样按会话分类
+    expect(r.perSession).toHaveLength(2)
+    expect(r.perSession[0].id).toBe(1)
+    expect(r.perSession[0].note).toBeTruthy()
   })
 })
 
@@ -138,12 +214,20 @@ describe('shouldRunCatchup', () => {
 })
 
 describe('buildDigestMd', () => {
-  it('渲染摘要/待办勾选/决策与元信息', () => {
+  it('渲染摘要/按会话/待办勾选/决策与元信息', () => {
     const md = buildDigestMd(
-      { summary: 'S1', todos: [{ content: 't1', status: 'open' }, { content: 't2', status: 'done' }], decisions: ['D1'], candidates: [] },
+      {
+        summary: 'S1',
+        perSession: [{ id: 3, title: '会话C', note: '做了 C' }],
+        todos: [{ content: 't1', status: 'open' }, { content: 't2', status: 'done' }],
+        decisions: ['D1'],
+        candidates: []
+      },
       { projectName: 'demo', periodStart: 1_760_000_000, periodEnd: 1_760_086_400, model: 'llm:glm-4.7-flash', sessionsCovered: 5, generatedAt: new Date(1_760_086_400_000) }
     )
     expect(md).toContain('# 项目总结: demo')
+    expect(md).toContain('## 按会话')
+    expect(md).toContain('#3 会话C — 做了 C')
     expect(md).toContain('- [ ] t1')
     expect(md).toContain('- [x] t2')
     expect(md).toContain('- D1')

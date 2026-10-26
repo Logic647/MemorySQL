@@ -61,6 +61,7 @@ export interface DigestLatest {
   projectId: number
   projectName: string
   summary: string
+  perSession: Array<{ id: number; title: string; note: string }>
   todos: Array<{ content: string; status: string }>
   decisions: string[]
   model: string

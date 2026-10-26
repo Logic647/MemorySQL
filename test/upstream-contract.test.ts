@@ -82,7 +82,7 @@ describe('台账自洽性(防台账腐化)', () => {
   })
 
   it('jsonl 源必须声明 parser 名', () => {
-    const known = ['claude', 'codex', 'qwen', 'kimi', 'workbuddy', 'qoder']
+    const known = ['claude', 'codex', 'qwen', 'kimi', 'workbuddy', 'qoder', 'dsh']
     for (const a of AGENTS) {
       if (a.source.kind === 'jsonl') {
         expect(known, `${a.id} 的 parser 未在 check.ts 注册`).toContain(a.source.jsonl.parser)

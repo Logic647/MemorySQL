@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { AGENT_BY_ID } from '../../shared/upstream-agents'
 import { app } from 'electron'
+import { upsertDshPatch } from './dsh-patch'
 
 /**
  * 连接向导:为检测到的 agent 一键写入 MemorySQL 的 MCP 配置。
@@ -173,6 +174,9 @@ function hermesProfileConfig(): string | null {
 }
 
 const HTTP_ENTRY = (url: string) => ({ type: 'http', url })
+
+
+
 
 /**
  * Hermes Agent(NousResearch/hermes-agent,含 CN Desktop 打包版):
@@ -380,6 +384,20 @@ startup_timeout_sec = 30`,
     },
     snippet: (url) =>
       `# Hermes profile 的 config.yaml 追加:\nmcp_servers:\n  memorysql:\n    url: "${url}"\n    protocol: "stateless"\n    trust: "untrusted"\n\n# 修改后在 Hermes 里执行 /reload-mcp 热加载`
+  },
+  {
+    id: 'dsh',
+    label: 'DeepSeek Harness',
+    detect: (home) =>
+      fs.existsSync(path.join(home, '.dsh')) ||
+      (process.env.DSH_HOME ? fs.existsSync(path.join(process.env.DSH_HOME, 'sessions')) : false),
+    configPath: (home) =>
+      process.env.DSH_HOME?.trim()
+        ? path.join(process.env.DSH_HOME, 'cordis.patch.yml')
+        : path.join(home, '.dsh', 'cordis.patch.yml'),
+    apply: (configPath, url) => upsertDshPatch(configPath, url),
+    snippet: (url) =>
+      `# ~/.dsh/cordis.patch.yml 追加(DeepSeek Harness 的 MCP 是 cordis 补丁条目):\n- insert:\n    - id: memorysql\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: memorysql\n        transport: streamable-http\n        url: "${url}"\n\n# 改完重启 dsh 生效;工具以 mcp__memorysql__<tool> 形式暴露`
   }
 ]
 

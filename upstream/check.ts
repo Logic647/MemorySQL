@@ -92,6 +92,17 @@ const RESOLVERS: Record<string, () => Promise<string | null>> = {
       /* no profiles dir */
     }
     return null
+  },
+  /**
+   * DeepSeek Harness:会话根 = ~/.dsh/sessions(DSH_HOME 可覆盖)。
+   * 只 import dsh-parser(纯 Node 依赖 zlib/fs),不 import 插件 index
+   * (避免连带 better-sqlite3 原生模块)。
+   */
+  dsh: async () => {
+    const m = await import('../src/plugins/capture-dsh/dsh-parser.ts')
+    const home = process.env.DSH_HOME?.trim() || path.join(os.homedir(), '.dsh')
+    const root = m.dshSessionsRoot(home)
+    return fs.existsSync(root) ? root : null
   }
 }
 
@@ -219,32 +230,44 @@ function checkSqlite(c: AgentContract, dbPath: string): CheckResult {
   }
 }
 
-function findFirst(root: string, ext: string, depth = 0): string | null {
-  if (depth > 6) return null
+/**
+ * 黑盒检查每次最多试几个样本文件。
+ *
+ * 取 8 是折中:足够跨过「前几个恰好是子 agent 会话/空会话」的情形,又不至于在
+ * 一个有几百个会话文件的 dsh 根目录上把整个目录读完(检查器要每天跑)。
+ */
+const JSONL_SAMPLE_LIMIT = 8
+
+/** 收集最多 `limit` 个匹配文件(深度优先)。 */
+function findMany(root: string, exts: string[], limit: number, depth = 0): string[] {
+  if (depth > 6 || limit <= 0) return []
   let entries: fs.Dirent[]
   try {
     entries = fs.readdirSync(root, { withFileTypes: true })
   } catch {
-    return null
+    return []
   }
+  const out: string[] = []
   for (const e of entries) {
     const p = path.join(root, e.name)
-    if (e.isFile() && p.toLowerCase().endsWith(ext)) return p
-    if (e.isDirectory()) {
-      const hit = findFirst(p, ext, depth + 1)
-      if (hit) return hit
+    if (e.isFile() && exts.some((x) => p.toLowerCase().endsWith(x))) {
+      out.push(p)
+      if (out.length >= limit) return out
+    } else if (e.isDirectory()) {
+      out.push(...findMany(p, exts, limit - out.length, depth + 1))
+      if (out.length >= limit) return out
     }
   }
-  return null
+  return out
 }
 
 async function checkJsonl(c: AgentContract, root: string): Promise<CheckResult> {
   const b = base(c, root)
   if (c.source.kind !== 'jsonl') return b
   const exp = c.source.jsonl
-  const file = findFirst(root, '.jsonl')
-  if (!file) return { ...b, detail: '源目录存在但没找到 .jsonl 文件' }
-
+  const exts = exp.fileSuffixes ?? ['.jsonl']
+  const files = findMany(root, exts, JSONL_SAMPLE_LIMIT)
+  if (files.length === 0) return { ...b, detail: `源目录存在但没找到 ${exts.join('/')} 文件` }
   // 动态载入生产 parser —— 不做二次实现,避免检查器与适配器行为分叉
   // import 一律带 .ts:node --experimental-strip-types 要求,vitest 也接受
   const parsers: Record<string, (fp: string, text: string) => Promise<unknown>> = {
@@ -271,37 +294,75 @@ async function checkJsonl(c: AgentContract, root: string): Promise<CheckResult> 
     qoder: async (fp) => {
       const m = await import('../src/plugins/capture-qoder/index.ts')
       return m.parseQoderSession(fp)
+    },
+    dsh: async (fp) => {
+      const m = await import('../src/plugins/capture-dsh/dsh-parser.ts')
+      const text = m.decodeDshFile(fp)
+      if (text === null) throw new Error(`无法解码会话日志:${path.basename(fp)}`)
+      const parsed = m.parseDshSession(fp, text)
+      if (parsed) return parsed
+      // 解析不出会话时要区分**按设计跳过**与**读不懂**:
+      //   子 agent 碎片(delegationDepth>0)/ 没有真人提示的空会话 → 正常,不算漂移
+      //   没有会话头 → 格式真的变了
+      const why = m.classifyDshText(text)
+      if (why === 'subagent' || why === 'empty') return null
+      throw new Error(`缺少会话头或结构不符(${why}):${path.basename(fp)}`)
     }
   }
 
   const load = parsers[exp.parser]
   if (!load) return { ...b, verdict: 'checker_error', detail: `未注册的 parser: ${exp.parser}` }
 
-  try {
-    const text = fs.readFileSync(file, 'utf-8')
-    const parsed = await load(file, text)
-    const got = Array.isArray(parsed) ? parsed.length : parsed ? 1 : 0
-    if (got === 0) {
-      return {
-        ...b,
-        verdict: 'drift',
-        detail: `parser 解析 ${path.basename(file)} 得到 0 条 —— 格式可能已变`
+  // 解析器对「合法的空结果」返回 null/[] 是正常状态,不是漂移:
+  //   - dsh 的子 agent 会话(delegationDepth>0)与空会话按设计跳过
+  //   - 一个 sessions 根下可能有成百个独立会话文件,其中一部分必然是空的/子会话
+  // 所以必须**试多个文件**,且「全部样本都被解析器按设计跳过」要算通过。
+  // 只看第一个文件会让判定取决于目录遍历顺序(实测 a-child/z-parent 红、
+  // a-parent/z-child 绿),那是检查器的 bug 伪装成上游问题。
+  let lastError: unknown = null
+  let legitSkips = 0
+  for (const file of files) {
+    try {
+      const text = fs.readFileSync(file, 'utf-8')
+      const parsed = await load(file, text)
+      const got = Array.isArray(parsed) ? parsed.length : parsed ? 1 : 0
+      if (got > 0) {
+        const sampled = files.length > 1 ? `(${files.length} 个样本中首个可解析)` : ''
+        return { ...b, verdict: 'ok', detail: `解析 ${path.basename(file)} → ${got} 条${sampled}` }
+      }
+      // 解析器明确返回空 = 该样本按设计没有可采内容(子 agent / 空会话)
+      legitSkips += 1
+    } catch (e) {
+      lastError = e
+      const msg = e instanceof Error ? e.message : String(e)
+      // 加载/编译类故障是检查器自身问题,立刻上报,不要被后续样本掩盖
+      if (/Cannot find module|ERR_MODULE_NOT_FOUND|is not exported|SyntaxError/.test(msg)) {
+        return {
+          ...b,
+          verdict: 'checker_error',
+          detail: `检查器自身故障(非上游问题):${msg.slice(0, 140)}`
+        }
       }
     }
-    return { ...b, verdict: 'ok', detail: `解析 ${path.basename(file)} → ${got} 条` }
-  } catch (e) {
-    // 关键区分:**加载 parser 失败是「检查器自己坏了」,不是「上游漂移」**。
-    // 两者混为一谈会产生危险的假阳性 —— 检查器的 bug 会伪装成上游问题,
-    // 白白触发一次适配发版。
-    const msg = e instanceof Error ? e.message : String(e)
-    if (/Cannot find module|ERR_MODULE_NOT_FOUND|is not exported|SyntaxError/.test(msg)) {
-      return {
-        ...b,
-        verdict: 'checker_error',
-        detail: `检查器自身故障(非上游问题):${msg.slice(0, 140)}`
-      }
-    }
+  }
+
+  if (lastError !== null) {
+    const msg = lastError instanceof Error ? lastError.message : String(lastError)
     return { ...b, verdict: 'drift', detail: `parser 抛错: ${msg.slice(0, 160)}` }
+  }
+  // 全部样本都被解析器**按设计跳过** → 格式没变,只是这个根里暂时没有可采会话。
+  // 判成 drift 会让一个健康的安装每次跑都变红,白触发一次适配发版。
+  if (legitSkips === files.length && files.length > 0) {
+    return {
+      ...b,
+      verdict: 'ok',
+      detail: `${files.length} 个样本均按设计跳过(子 agent / 空会话),格式可读`
+    }
+  }
+  return {
+    ...b,
+    verdict: 'drift',
+    detail: `${files.length} 个样本文件全部解析为 0 条 —— 格式可能已变`
   }
 }
 

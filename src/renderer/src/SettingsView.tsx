@@ -30,6 +30,7 @@ const PLUGIN_DESC: Record<string, string> = {
   'capture-gemini': 'Gemini CLI 会话捕获',
   'capture-cursor': 'Cursor 会话捕获(实验性)',
   'capture-opencode': 'OpenCode / Copilot CLI 会话捕获',
+  'capture-dsh': 'DeepSeek Harness(dsh)会话捕获',
   'capture-watcher': '项目文件监听(AGENTS.md 等只读导入)',
   'import-chat': '对话导入 —— 粘贴/导入对话文本,覆盖加密与云端 agent',
   'mcp-server': 'MCP 服务端 —— 所有 agent 的连接入口',
@@ -1225,7 +1226,8 @@ const CAPTURE_AGENTS: CaptureAgent[] = [
   { id: 'capture-qoder', label: 'Qoder CLI / CN', pathKey: 'sourceRoot' },
   { id: 'capture-gemini', label: 'Gemini CLI', pathKey: 'sourceRoot' },
   { id: 'capture-cursor', label: 'Cursor(实验性)', pathKey: null },
-  { id: 'capture-opencode', label: 'OpenCode / Copilot CLI', pathKey: null }
+  { id: 'capture-opencode', label: 'OpenCode / Copilot CLI', pathKey: null },
+  { id: 'capture-dsh', label: 'DeepSeek Harness', pathKey: 'sourceRoot' }
 ]
 
 function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
@@ -1403,6 +1405,7 @@ const CONNECT_AGENTS = [
   { id: 'gemini', label: 'Gemini CLI' },
   { id: 'cursor', label: 'Cursor' },
   { id: 'opencode', label: 'OpenCode / Copilot CLI' },
+  { id: 'dsh', label: 'DeepSeek Harness' },
   { id: 'hermes', label: 'Hermes Agent (CN Desktop)' }
 ]
 

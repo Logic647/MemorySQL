@@ -6,12 +6,14 @@ import {
   buildDigestMd,
   buildDigestMcpText,
   buildDigestPrompt,
+  buildDigestSystemPrompt,
   buildRulesDigest,
+  digestLevelFor,
   DIGEST_MAX_ROUNDS_PER_TRIGGER,
   DIGEST_MAX_SESSIONS_PER_RUN,
-  DIGEST_SYSTEM_PROMPT,
   parseDigestResponse,
   shouldRunCatchup,
+  type DigestLevelSpec,
   type DigestResult,
   type DigestSessionInput,
   type DigestTodo
@@ -59,11 +61,16 @@ const plugin: MemorySQLPlugin = {
       SELECT * FROM project_digests WHERE project_id = ? AND deleted = 0
       ORDER BY created_at DESC LIMIT 1
     `)
+    /** 该项目历史上已覆盖的会话总数(用于选详略档位:必须按累计规模,不能按本批)。 */
+    const stmtCoveredCount = sqlite.prepare(`
+      SELECT COALESCE(SUM(sessions_covered), 0) AS n
+      FROM project_digests WHERE project_id = ? AND deleted = 0
+    `)
     const stmtInsertDigest = sqlite.prepare(`
       INSERT INTO project_digests
-        (project_id, period_start, period_end, summary, todos, decisions, model, sessions_covered,
+        (project_id, period_start, period_end, summary, per_session, todos, decisions, model, sessions_covered,
          created_at, updated_at, device_id)
-      VALUES (@project_id, @period_start, @period_end, @summary, @todos, @decisions, @model, @sessions_covered,
+      VALUES (@project_id, @period_start, @period_end, @summary, @per_session, @todos, @decisions, @model, @sessions_covered,
               @created_at, @updated_at, 'local')
     `)
     const stmtSessions = sqlite.prepare(`
@@ -101,10 +108,18 @@ const plugin: MemorySQLPlugin = {
       WHERE p.deleted = 0
       ORDER BY COALESCE(s.last_message_at, s.started_at) DESC LIMIT 1
     `)
-    const stmtProjectByKeyword = sqlite.prepare(`
+    // 名字优先、路径兜底 —— 与 core-schema 的 findProjectsByKeyword 同口径。
+    // 只用 name OR path 会把同目录下的无关项目一起并进来(实测关键词「桌面」
+    // 命中 24 个项目,它们只是都放在 H:\桌面\ 下)。
+    const stmtProjectsByName = sqlite.prepare(`
       SELECT p.id, p.name FROM projects p
-      WHERE p.deleted = 0 AND (p.name LIKE ? OR p.path LIKE ?)
-      ORDER BY p.updated_at DESC LIMIT 1
+      WHERE p.deleted = 0 AND p.name LIKE ?
+      ORDER BY p.updated_at DESC
+    `)
+    const stmtProjectsByPath = sqlite.prepare(`
+      SELECT p.id, p.name FROM projects p
+      WHERE p.deleted = 0 AND p.path LIKE ?
+      ORDER BY p.updated_at DESC
     `)
 
     // ---- llm-refine(懒取:summarizer-llm 被停用时消化成规则模式,不炸) ---
@@ -184,12 +199,24 @@ const plugin: MemorySQLPlugin = {
               : null
 
           const prompt = buildDigestPrompt(project.name, sessions, prev)
+          // 详略随**累计**会话数与上下文量分档(用户 2026-10-26 要求):会话越多/越长,
+          // 总结越详细。必须用历史累计 + 本批,而不是本批 sessions.length ——
+          // 用本批会让大项目在后续小批次里降档,把已写长的总结截短(见 digestLevelFor 注释)。
+          const coveredBeforeTotal = (stmtCoveredCount.get(projectId) as { n: number } | undefined)?.n ?? 0
+          const spec: DigestLevelSpec = digestLevelFor(
+            coveredBeforeTotal + sessions.length,
+            prompt.length,
+            prev?.summary.length ?? 0
+          )
           let result: DigestResult | null = null
           let model = 'rules'
           if (refine?.available()) {
             try {
-              const text = await refine.refine(prompt, { system: DIGEST_SYSTEM_PROMPT, maxTokens: 4000 })
-              const parsed = parseDigestResponse(text)
+              const text = await refine.refine(prompt, {
+                system: buildDigestSystemPrompt(spec),
+                maxTokens: spec.maxTokens
+              })
+              const parsed = parseDigestResponse(text, spec)
               if (parsed) {
                 result = parsed
                 model = `llm:${refine.describe?.() ?? 'configured'}`
@@ -217,6 +244,7 @@ const plugin: MemorySQLPlugin = {
             period_start: periodStart,
             period_end: periodEnd,
             summary: result.summary,
+            per_session: JSON.stringify(result.perSession),
             todos: JSON.stringify(result.todos),
             decisions: JSON.stringify(result.decisions),
             model,
@@ -358,6 +386,7 @@ const plugin: MemorySQLPlugin = {
       const d = stmtLatestDigest.get(projectId) as
         | {
             summary: string
+            per_session: string
             todos: string
             decisions: string
             model: string
@@ -372,6 +401,7 @@ const plugin: MemorySQLPlugin = {
         projectId,
         projectName: project.name,
         summary: d.summary,
+        perSession: JSON.parse(d.per_session || '[]') as Array<{ id: number; title: string; note: string }>,
         todos: JSON.parse(d.todos || '[]') as DigestTodo[],
         decisions: JSON.parse(d.decisions || '[]') as string[],
         model: d.model,
@@ -437,13 +467,36 @@ const plugin: MemorySQLPlugin = {
           return '项目总结功能未开启。请用户在 MemorySQL 设置 → 智能引擎 → 项目总结 中开启后重试;当前可先调用 memory_get_project_brief 获取规则汇编的交接简报。'
         }
         const keyword = typeof args.project === 'string' ? args.project.trim() : ''
+        // 同名项目(换机/斜杠/src 子目录)必须合并后再找总结,否则会读到另一份
+        // 路径下更旧(或另一项目)的总结 —— 与 memory_get_context 的口径不一致。
+        // 名字优先、路径兜底:只用 name OR path 会把同目录下的无关项目一起并进来。
+        const matched = keyword
+          ? ((): Array<{ id: number; name: string }> => {
+              const like = `%${keyword}%`
+              const byName = stmtProjectsByName.all(like) as Array<{ id: number; name: string }>
+              if (byName.length > 0) return byName
+              return stmtProjectsByPath.all(like) as Array<{ id: number; name: string }>
+            })()
+          : []
         const project = keyword
-          ? (stmtProjectByKeyword.get(`%${keyword}%`, `%${keyword}%`) as { id: number; name: string } | undefined)
+          ? matched[0]
           : (stmtActiveProject.get() as { id: number; name: string } | undefined)
         if (!project) return keyword ? `(未找到匹配「${keyword}」的项目)` : '(库中还没有带会话的项目)'
-        const d = stmtLatestDigest.get(project.id) as
+        const ids = keyword ? matched.map((p) => p.id) : [project.id]
+        const d = (
+          ids.length > 1
+            ? sqlite
+                .prepare(
+                  `SELECT * FROM project_digests
+                   WHERE project_id IN (${ids.map(() => '?').join(',')}) AND deleted = 0
+                   ORDER BY created_at DESC LIMIT 1`
+                )
+                .get(...ids)
+            : stmtLatestDigest.get(project.id)
+        ) as
           | {
               summary: string
+              per_session: string
               todos: string
               decisions: string
               model: string
@@ -458,6 +511,7 @@ const plugin: MemorySQLPlugin = {
         return buildDigestMcpText(
           {
             summary: d.summary,
+            perSession: JSON.parse(d.per_session || '[]') as Array<{ id: number; title: string; note: string }>,
             todos: JSON.parse(d.todos || '[]') as DigestTodo[],
             decisions: JSON.parse(d.decisions || '[]') as string[],
             candidates: []

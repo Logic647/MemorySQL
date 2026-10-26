@@ -4,6 +4,45 @@
 
 ---
 
+## 2026-10-26 · DeepSeek Harness(dsh)适配 —— 捕获 + 台账 + 连接向导（含子代理审查后的 7 个 P1 修复）
+
+**背景:** DeepSeek 官方 agent 框架 `deepseek-ai/deepseek-harness`(命令 `dsh`,定位「Model + Harness = Agent」,对标 Claude Code,MIT)。捕获矩阵从 12 家 → **13 家**。
+
+**格式逐条对上游源码核实(非文档调研):** ①默认 home `~/.dsh`(`DSH_HOME` 覆盖),会话根 `<home>/sessions`(dsh-home-paths + base 包 `session-persistence-jsonl` 默认 `root: dshHomePath('sessions')`)②每会话一个 append-only JSONL 日志,默认 **zstd 压缩**;物理编码是「header 一帧 + 每批追加一帧」的**拼接独立帧**(README「Physical encoding」)③文件命名 `session.jsonl`(v0)/`session.vN.jsonl`(vN),压缩加 `.zstd`,当前 `SESSION_FORMAT_VERSION=4`;**历史代数与新代数并存在同一会话目录**,运行时常量规则是「选最高 vN」④首行=会话头 `{type:'session',version,id,createdAt(ms),cwd,isSeeded,delegationDepth,origin,agentPreset}` ⑤事件行=`{type,seq,time,data,...}` —— **`time` 是必需字段**(released v2 codec 的 `EVENT_REQUIRED=['type','seq','time','data']`,v4 委托它解码),毫秒 epoch ⑥消息语义:`user/message` 靠 `data.source.kind==='user'` 区分真人提示与注入上下文(runtime-context/文件变更/AGENTS.md 一律跳);`assistant/message.content` 块 text=正文 / tool-call=工具调用(转 role:'tool')/ reasoning=思考(跳);`session/title`→标题。
+
+**三个实测踩出来的坑(第一版实现全踩了,子代理审查抓出):**
+1. **Node zstd 只解第一帧**:`zstdDecompressSync(拼接流)` 返回的只有 header 那一帧。第一版想按帧魔数 `0xFD2FB528` 切分 + 「试解看成功没」当边界判据 —— **这个判据是空的**:zstd 截断前缀几乎总能"成功"并返回部分/零字节(实测 **252/252** 个截断点),于是假魔数被误认为真帧头,后续所有真实帧被静默丢弃(`decodeDshFile` 返空串 → 解析 null → 扫描 0 条仍报 healthy)。
+   **正解**:用 `zstdDecompressSync(buf, { info: true })` 的 `engine.bytesWritten` 精确切帧 —— 它直接报告「这一帧吃掉多少输入字节」,既不用手写帧头解析,也不会被载荷里的假魔数骗到。500 帧 2MB 6ms,载荷内嵌魔数/尾部残缺帧/checksum 帧全部实测通过。
+2. **多代数并存会把新日志覆盖成旧的**:上游把 `session.jsonl`/`session.v1…`/`session.v4…` 并排保留,运行时选最高代数。第一版把所有代数都收下,它们共享同一 `externalId`,ingest 后读到的覆盖前面的 —— 实测 v9(1 条)+ v10(3 条) 最终库里是 **v9 的 1 条**。**正解**:`latestGenerationFiles()` 按会话目录分组只留最高 vN(同代数下 `.zstd` 优先)。
+3. **事件 `time` 被我当成不存在**:第一版注释写「事件行不落盘 time/seq」并让 `startedAt=endedAt=createdAt`。核对上游 `session-format-v1-to-v2/src/codec.ts` 后发现 `time` 是**必需**字段。丢掉它的后果:`last_message_at` 恒等于创建时间,长会话在列表里「最后 …」列与排序全错。**正解**:每条消息带自己的 `ts = Math.floor(time/1000)`,`endedAt` 取事件时间最大值。
+
+**其余 P1 修复(同批):**
+- **黑盒检查器会对健康安装报 🔴**:`checkJsonl` 只取第一个文件、解析 null 就判 drift,而 dsh 的子 agent 会话(`delegationDepth>0`)和空会话**合法返回 null**。实测只有子 agent 时必红、混合根目录下判定**取决于目录遍历顺序**。修法:`findMany` 试最多 8 个样本 + 新增 `classifyDshText()` 区分 `subagent`/`empty`(按设计跳过 → 🟢)与 `no-header`(真漂移 → 🔴);全部样本都被按设计跳过也算通过。
+- **dsh 连接器不幂等且会删邻居**:旧去重正则按「以空白开头的行」吞续行,会吃掉同一 `- insert:` 列表里的**兄弟条目**(实测删掉用户的 telemetry-redact-rule);同时父级 `- insert:` 从不删除 → 重跑累积空壳;CRLF 文件下 `- id:` 匹配失败 → 产生两个同名条目(上游明确拒绝)。修法:抽出 `src/main/core/dsh-patch.ts`,按**缩进**界定条目边界 + 清理空壳父级 + CRLF 兼容;新增 `removeDshEntry()` 纯函数并单测。
+- **总结档位会永久回退**:`digestLevel()` 按**本批**会话数选档,却用该档 `capChars` 截断**累计全文** → 23 会话项目第 1 轮(20 条)存 4000 字、第 2 轮(3 条)截到 800 字,且截断结果回灌后永远回不去(实测 6000 → 2000)。修法:新增 `digestLevelFor(累计覆盖数, 上下文量, 上一版字节数)` —— 按累计规模选档且**只升不降**。
+- **总结注入串项目**:标题走 `findProject`(LIMIT 1)、总结走 `findProjectsByKeyword`(全部匹配),真实库实测 `project='桌面'` 时标题是「嵌入式…省赛」、正文却是「冰冰快答小助手」。**根因比预想更深**:匹配条件 `name OR path LIKE` 让「桌面」命中 **24 个**项目(它们只是都在 `H:\桌面\` 下)。修法:合并判据改为**项目名优先、路径仅在名字没命中时兜底**;`buildContext`/`buildBrief`/`memory_search`/`memory_get_project_digest` 四处统一同一口径。
+- **`memory_get_session` 保留的是最旧的消息**:预算循环正向遍历 + break,而新增文案两次写「默认取最后若干条」。真实会话 #260(7303 条)默认输出 39,203 字符含 seq 0…120、**不含最新一条**。修法:从最新往回填预算再翻转(capped 提示也换成"保留了**最近** N 条"),并修正 `tail=N` 的无效补救说明。
+
+**其余 P2/P3:** `perSession` 的 id `Number(x)||0` 把 `"#42"`/缺失全塌成 `#0`(改为逐字符扫第一段数字);maxTokens 只从 4000 提到 5600 却新增 20 条 perSession 输出段(提到 8000 + `DIGEST_MAX_PER_SESSION=12` 硬上限,防截断导致整个 JSON 解析失败回落规则模式);规则模式的 `perSession` 与 summary 的会话清单逐字重复(改为只补正文提炼);`renderDigestBlock` 从 try/catch 外露导致脏行(`todos='{}'`)让 `memory_get_context` 变 Tool error(加入形状防护降级);`memory_search`/`memory_get_project_digest` 仍按单项目解析。
+
+**改动清单:**
+- `src/plugins/capture-dsh/`(新):`dsh-parser.ts`(parseDshSession / decodeDshFile / zstdDecompressFrames / generationOf / latestGenerationFiles / classifyDshText / findDshFiles / collectDsh)+ `index.ts`
+- `src/main/core/dsh-patch.ts`(新):`dshUrlScalar` / `removeDshEntry` / `upsertDshPatch`
+- `src/shared/upstream-agents.ts`:dsh 条目 + `JsonlExpect.fileSuffixes?`
+- `upstream/check.ts`:dsh resolver/parser、`findMany` + `fileSuffixes`、多样本判定 + 合法跳过不算漂移
+- `src/main/core/agent-connect.ts`:dsh 连接器(转调 dsh-patch)
+- `src/plugins/project-digest/`:digestLevelFor / DIGEST_MAX_PER_SESSION / parseSessionId / 规则模式 perSession / 名字优先项目解析
+- `src/plugins/core-schema/`:名字优先的项目合并、recentSessionsOf、renderDigestBlock 防护、get_session 保留尾部、search projectIds
+- 注册:builtin-plugins / main/index.ts / plugin-groups.ts / types.ts / App.tsx / SettingsView 三处 / styles.css badge-dsh
+
+**测试:** 新增 **26 条**反向回归(每条对应上面一个真实 bug):dsh 多代数只取最高、zstd 多帧/假魔数/残缺尾帧/checksum/空缓冲、解码失败抛错、`classifyDshText` 四态、连接器兄弟条目/空壳/CRLF、digestLevelFor 只升不降、跨项目总结不串台、脏行不抛错、get_session 保留最新。另加 `test/real-db-check.test.ts`(默认跳过,`MEMORYSQL_REAL_DB=<副本>` 时跑)在真实库副本上守 P1-6/P1-7。**vitest 533:533**(2 条真库用例默认 skip)、typecheck 0、`import:scan` 无回归、真实库副本验收通过。
+
+**待办:** dsh 本机未装,合成样本单测覆盖(与 qwen/kimi/codebuddy 同口径);首日真机校准待用户装 dsh 后跑黑盒 + `--scan` 验收。
+
+**方法论教训:** 这一轮 7 个 P1 里有 5 个是「测试全绿但真机错」——单测只喂了理想输入(干净的 3 帧文件、单代数、单项目),而真实数据的形状(拼接帧、多代数、24 个同路径项目)才是 bug 的藏身处。**子代理审查 + 真实库副本验收**是补上这块的唯一办法;`test/real-db-check.test.ts` 就是把这套验收固化成可重跑的用例。
+
+---
+
 ## 2026-10-25 · NAS 黑盒探针:闭源 agent 漂移从「零信号」到「T+1 发现」+ 看板多源合并
 
 **背景:** 闭源 agent(qoder/codebuddy/workbuddy)无任何公开 changelog,开发机又没装,黑盒检查只能报 ⚪——看板上这三家等于无人看守。用户提出:把它们装到常驻 NAS(Ubuntu 24.04,`ssh nas` 免密)上,每天自动「升级 → 跑最小会话 → 黑盒检查 → 上报看板」,把盲区变成 T+1 的确定信号。评估结论:**可行**,且"即时发现"≠"即时适配"——检测延迟 ≈ max(软件更新滞后, 探针周期)≈ T+1 天,发现后适配仍是人工改 capture 插件→测试→发版;但对闭源三家是从 0 到 1。当日落地仓库侧全部改造(NAS 部署与五家 CLI 登录待用户参与)。

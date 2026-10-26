@@ -272,6 +272,9 @@ body {
 }
 .digest-card-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
 .digest-summary { white-space: pre-wrap; font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); margin: 4px 0 8px; }
+.digest-sessions { display: flex; flex-direction: column; gap: 3px; font-size: var(--msql-fs-sm); margin-bottom: 8px; }
+.digest-sessions-title { color: var(--msql-fg-dim); font-weight: 600; font-size: var(--msql-fs-xs); margin-bottom: 2px; }
+.digest-session { color: var(--msql-fg); font-family: var(--msql-font-mono); }
 .digest-todos { display: flex; flex-direction: column; gap: 3px; font-size: var(--msql-fs-sm); margin-bottom: 6px; }
 .digest-todo { color: var(--msql-fg); font-family: var(--msql-font-mono); }
 .digest-todo.done { color: var(--msql-fg-dim); text-decoration: line-through; }
@@ -356,7 +359,8 @@ select option { background: #141a24; color: var(--msql-fg); }
 .badge-zcode { color: #7fa8e0; border-color: rgba(79, 140, 255, 0.4); background: rgba(79, 140, 255, 0.08); }
 .badge-hermes { color: var(--msql-agent-hermes); border-color: rgba(167, 139, 250, 0.4); background: rgba(167, 139, 250, 0.08); }
 .badge-cursor, .badge-gemini, .badge-claudecode, .badge-opencode,
-.badge-qwencode, .badge-kimicli, .badge-codebuddy, .badge-workbuddy, .badge-qoder { color: var(--msql-fg-muted); border-color: var(--msql-glass-border-strong); background: rgba(255, 255, 255, 0.04); }
+.badge-qwencode, .badge-kimicli, .badge-codebuddy, .badge-workbuddy, .badge-qoder,
+.badge-dsh { color: var(--msql-fg-muted); border-color: var(--msql-glass-border-strong); background: rgba(255, 255, 255, 0.04); }
 
 /* ---------- search hits ---------- */
 .hit {

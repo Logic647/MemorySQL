@@ -35,6 +35,7 @@ import captureQoder from '../plugins/capture-qoder'
 import captureGemini from '../plugins/capture-gemini'
 import captureCursor from '../plugins/capture-cursor'
 import captureOpencode from '../plugins/capture-opencode'
+import captureDsh from '../plugins/capture-dsh'
 import mcpServer from '../plugins/mcp-server'
 import privacyExport from '../plugins/privacy-export'
 import syncArchive from '../plugins/sync-archive'
@@ -80,6 +81,7 @@ const BUILTIN_PLUGINS = [
   captureGemini,
   captureCursor,
   captureOpencode,
+  captureDsh,
   captureWatcher,
   importChat,
   mcpServer,

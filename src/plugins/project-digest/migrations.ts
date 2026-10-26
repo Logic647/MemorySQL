@@ -38,5 +38,12 @@ CREATE TABLE IF NOT EXISTS project_digest_state (
   updated_at     INTEGER NOT NULL DEFAULT 0
 );
 `
+  },
+  {
+    version: 2,
+    up: `
+-- v2: 按会话分类(用户 2026-10-26):每个覆盖的会话一条 {id,title,note}
+ALTER TABLE project_digests ADD COLUMN per_session TEXT NOT NULL DEFAULT '[]';
+`
   }
 ]

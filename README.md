@@ -42,7 +42,7 @@
 
 ![会话库](design/screenshots/02-sessions.png)
 
-*10 家 agent 的会话自动捕获入库,全文本地可搜。每条会话并排显示「开始」与「最后」——一眼分出「上周开始、今早还在聊」和「上周就结束了」*
+*13 家 agent 的会话自动捕获入库,全文本地可搜。每条会话并排显示「开始」与「最后」——一眼分出「上周开始、今早还在聊」和「上周就结束了」*
 
 ![会话详情](design/screenshots/03-session-detail.png)
 
@@ -50,7 +50,7 @@
 
 ## ✨ 特性
 
-- **会话自动捕获** —— 10 家 agent 开箱支持(Codex / ZCode / Claude Code / Hermes / Gemini / Cursor / OpenCode / Qwen Code / Kimi CLI / CodeBuddy Code),增量监听零手动操作,默认全开
+- **会话自动捕获** —— 13 家 agent 开箱支持(Codex / ZCode / Claude Code / Hermes / Gemini / Cursor / OpenCode / Qwen Code / Kimi CLI / CodeBuddy Code / WorkBuddy / Qoder / DeepSeek Harness),增量监听零手动操作,默认全开
 - **最后一次对话时间** —— 每条会话并排显示「开始」与「最后」,一眼分出「上周开始、今早还在聊」和「上周就结束了」
 - **项目滚动总结** —— 每个项目定期把新会话总结成 摘要+待办+决策(hindsight 式),agent 用 `memory_get_project_digest` 读这一份即可接手,不必翻大量历史会话;**默认关闭**,开启后 LLM 素材先脱敏再发送,不配 LLM 也能纯本地规则总结
 - **LLM 引擎聚合** —— 智谱 GLM(免费)/ SiliconFlow 免费档 / DeepSeek / MiMo / 本地反代(OpenCode Zen / CLIProxyAPI)一键预置,任意 OpenAI 兼容端点可自定义;供会话摘要、项目总结、记忆精炼共用,不可用时自动降级本地规则

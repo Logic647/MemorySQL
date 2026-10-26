@@ -29,6 +29,7 @@ export const PLUGIN_GROUPS: PluginGroup[] = [
       'capture-gemini',
       'capture-cursor',
       'capture-opencode',
+      'capture-dsh',
       'capture-watcher',
       'import-chat'
     ]

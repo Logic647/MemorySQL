@@ -8,6 +8,11 @@ export interface SearchFilters {
   agent?: string
   /** sessions/messages scoped to a resolved project id */
   projectId?: number
+  /**
+   * 多 project id 过滤(同名项目合并口径)。与 projectId 二选一,
+   * projectIds 优先;空数组表示"匹配到了但没有可用 id"→ 无结果。
+   */
+  projectIds?: number[]
   /** epoch-seconds cutoff; memories compare their ms timestamps internally */
   sinceSec?: number
 }
@@ -28,6 +33,7 @@ export function createSearchService(sqlite: Database.Database): SearchService {
       const hits: SearchHit[] = []
       const agent = filters.agent
       const pid = filters.projectId
+      const pids = filters.projectIds
       const sinceSec = filters.sinceSec
 
       // ---- sessions ------------------------------------------------------
@@ -38,7 +44,11 @@ export function createSearchService(sqlite: Database.Database): SearchService {
           where.push('s.agent_type = ?')
           params.push(agent)
         }
-        if (pid != null) {
+        if (pids != null) {
+          if (pids.length === 0) return []
+          where.push(`s.project_id IN (${pids.map(() => '?').join(',')})`)
+          params.push(...pids)
+        } else if (pid != null) {
           where.push('s.project_id = ?')
           params.push(pid)
         }
@@ -101,7 +111,11 @@ export function createSearchService(sqlite: Database.Database): SearchService {
           where.push('s.agent_type = ?')
           params.push(agent)
         }
-        if (pid != null) {
+        if (pids != null) {
+          if (pids.length === 0) return []
+          where.push(`s.project_id IN (${pids.map(() => '?').join(',')})`)
+          params.push(...pids)
+        } else if (pid != null) {
           where.push('s.project_id = ?')
           params.push(pid)
         }

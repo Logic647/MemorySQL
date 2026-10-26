@@ -99,6 +99,41 @@ export function createMcpTools(deps: {
         .get(`%${keyword}%`, `%${keyword}%`) as ProjectRow | undefined
     ) ?? null
 
+  /**
+   * 关键词命中的**全部**项目(按最近活跃排序)。
+   *
+   * 真实数据里同名项目很常见:换机后路径变了(F:\桌面\MemorySQL 与
+   * H:\桌面\MemorySQL)、同盘的斜杠/反斜杠两种写法、甚至 src 子目录被
+   * 当成独立项目 —— 本机「MemorySQL」一个词就命中 5 个 id。只取 LIMIT 1
+   * 会让 memory_list_sessions 静默丢掉绝大部分会话(实测只回 1 条,
+   * 而项目实际有 20+ 条),用户以为数据没了。
+   *
+   * ⚠ 合并的判据是**项目名**,不是路径子串:
+   *   - 名字匹配(name LIKE)优先,命中即用这批
+   *   - 名字没命中才退回路径匹配(允许用「数据库课程设计」这类路径片段找项目)
+   * 只用 `name OR path LIKE` 会把**同目录下的无关项目**全并进来:实测关键词
+   * 「桌面」命中 24 个项目(它们只是都放在 H:\桌面\ 下),于是标题写着 A、
+   * 总结正文却是 B 的结论。路径只在名字没命中时作兜底,且此时通常只命中一个。
+   */
+  const findProjectsByKeyword = (keyword: string): ProjectRow[] => {
+    const like = `%${keyword}%`
+    const byName = sqlite
+      .prepare(
+        `SELECT id, name, path, tech_stack FROM projects
+         WHERE deleted = 0 AND name LIKE ?
+         ORDER BY updated_at DESC`
+      )
+      .all(like) as ProjectRow[]
+    if (byName.length > 0) return byName
+    return sqlite
+      .prepare(
+        `SELECT id, name, path, tech_stack FROM projects
+         WHERE deleted = 0 AND path LIKE ?
+         ORDER BY updated_at DESC`
+      )
+      .all(like) as ProjectRow[]
+  }
+
   const findProject = (keyword?: string): ProjectRow | null => {
     if (keyword) {
       const row = findProjectByKeyword(keyword)
@@ -116,11 +151,18 @@ export function createMcpTools(deps: {
     )
   }
 
-  const recentSessions = (projectId: number | null, limit = 5): SessionRow[] => {
+  /**
+   * 最近会话,支持**多个** project id(同名项目合并后一起取)。
+   *
+   * 之前 buildContext 里标题按单个 project 取、摘要按合并集合取,同一个返回里
+   * 出现两个口径 —— 实测 memory_get_context({project:'桌面'}) 的标题是
+   * 「嵌入式-智能飞镖感应设备-省赛」,紧跟着的总结正文却是「冰冰快答小助手」。
+   */
+  const recentSessionsOf = (projectIds: number[] | null, limit = 5): SessionRow[] => {
     // most recently *conversing* first — a session that started long ago but
     // talked yesterday belongs above one that started and finished this morning
     const order = 'COALESCE(last_message_at, started_at, updated_at) DESC'
-    if (projectId === null) {
+    if (projectIds === null) {
       return sqlite
         .prepare(
           `SELECT id, title, summary, started_at, last_message_at, agent_type FROM sessions
@@ -128,13 +170,14 @@ export function createMcpTools(deps: {
         )
         .all(limit) as SessionRow[]
     }
+    if (projectIds.length === 0) return []
     return sqlite
       .prepare(
         `SELECT id, title, summary, started_at, last_message_at, agent_type FROM sessions
-         WHERE deleted = 0 AND project_id = ?
+         WHERE deleted = 0 AND project_id IN (${projectIds.map(() => '?').join(',')})
          ORDER BY ${order} LIMIT ?`
       )
-      .all(projectId, limit) as SessionRow[]
+      .all(...projectIds, limit) as SessionRow[]
   }
 
   /** tail of one session, newest last — the "what the previous agent did" block */
@@ -170,14 +213,99 @@ export function createMcpTools(deps: {
     }${firstLine ? ` — ${firstLine}` : ''}`
   }
 
+  /**
+   * 项目滚动总结(project-digest 插件的表;跨插件直读,带存在性守卫 ——
+   * 插件停用/表未建时静默跳过,退回纯规则汇编)。
+   * 有总结时它是简报/续接包的第一公民:agent 先读这段,不必逐个翻会话。
+   */
+  const latestProjectDigest = (
+    projectIds: number | number[] | null
+  ): {
+    summary: string
+    perSession: Array<{ id: number; title: string; note: string }>
+    todos: Array<{ content: string; status?: string }>
+    model: string
+    covered: number
+  } | null => {
+    const ids = projectIds == null ? [] : Array.isArray(projectIds) ? projectIds : [projectIds]
+    if (ids.length === 0) return null
+    try {
+      // 同名项目可能有多份总结 —— 取整体最新的一份(与"最近一次总结"语义一致)
+      // per_session 是 v2 迁移加的列:老库未迁移时缺列,用 try/catch 里再退一层
+      let row: { summary: string; per_session: string; todos: string; model: string; sessions_covered: number } | undefined
+      try {
+        row = sqlite
+          .prepare(
+            `SELECT summary, per_session, todos, model, sessions_covered FROM project_digests
+             WHERE project_id IN (${ids.map(() => '?').join(',')}) AND deleted = 0
+             ORDER BY created_at DESC LIMIT 1`
+          )
+          .get(...ids) as typeof row
+      } catch {
+        // 老 schema(无 per_session 列):退到只读 summary/todos
+        const legacy = sqlite
+          .prepare(
+            `SELECT summary, todos, model, sessions_covered FROM project_digests
+             WHERE project_id IN (${ids.map(() => '?').join(',')}) AND deleted = 0
+             ORDER BY created_at DESC LIMIT 1`
+          )
+          .get(...ids) as { summary: string; todos: string; model: string; sessions_covered: number } | undefined
+        row = legacy ? { ...legacy, per_session: '[]' } : undefined
+      }
+      if (!row) return null
+      return {
+        summary: row.summary,
+        perSession: JSON.parse(row.per_session || '[]') as Array<{ id: number; title: string; note: string }>,
+        todos: JSON.parse(row.todos || '[]') as Array<{ content: string; status?: string }>,
+        model: row.model,
+        covered: row.sessions_covered
+      }
+    } catch {
+      return null
+    }
+  }
+
+  const renderDigestBlock = (
+    d: NonNullable<ReturnType<typeof latestProjectDigest>>,
+    heading: string
+  ): string => {
+    // 脏行防护:todos/perSession 来自库里的 JSON,可能是手工编辑/异版本写坏的
+    // 形状(实测 todos='{}' → TypeError 直接让 memory_get_context 变成 Tool error)。
+    // 这里是 agent 第一个调用的工具,必须降级而不是抛错。
+    const todos = Array.isArray(d.todos) ? d.todos : []
+    const open = todos.filter((t) => t && t.status !== 'done')
+    const lines = [`\n${heading}`, d.summary]
+    // 按会话分类(有数据时展开)—— agent 可据此定位某条结论来自哪个会话
+    const perSession = Array.isArray(d.perSession) ? d.perSession : []
+    if (perSession.length > 0) {
+      lines.push('按会话:')
+      for (const p of perSession.slice(0, 15)) {
+        if (!p) continue
+        const note = typeof p.note === 'string' ? p.note : ''
+        if (!note) continue
+        lines.push(`  - #${p.id ?? 0} ${p.title || '(无标题)'} — ${clip(note, 120)}`)
+      }
+    }
+    if (open.length > 0) {
+      const items = open.map((t) => (typeof t?.content === 'string' ? t.content : '')).filter(Boolean)
+      if (items.length > 0) lines.push(`待办: ${items.join(' / ')}`)
+    }
+    return lines.join('\n')
+  }
+
   const buildContext = (args: Record<string, unknown>): string => {
     const keyword = typeof args.project === 'string' ? args.project : undefined
     const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
     const includeLast = args.include_last_session === true
-    const project = findProject(keyword)
+    // 同名项目(换机/斜杠写法/src 子目录)合并成一个集合,标题、总结、会话列表
+    // **必须用同一份集合**,否则同一段返回里会出现三个不同口径的项目
+    // (实测:标题是「嵌入式…省赛」,总结正文却是「冰冰快答小助手」)。
+    const matched = keyword ? findProjectsByKeyword(keyword) : []
+    const projectIds = matched.length > 0 ? matched.map((p) => p.id) : null
+    const project = projectIds !== null ? (matched[0] ?? null) : findProject(undefined)
     const persona = getPersona()
     const facts = getFacts(12, agent)
-    const sessions = recentSessions(project?.id ?? null)
+    const sessions = recentSessionsOf(projectIds, 5)
 
     const parts: string[] = ['# MemorySQL 续接上下文\n']
     if (agent) parts.push(`> 记忆按 agent 过滤: ${agent}(含全局记忆)\n`)
@@ -199,6 +327,16 @@ export function createMcpTools(deps: {
     parts.push(`\n## 项目: ${project?.name ?? '(未指定)'}`)
     if (project?.path) parts.push(`- 路径: ${project.path}`)
     if (project?.tech_stack) parts.push(`- 技术栈: ${project.tech_stack}`)
+    // 滚动总结放在会话列表之前:agent 读这一段就能接手,不必再逐个翻会话
+    const digest = latestProjectDigest(projectIds)
+    if (digest) {
+      parts.push(
+        renderDigestBlock(
+          digest,
+          `## 项目滚动总结(${digest.model} · 覆盖 ${digest.covered} 个会话 · 定期生成)`
+        )
+      )
+    }
     if (sessions.length > 0) {
       parts.push('- 最近会话:')
       for (const s of sessions) parts.push(`  - ${sessionLine(s)}`)
@@ -217,36 +355,14 @@ export function createMcpTools(deps: {
     return parts.join('\n')
   }
 
-  /**
-   * 项目滚动总结(project-digest 插件的表;跨插件直读,带存在性守卫 ——
-   * 插件停用/表未建时静默跳过,brief 退回纯规则汇编)。
-   * 有总结时它是简报第一公民:agent 先读这段,不必逐个翻会话。
-   */
-  const latestProjectDigest = (projectId: number | null): string | null => {
-    if (projectId == null) return null
-    try {
-      const row = sqlite
-        .prepare(
-          `SELECT summary, todos FROM project_digests WHERE project_id = ? AND deleted = 0 ORDER BY created_at DESC LIMIT 1`
-        )
-        .get(projectId) as { summary: string; todos: string } | undefined
-      if (!row) return null
-      const todos = JSON.parse(row.todos || '[]') as Array<{ content: string; status?: string }>
-      const open = todos.filter((t) => t.status !== 'done')
-      const lines = ['\n## 项目滚动总结(定期生成 —— 先读这段,不必逐个翻会话)', row.summary]
-      if (open.length > 0) lines.push(`待办: ${open.map((t) => t.content).join(' / ')}`)
-      return lines.join('\n')
-    } catch {
-      return null
-    }
-  }
-
   const buildBrief = (args: Record<string, unknown>): string => {
     const keyword = typeof args.project === 'string' ? args.project : undefined
     const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
     const project = findProject(keyword)
-    const projectId = project?.id ?? null
-    const sessions = recentSessions(projectId, 8)
+    // 与 buildContext 同口径:同名项目合并成一份集合,标题/总结/会话列表共用它
+    const matched = keyword ? findProjectsByKeyword(keyword) : []
+    const projectIds = matched.length > 0 ? matched.map((p) => p.id) : project ? [project.id] : null
+    const sessions = recentSessionsOf(projectIds, 8)
 
     const parts: string[] = [
       `# 项目交接简报: ${project?.name ?? '(未指定项目)'}`,
@@ -256,8 +372,8 @@ export function createMcpTools(deps: {
     if (project?.tech_stack) parts.push(`- 技术栈: ${project.tech_stack}`)
     if (agent) parts.push(`- 面向 agent: ${agent}(记忆含全局)`)
 
-    const digest = latestProjectDigest(projectId)
-    if (digest) parts.push(digest)
+    const digest = latestProjectDigest(projectIds)
+    if (digest) parts.push(renderDigestBlock(digest, '## 项目滚动总结(定期生成 —— 先读这段,不必逐个翻会话)'))
 
     parts.push('\n## 最近会话(接棒上下文)')
     if (sessions.length > 0) {
@@ -365,15 +481,17 @@ export function createMcpTools(deps: {
         const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100)
         const offset = Math.max(Number(args.offset) || 0, 0)
 
-        if (keyword && !findProjectByKeyword(keyword)) {
+        // 同名项目全部纳入(换机/斜杠写法/src 子目录都会产生同名的独立项目);
+        // 只取第一个会静默丢会话,见 findProjectsByKeyword 的注释
+        const matched = keyword ? findProjectsByKeyword(keyword) : []
+        if (keyword && matched.length === 0) {
           return `未找到与"${keyword}"匹配的项目。可用 memory_search 按内容找会话。`
         }
-        const projectId = keyword ? findProjectByKeyword(keyword)!.id : null
         const where = ['deleted = 0']
         const params: unknown[] = []
-        if (projectId !== null) {
-          where.push('project_id = ?')
-          params.push(projectId)
+        if (matched.length > 0) {
+          where.push(`project_id IN (${matched.map(() => '?').join(',')})`)
+          params.push(...matched.map((p) => p.id))
         }
         if (agent) {
           where.push('agent_type = ?')
@@ -393,13 +511,19 @@ export function createMcpTools(deps: {
           )
           .all(...params, limit, offset) as SessionRow[]
         if (rows.length === 0) return '没有符合条件的会话。'
-        return rows.map((s, i) => `${i + 1}. ${sessionLine(s)}`).join('\n')
+        const body = rows.map((s, i) => `${i + 1}. ${sessionLine(s)}`).join('\n')
+        // 命中多个同名项目时明说一句,否则 agent 会以为"就这些"
+        if (matched.length > 1) {
+          const names = matched.map((p) => `#${p.id} ${p.path ?? p.name}`).join('、')
+          return `${body}\n\n> 关键词「${keyword}」命中 ${matched.length} 个同名/同路径项目,已合并结果:${names}`
+        }
+        return body
       }
     },
     {
       name: 'memory_get_session',
       description:
-        '按会话 id 获取完整消息时间线(角色/内容/时间/工具名),用于 agent 回读历史上下文。full=true 去掉单条 2000 字符截断(总输出仍有限);列表见 memory_list_sessions。',
+        '按会话 id 获取消息时间线(角色/内容/时间/工具名)。默认取**最后**若干条并按 4 万字符预算截断(避免一次调用撑爆上下文);需要更早内容用 tail 调整,单条长消息用 full=true。列表见 memory_list_sessions;读项目整体结论优先用 memory_get_project_digest。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -433,29 +557,52 @@ export function createMcpTools(deps: {
         const omitted = tail > 0 && messages.length > tail ? messages.length - tail : 0
         if (omitted > 0) messages = messages.slice(-tail)
         const perMessage = args.full === true ? 20000 : 2000
-        const TOTAL_CAP = 120_000
+        /**
+         * 总输出预算。过去是 120_000 —— 实测一次 memory_get_session 真能吐
+         * 出 12 万字符(≈3-4 万 token),agent 一个"回读历史"就把自己的上下文
+         * 撑爆,而这正是本项目要解决的问题。默认收到 40_000 字符(约 1 万
+         * token):足够看清一次会话的骨架,再深读靠 tail 收窄或多次分页。
+         * full=true 时放宽到 80_000(用户明确要求单条长消息时不至于只剩头)。
+         */
+        const TOTAL_CAP = args.full === true ? 80_000 : 40_000
         let capped = false
         const clipMsg = (s: string, n: number): string =>
           s.length > n ? `${s.slice(0, n)}…[截断]` : s
         const when = (ts: number | null): string => (ts ? fmtTime(ts) : '')
-        const lines: string[] = []
         // budget check stays O(n): track running length instead of re-joining
         // every message on every iteration
         const SEP = '\n\n---\n\n'
+        /**
+         * 从**最新**往回填预算,再翻转回时间顺序。
+         *
+         * 之前是正向遍历 + 超预算 break,保留的是最旧的 N 条 —— 而这里的存在意义
+         * 正是「一次会话太长,看最近的」。实测真实会话 #260(7303 条)默认输出
+         * 39,203 字符里含 seq 0…120、**不含最新一条**,与「最后若干条」的文案
+         * 完全相反,还把 agent 指向一个不生效的 tail 补救。
+         */
         let budget = TOTAL_CAP
-        for (const m of messages) {
+        const kept: string[] = []
+        for (let i = messages.length - 1; i >= 0; i -= 1) {
+          const m = messages[i]
           const label = m.role === 'tool' ? `TOOL(${m.tool_name ?? 'tool'})` : m.role.toUpperCase()
           const line = `**${label}** ${when(m.ts)}\n${clipMsg(m.content, perMessage)}`
-          if (line.length + (lines.length > 0 ? SEP.length : 0) > budget) {
+          const extra = line.length + (kept.length > 0 ? SEP.length : 0)
+          if (extra > budget) {
             capped = true
             break
           }
-          lines.push(line)
-          budget -= line.length + (lines.length > 1 ? SEP.length : 0)
+          kept.push(line)
+          budget -= extra
         }
-        const body = lines.join('\n\n---\n\n')
-        const head = `# ${session.title ?? `会话 #${id}`}\n- id: ${id}\n- agent: ${session.agent_type}\n- 开始: ${when(session.started_at)}\n- 最后: ${when(session.last_message_at)}\n- 消息数: ${messages.length}${omitted > 0 ? `(已省略前 ${omitted} 条,可用 tail=0 获取全量)` : ''}\n`
-        const capNote = capped ? '\n\n> [已达输出上限,后面内容被省略 — 用 tail 参数收窄范围]' : ''
+        kept.reverse()
+        const lines = kept
+        const droppedByCap = messages.length - kept.length
+        const body = lines.join(SEP)
+        const totalMsgs = messages.length + omitted
+        const head = `# ${session.title ?? `会话 #${id}`}\n- id: ${id}\n- agent: ${session.agent_type}\n- 开始: ${when(session.started_at)}\n- 最后: ${when(session.last_message_at)}\n- 消息数: ${totalMsgs}${omitted > 0 ? `(本次取最后 ${messages.length} 条,已省略前 ${omitted} 条 — 用 tail 调整)` : ''}\n`
+        const capNote = capped
+          ? `\n\n> [输出已达 ${TOTAL_CAP} 字符上限,保留了**最近** ${lines.length}/${messages.length} 条(最早 ${droppedByCap} 条未显示)。要看更早的内容:tail=N 取最近 N 条,或先读本会话的 summary/项目总结再决定是否深读]`
+          : ''
         return `${head}\n${session.summary ? `> 摘要: ${clip(session.summary, 200)}\n\n` : ''}${body}${capNote}`
       }
     },
@@ -485,10 +632,16 @@ export function createMcpTools(deps: {
         const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
         const keyword = typeof args.project === 'string' && args.project.trim() ? args.project.trim() : undefined
         let projectId: number | undefined
+        let projectIds: number[] | undefined
         if (keyword) {
-          const p = findProjectByKeyword(keyword)
-          if (!p) return `未找到与"${keyword}"匹配的项目 — 项目过滤后无结果。可去掉 project 参数全库搜索。`
-          projectId = p.id
+          // 与 memory_list_sessions / memory_get_context 同一合并口径:
+          // 只取第一个会让同名项目(换机/斜杠/src 子目录)下的会话搜不到
+          const matched = findProjectsByKeyword(keyword)
+          if (matched.length === 0) {
+            return `未找到与"${keyword}"匹配的项目 — 项目过滤后无结果。可去掉 project 参数全库搜索。`
+          }
+          projectIds = matched.map((p) => p.id)
+          if (matched.length === 1) projectId = matched[0].id
         }
         const sinceDays = Number(args.since)
         const sinceSec = sinceDays > 0 ? sinceCutoffSec(sinceDays) : undefined
@@ -496,6 +649,7 @@ export function createMcpTools(deps: {
           kinds: kind ? [kind as SearchHit['kind']] : undefined,
           agent,
           projectId,
+          projectIds,
           sinceSec
         })
         const lines = hits.map(

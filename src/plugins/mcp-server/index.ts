@@ -49,8 +49,18 @@ function startServer(): void {
         return
       }
       if (req.method === 'GET' && req.url === '/health') {
+        // version/tools 让外部探活脚本一眼判定"活着 + 哪个版本 + 工具全不全",
+        // 不必再走一遍 MCP 握手(过去只能拿 ok/port,判版本要额外握手)
         res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ ok: true, server: 'memorysql-mcp', port }))
+        res.end(
+          JSON.stringify({
+            ok: true,
+            server: 'memorysql-mcp',
+            port,
+            version: app.getVersion(),
+            tools: ctx.mcp.list().length
+          })
+        )
         return
       }
       if (req.method !== 'POST' || req.url !== '/mcp') {

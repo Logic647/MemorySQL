@@ -22,6 +22,7 @@ export const BUILTIN_PLUGIN_IDS = [
   'capture-gemini',
   'capture-cursor',
   'capture-opencode',
+  'capture-dsh',
   'capture-watcher',
   'import-chat',
   'mcp-server',

@@ -157,7 +157,7 @@ describe('写后回读校验(verify)', () => {
    */
   it('每个 JSON 连接器写出的配置都能通过台账声明的校验', () => {
     for (const c of AGENT_CONNECTORS) {
-      if (!c.verify) continue // codex(TOML)/ hermes(YAML) 不做 JSONPath 校验
+      if (!c.verify) continue // codex(TOML)/ hermes(YAML)/ dsh(YAML) 不做 JSONPath 校验
       const cfg = path.join(tmp, `${c.id}.json`)
       c.apply(cfg, URL, BRIDGE)
       const err = c.verify(cfg, URL)
@@ -171,5 +171,130 @@ describe('写后回读校验(verify)', () => {
       if (!contract.mcp) continue
       expect(ids, `台账有 ${id} 但没有连接器`).toContain(id)
     }
+  })
+})
+
+/**
+ * DeepSeek Harness(dsh)连接器 —— MCP 配置是 YAML(cordis.patch.yml),不是 JSON。
+ * 无 verify(不做 JSONPath 回读),但必须幂等写出正确条目,且拒绝非本机 MCP 端点。
+ */
+describe('dsh connector', () => {
+  function dshConnector(): AgentConnector {
+    return connector('dsh')
+  }
+
+  it('写出 streamable-http 的 memorysql 补丁条目', () => {
+    const configPath = path.join(tmp, 'cordis.patch.yml')
+    dshConnector().apply(configPath, URL, BRIDGE)
+
+    const text = fs.readFileSync(configPath, 'utf-8')
+    expect(text).toContain('- insert:')
+    expect(text).toContain('- id: memorysql')
+    expect(text).toContain("name: '@deepseek-ai/dsh-mcp-client'")
+    expect(text).toContain('transport: streamable-http')
+    expect(text).toContain(`url: ${JSON.stringify(URL)}`)
+  })
+
+  it('幂等:重跑覆盖同一条目,不重复追加', () => {
+    const configPath = path.join(tmp, 'cordis.patch.yml')
+    dshConnector().apply(configPath, URL, BRIDGE)
+    dshConnector().apply(configPath, URL, BRIDGE)
+
+    const text = fs.readFileSync(configPath, 'utf-8')
+    expect(text.match(/- id: memorysql/g)).toHaveLength(1)
+    expect(text.match(/serverName: memorysql/g)).toHaveLength(1)
+  })
+
+  it('保留已有无关补丁条目', () => {
+    const configPath = path.join(tmp, 'cordis.patch.yml')
+    fs.writeFileSync(
+      configPath,
+      '- insert:\n    - id: other\n      name: \'@x/y\'\n      config:\n        serverName: other\n        transport: stdio\n        command: ls\n',
+      'utf-8'
+    )
+    dshConnector().apply(configPath, URL, BRIDGE)
+    const text = fs.readFileSync(configPath, 'utf-8')
+    expect(text).toContain('- id: other')
+    expect(text).toContain('- id: memorysql')
+  })
+
+  it('拒绝非本机 MCP 端点(防 YAML 注入)', () => {
+    const configPath = path.join(tmp, 'cordis.patch.yml')
+    expect(() => dshConnector().apply(configPath, 'http://evil.example.com/mcp', BRIDGE)).toThrow()
+    expect(() =>
+      dshConnector().apply(configPath, 'http://127.0.0.1:8642/mcp\n  x: !!js evil', BRIDGE)
+    ).toThrow()
+  })
+
+  /**
+   * 回归:同一 `- insert:` 列表里的**兄弟条目**必须保留。
+   *
+   * 旧实现按「以空白开头的行」吞续行,会把后面的兄弟条目一起删掉
+   * (实测删掉了用户的 telemetry-redact-rule 补丁);而旧测试用的是
+   * 另一个顶层 insert 块,正好绕过了这个 bug。
+   */
+  it('保留同一 insert 列表里的兄弟条目', () => {
+    const configPath = path.join(tmp, 'cordis.patch.yml')
+    fs.writeFileSync(
+      configPath,
+      [
+        '- insert:',
+        '    - id: memorysql',
+        "      name: '@deepseek-ai/dsh-mcp-client'",
+        '      config:',
+        '        serverName: memorysql',
+        '        transport: streamable-http',
+        '        url: "http://127.0.0.1:1/mcp"',
+        '    - id: telemetry-redact-rule',
+        "      name: '@deepseek-ai/some-other'",
+        '      config:',
+        '        rule: redact',
+        ''
+      ].join('\n'),
+      'utf-8'
+    )
+    dshConnector().apply(configPath, URL, BRIDGE)
+    const text = fs.readFileSync(configPath, 'utf-8')
+    expect(text).toContain('telemetry-redact-rule')
+    expect(text.match(/- id: memorysql/g)).toHaveLength(1)
+  })
+
+  /**
+   * 回归:重跑不能留下空壳 `- insert:`。
+   *
+   * 旧实现只删子条目、从不删父级 `- insert:`,三次调用会产生 1/2/3 个 insert 块
+   * (YAML 解析成 N 个 null 补丁),文件无限增长。
+   */
+  it('重跑不产生空壳 insert 块', () => {
+    const configPath = path.join(tmp, 'cordis.patch.yml')
+    for (let i = 0; i < 3; i += 1) dshConnector().apply(configPath, URL, BRIDGE)
+    const text = fs.readFileSync(configPath, 'utf-8')
+    expect(text.match(/- insert:/g)).toHaveLength(1)
+  })
+
+  /**
+   * 回归:CRLF 文件必须被正确识别。
+   *
+   * Windows 上按 `\n` 切分会把 `\r` 留在行尾,使 `- id:` 匹配失败 →
+   * 重跑产生**两个**同名条目,而上游明确拒绝同名双 server。
+   */
+  it('CRLF 文件重跑仍是单条目', () => {
+    const configPath = path.join(tmp, 'cordis.patch.yml')
+    fs.writeFileSync(
+      configPath,
+      [
+        '- insert:',
+        '    - id: memorysql',
+        "      name: '@deepseek-ai/dsh-mcp-client'",
+        '      config:',
+        '        serverName: memorysql',
+        ''
+      ].join('\r\n'),
+      'utf-8'
+    )
+    dshConnector().apply(configPath, URL, BRIDGE)
+    dshConnector().apply(configPath, URL, BRIDGE)
+    const text = fs.readFileSync(configPath, 'utf-8')
+    expect(text.match(/- id: memorysql/g)).toHaveLength(1)
   })
 })
