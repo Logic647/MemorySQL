@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-10-30 · README 同步到 v0.7.1 + scoop bucket 从 0.4.0 修到 0.7.1(两个真 bug)
+
+**README**:补 v0.7.1 变更块(原来只写到 v0.7.0)、开发段加 `npm run upstream:check` 与「适配器维护」说明、文档表加 `docs/releases/`。
+
+**顺带查实的两条安装渠道状态(README 原先写的都不准):**
+- **winget 的 PR 已合并**(microsoft/winget-pkgs#426778,收录的是 **0.5.6**)。README 写「审核中」是过时信息;0.5.6 起自动更新链路可用,装完能在应用内升到最新。
+- **scoop bucket 停在 0.4.0**,而且不是"没人 bump"这么简单 —— 清单本身有两处会让人以为能用、实际不能用:
+
+1. **`autoupdate.hash` 从 `.blockmap` 抠 `"sha256"`,但 blockmap 里根本没有 sha256。** 解压 `.blockmap` 得到的是 `{"version":"2","files":[{"name":"file","offset":0,"checksums":["TOpOPNnoPX8Ew..."]}]}` —— `checksums` 是**分块**摘要的 base64 片段,既不是整包 sha256 也不是 hex。也就是说那条正则自写下起就从未匹配成功,autoupdate 一直空转(难怪停在 0.4.0 而没人发现)。
+2. **`installer.script` 是 `Start-Process "$dir\$fname" /S | Wait-Process`。** NSIS 静默安装会装到 `%LOCALAPPDATA%\Programs\MemorySQL`,**不会装进 scoop 的 `$dir`**,于是同一份清单里的 `"shortcuts": [["MemorySQL.exe","MemorySQL"]]` 指向一个不存在的文件;卸载也只删空目录。正确做法是不跑安装程序,直接解包。
+
+**修法(先实测再改,不猜):** 用 7za 实测 `MemorySQL-Setup-0.7.1.exe` —— **是 7z 可整包解出的 NSIS**(`Type = 7z`,84 文件),而且**载荷直接在根**:`MemorySQL.exe` / `*.dll` / `resources/` 全在顶层,**没有** `$PLUGINSDIR\app-64.7z`(所以不能照抄 Obsidian 那份需要二次解 `app-64.7z` 的写法)。`7za x` 退出码 **0**、84 文件、`MemorySQL.exe` 就在根。据此:
+- `url` 加 `#/dl.7z` → 让 scoop 直接把 exe 当 7z 解到 `$dir`,删掉 `installer.script`;
+- `autoupdate` 去掉 `hash` —— 官方 wiki 确认「没给 hash 时回退为下载后本地计算」,比抠一个不存在的字段可靠;
+- `checkver` 改成显式 `{"github": "https://github.com/Logic647/MemorySQL"}`;wiki 确认 github checkver 的 `v` 在捕获组外,`$version` 不含 `v`,故模板仍是 `v$version`。
+
+**sha256 从下载实体算**:`94ac7461…7eaea1`,104,378,848 字节 —— 与 `latest.yml` 声明的 size 一致。已通过 GitHub Contents API 提交到 `Logic647/scoop-bucket`(commit `d4cd858`),回读 manifest 版本/hash/URL 均正确,安装包 URL 公网 **200**。
+
+**未验证的一环(说清楚)**:本机**没装 scoop**,所以只做了「7z 解包实测 + 清单回读 + URL 可达」,**没有跑真实 `scoop install memorysql`**。首次真机验证时若 `scoop install` 报解包失败,先看它用的 7z 版本,再决定是否退回 `installer.script` + `/D=$dir` 方案。
+
+**另一个待办(未动)**:bucket 没有 CI,以后每次发版仍需手工 bump(或加一个 release 触发的 GitHub Action 自动改 `version/url/hash`)。
+
+---
+
 ## 2026-10-26 · v0.7.1 已发版(含 CI 跨 Node patch 版本的真坑)
 
 **已发布:** https://github.com/Logic647/MemorySQL/releases/tag/v0.7.1 —— 15 资产全 `uploaded`,`latest.yml` / `latest-mac.yml` 公网 200、安装包 Range 请求 206、`latest.yml` 声明的 size(104,378,848)与实体一致。Windows / Linux / macOS arm64 三平台打包成功;**macos-13 x64 仍长期 queued,按既定策略不等**(不阻塞发版)。
