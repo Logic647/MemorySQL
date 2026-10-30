@@ -24,7 +24,7 @@
 
 **未验证的一环(说清楚)**:本机**没装 scoop**,所以只做了「7z 解包实测 + 清单回读 + URL 可达」,**没有跑真实 `scoop install memorysql`**。首次真机验证时若 `scoop install` 报解包失败,先看它用的 7z 版本,再决定是否退回 `installer.script` + `/D=$dir` 方案。
 
-**另一个待办(未动)**:bucket 没有 CI,以后每次发版仍需手工 bump(或加一个 release 触发的 GitHub Action 自动改 `version/url/hash`)。
+**自动 bump 已上线(同日补)**:bucket 加 `.github/workflows/update-memorysql.yml`(commit `3ff868c`)——每日 03:17 UTC 从 `releases/latest` 的**重定向**拿 tag(不走 API,不吃限流),版本变了才下载安装包 → **7z 校验根级 `MemorySQL.exe` 存在** → `sha256sum` → `jq --indent 4` 只改 `version/url/hash` → 有 diff 才提交。**结构校验是防回归的关键**:electron-builder 哪天换成 `$PLUGINSDIR/app-64.7z` 布局,这一步先红,坏清单推不上去。已用 `workflow_dispatch` + `force=true` 实跑整链(下载 / 解包校验 / hash / 提交判定)全绿,重算的 hash 与线上一致 → 提交步骤正确跳过。注意:**仓库 60 天无活动时 GitHub 会停用 schedule**,发版长期停滞就手动 dispatch 一次唤醒。
 
 ---
 
