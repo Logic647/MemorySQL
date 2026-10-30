@@ -62,6 +62,8 @@
 - **托盘常驻 + 全局秒搜** —— 关窗即驻留(MCP 保持在线),任意界面 `Alt+Shift+M` 唤起秒搜
 - **记忆治理** —— 收工汇报候选确认、LLM 冲突检测、手动改名/归档/续接链管理
 
+> **v0.7.1 变更**:新增 **DeepSeek Harness(dsh)** 会话捕获(捕获矩阵 12 → **13 家**,支持 zstd 拼接帧与多代日志并存);修掉 v0.7.0 项目总结在真机才暴露的三个问题(**总结越滚越小** / **总结串到别的项目** / 按会话显示 `#0`);`memory_get_session` 超长会话改为保留**最新**消息;上游漂移检查不再把子 agent / 空会话误判成格式漂移。详见 [v0.7.1 更新日志](docs/releases/v0.7.1-notes.md)。
+>
 > **v0.7.0 变更**:新增 项目滚动总结(默认关闭)/ LLM 引擎聚合(免费 API 预置 + 反代 + 自定义)/ 设置页插件分组折叠 / 会话页按检测数排序;安装包从 105.5MB 瘦身到 **99.5MB**(语义推理组件约 20MB 改为首次启用时下载,模型本就如此);另附 [Tauri 迁移可行性评估](docs/tauri-feasibility.md)。升级不丢数据、自动更新直达。
 >
 > **v0.6.0 变更**:下线了「笔记」与「知识图谱」两个功能(长期使用后判断实用性不高),界面收敛为「会话 / 记忆」两栏。连带移除 CodeMirror 与 cytoscape,renderer 产物从 2.79 MB 降到 0.68 MB。升级不会丢数据——旧笔记文件与 `notes` 表都保留在磁盘上,只是不再被读写。
@@ -70,10 +72,12 @@
 
 | 方式 | 命令 / 链接 |
 |---|---|
-| **winget**(审核中) | `winget install Logic647.MemorySQL` |
+| **winget** | `winget install Logic647.MemorySQL` |
 | **scoop** | `scoop bucket add logic647 https://github.com/Logic647/scoop-bucket && scoop install memorysql` |
 | **安装包** | [Releases 最新版](https://github.com/Logic647/MemorySQL/releases/latest) 下载 `MemorySQL-Setup-*.exe` |
 | **免安装** | Release 附件或 CI Artifacts 中的便携版 |
+
+> 包管理器清单同步滞后:winget 源版本是 **0.5.6**、scoop bucket 停在 **0.4.0**。winget 装完能在应用内自动更新到最新;**scoop 的 0.4.x 自动更新链路本身是坏的(0.4.2 才修好),走 scoop 会卡在旧版,建议直接用安装包**。
 
 安装后应用自动驻留托盘;关闭窗口 = 最小化到托盘,MCP 服务保持在线。
 
@@ -157,13 +161,16 @@ module.exports = {
 ```bash
 npm install          # Node 24+
 npm run dev          # 开发模式(热重载)
-npm test             # vitest 单元测试
+npm test             # vitest 单元测试(536 条)
 npm run typecheck    # tsc --noEmit
 npm run dist         # 打包 Windows 安装包 + 免安装目录
 npm run import:scan  # 无头扫描导入本机 agent 会话(验收用)
+npm run upstream:check  # 上游契约黑盒检查:哪家 agent 改了格式导致捕获可能失效
 ```
 
 技术栈:Electron + TypeScript(strict) + React + better-sqlite3(FTS5) + sqlite-vec。
+
+**适配器维护**:13 家 agent 的存储布局、依赖的表/列与 MCP 配置必需键都在 `src/shared/upstream-agents.ts` 登记成台账(`upstream/ledger.json` 是导出件),`upstream/check.ts` 拿真实数据做黑盒比对。改任一 capture 插件或连接器的写入格式,**必须同步台账**,否则 `upstream-contract.test.ts` 会红。
 
 ## 📁 文档
 
@@ -173,6 +180,7 @@ npm run import:scan  # 无头扫描导入本机 agent 会话(验收用)
 | [docs/architecture.md](docs/architecture.md) | 架构、数据模型、全部决策记录 |
 | [docs/plugins.md](docs/plugins.md) | 插件 API 完整参考 |
 | [docs/DEVLOG.md](docs/DEVLOG.md) | 开发日志(追加式) |
+| [docs/releases/](docs/releases/) | 各版本更新日志(v0.5.3 起) |
 | [docs/RELEASE.md](docs/RELEASE.md) | 发版流程 |
 | [docs/MCP_LISTING.md](docs/MCP_LISTING.md) | MCP 目录登记素材 |
 | [AGENTS.md](AGENTS.md) | agent 接手开发的入口 |
