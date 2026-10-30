@@ -77,7 +77,7 @@
 | **安装包** | [Releases 最新版](https://github.com/Logic647/MemorySQL/releases/latest) 下载 `MemorySQL-Setup-*.exe` |
 | **免安装** | Release 附件或 CI Artifacts 中的便携版 |
 
-> 包管理器清单同步滞后:winget 源版本是 **0.5.6**、scoop bucket 停在 **0.4.0**。winget 装完能在应用内自动更新到最新;**scoop 的 0.4.x 自动更新链路本身是坏的(0.4.2 才修好),走 scoop 会卡在旧版,建议直接用安装包**。
+> 包管理器清单:winget 源版本是 **0.5.6**(装完能在应用内自动更新到最新);scoop bucket 已同步到 **0.7.1**,装的是解包版(直接展开 electron-builder 载荷,不运行安装程序、不写系统卸载项)。
 
 安装后应用自动驻留托盘;关闭窗口 = 最小化到托盘,MCP 服务保持在线。
 
