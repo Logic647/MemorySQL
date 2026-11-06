@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-11-06 · 探针状态巡检:白盒 401 事故(摘要谎报「无风险」)+ NAS cron 从未执行,两处已修
+
+**巡检结论(数据面)**:双源黑盒**都健康** —— dev 心跳 3.7h、nas 心跳 2.7h,各上报 13 家,合并视图 13 家,`0 漂移 / 0 检查器故障`,唯一 🟠 是 NAS 上的 gemini(未登录)。NAS 代码已跟到 v0.7.2、面板 active、台账 13 家。**但白盒这一栏实际上已经瘫了一整天,而看板写着「13 家均无风险」** —— 这正是本项目最忌的"失败看起来像没风险"。
+
+**事故一:服务器 GITHUB_TOKEN 失效 → 白盒全盲,摘要还报平安(已修代码,待服务器部署)**
+`/api/state` 里 12 家 tracked 的 `fetchError` 全是 `HTTP 401`(只有 kimicli 走 npm 免疫)。本机 token 实测 5000/5000 正常 → 是**服务器上那个 token 被撤销/过期**。更严重的是摘要的处置:
+- `buildBrief().closedSource` 旧判据是 `blackboxOnly || risk === 'unknown'`,而坏掉的抓取**必然**把 risk 置 unknown → 9 家**开源** agent 被塞进「闭源」名单,提示词还告诉 LLM「它们没有 changelog,黑盒是唯一防线」,LLM 于是写出「13 家均无风险」;
+- `fetchErrors` 又用 `risk !== 'unknown'` 反向排除 → 全表 401 却**零抓取失败**,面板上连个红字都没有。
+**修法(4 处)**:`closedSource` 判据只看 `blackboxOnly`(闭源由 ledger.monitor 决定,不由 unknown 决定);`fetchErrors` 不再排除 unknown;新增 `whiteboxBlind`(非闭源过半抓不到)+ renderBrief 醒目段 + prompt 硬规则「出现该事实时 headline 必须说白盒不可信,不许说无风险」+ 前端红事实「白盒不可信 N/M 抓不到」;`fetch.mjs` 把 401 单独成文案「token 已失效/被撤销,需更换 GITHUB_TOKEN(重试无用)」。测试 +5(`watch-summary` 3 条锁归类与阈值、`watch-fetch` 1 条锁 401 文案)。
+
+**事故二:NAS 探针的 cron 从未执行过(已改 systemd timer 并部署)**
+报告日期是 10-25 / 10-27 / 11-03 / 11-06 这种跳跃,而 `~/memorysql-probe.log` **根本不存在** —— 那条 `37 10 * * *` 从未触发。NAS 当天 20:47 才开机(`uptime -s`),**关机/休眠时 cron 不补跑**,闭源 agent 的看守退化成"开机那天才看一次"(实测最长间隔 7 天)。改成 `scripts/nas-probe.timer`(`OnCalendar=10:37` + **`Persistent=true`** 开机补跑 + 随机延迟)+ `scripts/nas-probe.service`(`Type=oneshot`、凭据走 `EnvironmentFile`、绝对路径——该机 `%h` 会展开成 `/root`),cron 条目已摘除;`test/nas-probe-units.test.ts` 6 条锁住这些配置。NAS 已部署并手动跑通一轮(`Result=success`、`已接收 13 条`、日志进 journal)。
+
+**仍待用户**:①**换服务器 GITHUB_TOKEN**(fine-grained,public repo 只读,建议无过期)→ `cd /root/MemorySQL && git pull && bash /root/setup-watch.sh <新token> --refresh`(脚本会先验 token 再重启,并保留 LLM 配置);②NAS 的 gemini 从未登录(`~/.gemini/oauth_creds.json` 不存在),所以 `dataAt < updatedAt` 恒为 🟠 —— 在 NAS 面板点「发起登录」或 `ssh nas` 后 `gemini` 认证,再手动跑一次会话即转 🟢。**口径提醒**:`whiteboxBlind` 的阈值是"非闭源过半",不是"任何一家失败" —— 一两家抖动不该让摘要变成恐慌,但过半失败必须是"结论不可信"级别的红字。
+
+---
+
 ## 2026-11-06 · README 截图全部按 v0.7.2 重截(换成虚构演示库)
 
 **起因:** 旧截图是 0.5.x/0.6.0 的界面(没有浅色主题、没有子代理折叠),而且 02/03 用的是**真实库**(含真实项目名与会话标题)。这次全部用一份**虚构演示库**重拍,隐私问题从"事后检查"变成"结构上不存在"。
