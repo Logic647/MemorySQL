@@ -81,8 +81,45 @@ function fmtRelative(ts: number | null | undefined): string {
   return fmtShortYear(ts)
 }
 
-function AgentBadge({ type }: { type: string }) {
-  return <span className={`badge badge-${type}`}>{type}</span>
+function AgentBadge({ type }: { type: string }) {  return <span className={`badge badge-${type}`}>{type}</span>
+}
+
+/**
+ * 重命名输入框自己持有草稿。
+ *
+ * 之前草稿存在 App 的 state 里,每敲一个字符都重渲染整棵树(含上百条会话行,
+ * 实测 5.29ms/次 @131 行)——输入框本身应该只重渲染自己。
+ */
+function RenameEditor({
+  initial,
+  onCommit,
+  onCancel
+}: {
+  initial: string
+  onCommit: (value: string) => void
+  onCancel: () => void
+}) {
+  const [draft, setDraft] = useState(initial)
+  return (
+    <>
+      <input
+        autoFocus
+        value={draft}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') onCommit(draft)
+          if (e.key === 'Escape') onCancel()
+        }}
+      />
+      <button className="btn btn-small" onClick={(e) => { e.stopPropagation(); onCommit(draft) }}>
+        保存
+      </button>
+      <button className="btn btn-small" onClick={(e) => { e.stopPropagation(); onCancel() }}>
+        取消
+      </button>
+    </>
+  )
 }
 
 /** digest 徽标四态(会话组头与「项目总结」弹窗共用) */
@@ -256,23 +293,37 @@ export default function App() {
     }
   }, [filter, showArchived, listLimit])
 
+  /**
+   * 捕获状态与列表数据是两件事:之前写在同一个 `[refresh]` effect 里,导致
+   * 点一次 agent 筛选 chip 会连打 13 个 captureStatus(共 16 次 IPC)。拆开后
+   * 筛选只重取列表,状态只在挂载与 sessions:changed 时刷新。
+   */
+  const loadCaptureStatuses = useCallback(async (): Promise<void> => {
+    await Promise.all(
+      CAPTURE_PLUGINS.map(async ({ id }) => {
+        try {
+          const s = await api.captureStatus(id)
+          const detail = s.lastError
+            ? `错误: ${s.lastError}`
+            : s.lastScanAt
+              ? `${s.sessionsImported} 新导入 / ${s.sessionsFound} 扫描`
+              : '本次运行未扫描(数据已在库)'
+          setStatuses((prev) => ({ ...prev, [id]: detail }))
+        } catch {
+          setStatuses((prev) => ({ ...prev, [id]: '不可用' }))
+        }
+      })
+    )
+  }, [])
+
   useEffect(() => {
     void refresh()
-    CAPTURE_PLUGINS.forEach(async ({ id }) => {
-      try {
-        const s = await api.captureStatus(id)
-        const detail = s.lastError
-          ? `错误: ${s.lastError}`
-          : s.lastScanAt
-            ? `${s.sessionsImported} 新导入 / ${s.sessionsFound} 扫描`
-            : '本次运行未扫描(数据已在库)'
-        setStatuses((prev) => ({ ...prev, [id]: detail }))
-      } catch {
-        setStatuses((prev) => ({ ...prev, [id]: '不可用' }))
-      }
-    })
-    return api.onSessionsChanged(() => void refresh())
   }, [refresh])
+
+  useEffect(() => {
+    void loadCaptureStatuses()
+    return api.onSessionsChanged(() => void refresh())
+  }, [loadCaptureStatuses, refresh])
 
   useEffect(() => {
     void api.mcpStatus().then(setMcp).catch(() => setMcp(null))
@@ -472,17 +523,19 @@ export default function App() {
     }
   }, [importText, importTitle, importSource, refresh])
 
-  const commitRename = useCallback(async () => {
-    if (!rename) return
-    try {
-      await api.renameSession(rename.id, rename.value)
-      setRename(null)
-      await refresh()
-      if (selected?.session.id === rename.id) setSelected(await api.getSession(rename.id))
-    } catch (e) {
-      setKbMsg(`重命名失败: ${String(e)}`)
-    }
-  }, [rename, refresh, selected])
+  const commitRename = useCallback(
+    async (id: number, value: string) => {
+      try {
+        await api.renameSession(id, value)
+        setRename(null)
+        await refresh()
+        if (selected?.session.id === id) setSelected(await api.getSession(id))
+      } catch (e) {
+        setKbMsg(`重命名失败: ${String(e)}`)
+      }
+    },
+    [refresh, selected]
+  )
 
   // stable per-project hue so adjacent projects are visually distinct
   const projectHue = (name: string): number => {
@@ -560,21 +613,11 @@ export default function App() {
           <AgentBadge type={s.agentType} />
           {rename?.id === s.id ? (
             <span className="session-title" onClick={(e) => e.stopPropagation()}>
-              <input
-                autoFocus
-                value={rename.value}
-                onChange={(e) => setRename({ id: s.id, value: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void commitRename()
-                  if (e.key === 'Escape') setRename(null)
-                }}
+              <RenameEditor
+                initial={rename.value}
+                onCommit={(v) => void commitRename(s.id, v)}
+                onCancel={() => setRename(null)}
               />
-              <button className="btn btn-small" onClick={(e) => { e.stopPropagation(); void commitRename() }}>
-                保存
-              </button>
-              <button className="btn btn-small" onClick={(e) => { e.stopPropagation(); setRename(null) }}>
-                取消
-              </button>
             </span>
           ) : (
             <span className="session-title">
