@@ -16,7 +16,7 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["node"]
+    "types": ["node", "electron-vite/node"]
   },
   "include": ["src", "test", "upstream", "scripts"]
 }

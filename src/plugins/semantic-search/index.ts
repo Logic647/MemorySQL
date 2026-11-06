@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import { createSemanticCore, type SemanticCore } from './core'
+import { createEmbedClient, type EmbedClient } from './embed-client'
 import {
   downloadNativeRuntime,
   readNativeRuntimeManifest,
@@ -38,6 +39,10 @@ export interface SemanticStatus {
  * lazy and retryable: installRuntime downloads the zip and brings the core up
  * without an app restart.
  */
+/** 推理 worker 句柄(init 里创建,stop 时终止)——init 是单个闭包,stop 拿不到局部变量 */
+let activeClient: EmbedClient | null = null
+let activeIdleTimer: NodeJS.Timeout | null = null
+
 const plugin: MemorySQLPlugin = {
   manifest: {
     id: 'semantic-search',
@@ -82,65 +87,34 @@ const plugin: MemorySQLPlugin = {
     let core: SemanticCore | null = null
     let unavailable: { reason: string; runtimeMissing?: boolean } | null = null
     let idleTimer: NodeJS.Timeout | null = null
+    let embedClient: EmbedClient | null = null
 
     const tryInit = async (): Promise<boolean> => {
       if (core) return true
       // 环境性失败(非缺组件)不自动重试,免得每次 status 都白跑一遍
       if (unavailable && !unavailable.runtimeMissing) return false
       try {
-        const { FlagEmbedding, EmbeddingModel } = await importFastembed()
-        const model = EmbeddingModel.BGESmallZH
+        // 这里只校验依赖装没装(缺组件要在 status 里报 runtimeMissing);
+        // 模型加载与推理都在 worker 里,主进程不碰 ONNX。
+        await importFastembed()
         const dims = 512
-        // lazy singleton: the ~100MB model download happens on the FIRST embed,
-        // not at startup. After 15 idle minutes the ONNX session is released
-        // (its arena allocator otherwise keeps peak memory from ever returning
-        // to the OS); the next search/sync re-loads it lazily.
-        let embedder: Awaited<ReturnType<typeof FlagEmbedding.init>> | null = null
-        let lastUsed = 0
-        let busy = 0
-        const getEmbedder = async () => {
-          if (!embedder) {
-            embedder = await FlagEmbedding.init({
-              model,
-              cacheDir: path.join(ctx.env.dataDir, 'fastembed-cache')
-            })
-          }
-          return embedder
-        }
-        const releaseIdle = (): void => {
-          if (!embedder || busy > 0 || Date.now() - lastUsed < 15 * 60_000) return
-          const fe = embedder
-          embedder = null
-          // fastembed holds the ort InferenceSession in a private field; release
-          // it best-effort so the native arena heap is handed back to the OS
-          void (fe as unknown as { session?: { release?: () => Promise<void> } }).session?.release?.().catch(
-            () => {}
-          )
-        }
+        embedClient = createEmbedClient({
+          dataDir: ctx.env.dataDir,
+          cacheDir: path.join(ctx.env.dataDir, 'fastembed-cache')
+        })
+        // 空闲 15 分钟释放推理内存(worker 直接 terminate,arena 全还给系统)
         if (idleTimer) clearInterval(idleTimer)
-        idleTimer = setInterval(releaseIdle, 5 * 60_000)
+        idleTimer = setInterval(() => embedClient?.releaseIfIdle(), 5 * 60_000)
         idleTimer.unref?.()
-        const withEmbedder = async <T>(fn: (fe: Awaited<ReturnType<typeof FlagEmbedding.init>>) => Promise<T>): Promise<T> => {
-          busy++
-          try {
-            const fe = await getEmbedder()
-            lastUsed = Date.now()
-            return await fn(fe)
-          } finally {
-            busy--
-          }
-        }
+        const client = embedClient
+        activeClient = client
+        activeIdleTimer = idleTimer
         const created = createSemanticCore({
           sqlite: ctx.db.sqlite,
           dims,
           model: 'bge-small-zh-v1.5',
-          embedDocs: async (texts) =>
-            withEmbedder(async (fe) => {
-              const out: number[][] = []
-              for await (const batch of fe.passageEmbed(texts, 32)) out.push(...batch)
-              return out
-            }),
-          embedQuery: (q) => withEmbedder((fe) => fe.queryEmbed(q))
+          embedDocs: (texts) => client.docs(texts),
+          embedQuery: (q) => client.query(q)
         })
         core = created
         ctx.services.provide<SemanticCore>('semantic-search', created)
@@ -283,6 +257,15 @@ const plugin: MemorySQLPlugin = {
     })
 
     ctx.log.info('semantic search enabled — native stack loads lazily (bundled in dev, native-runtime zip in package)')
+  },
+
+  stop() {
+    if (activeIdleTimer) {
+      clearInterval(activeIdleTimer)
+      activeIdleTimer = null
+    }
+    activeClient?.dispose()
+    activeClient = null
   }
 }
 

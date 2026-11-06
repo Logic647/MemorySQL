@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-11-06 · 语义检索推理搬进 worker(主进程不再跑 ONNX)
+
+**问题:** `FlagEmbedding.init` 152ms、每次 `queryEmbed` 24–33ms 都在主进程同步执行,搜索时会卡住 UI 与 MCP 请求。
+
+**改动(3 个文件 + tsconfig):**
+- 新增 `src/plugins/semantic-search/embedder-worker.ts`:`?nodeWorker` 入口,负责 fastembed 加载、模型初始化(懒加载)、`passageEmbed` / `queryEmbed`;打包版走 `requireFromNativeRuntime`,dev 走 node_modules
+- 新增 `embed-client.ts`:请求-响应(带 id)+ 忙碌/空闲计数 + **空闲 15 分钟 terminate**(比原来的 session.release 更彻底,arena 内存全还给系统)+ worker 崩溃自愈(exit≠0 时 reject 在途请求并允许重建)
+- `semantic-search/index.ts`:主进程只保留「依赖是否装好」的校验(缺组件仍报 `runtimeMissing`),推理全部转发给 client;新增 `stop()` 终止 worker;tsconfig 加 `electron-vite/node` 类型
+
+**验证(四步,均实测):**
+1. 构建:`out/main/embedder-worker-*.js` 产出,且 `index.js` 引用它;dev 管线同样产出(跑 `npm run dev` 确认)
+2. 功能:隔离数据目录 + `--reindex` → `"semantic": { embedded: 5, ok: true }`
+3. **反向验证**:临时改名 worker chunk 后重跑 → `Cannot find module ... embedder-worker-*.js` —— 证明推理确实走 worker,主进程没有残留路径
+4. **打包验证**(此前最担心 asar 内 worker 路径):`electron-builder --win dir` 后 asar 内可见 `out\main\embedder-worker-*.js`,打包版跑 `--reindex` 强制重嵌 5 条会话 → `embedded: 5`,无 worker 报错
+
+**副作用/注意:**
+- 语义查询现在多一次 postMessage 往返(可忽略);向量以 number[][] 结构化克隆,单条 512 维
+- worker 崩溃不会拖垮主进程:在途请求 reject → 上层 catch 后降级 FTS(铁律 3 的降级路径照旧)
+- 首次 embed 仍要下模型(~100MB),但现在下载与加载都在 worker,窗口不会僵住
+
+---
+
 ## 2026-11-06 · 性能修复第二批(插件启动后置 / 扫描水位增量 / 渲染层本地化)
 
 接上一条(ingest diff + 启动扫描后置 + 分页 + minify)之后按计划继续:
