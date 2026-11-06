@@ -28,6 +28,10 @@ interface SessionRow {
   title: string | null
   time_created: number
   time_updated: number
+  /** 子会话线索(列是否存在按 store 探测,见 sessionColumns) */
+  parent_id?: string | null
+  task_type?: string | null
+  agent?: string | null
 }
 interface MessageRow {
   id: string
@@ -121,6 +125,41 @@ function detectLayout(db: ReturnType<typeof openForeignDb>['db']): 'legacy' | 'v
 }
 
 /**
+ * 子会话判定所需的列在不同代/不同 fork 里并不一致:
+ *   zcode     : session.parent_id + session.task_type('interactive'|'subagent_child'|'workflow_child'|'selection_side_chat')
+ *   opencode  : session.parent_id (+ agent='explore' 之类)
+ *   session_v2: 可能两者都没有 —— 有就取,没有就当顶层会话
+ * 所以先按 PRAGMA 探测列,再拼 SELECT;表名只可能是上面两个常量。
+ */
+function sessionColumns(
+  db: ReturnType<typeof openForeignDb>['db'],
+  table: 'session' | 'session_v2'
+): Set<string> {
+  try {
+    const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+    return new Set(rows.map((r) => r.name))
+  } catch {
+    return new Set()
+  }
+}
+
+/** 一次 SELECT 的列清单:基础列 + 探测到的子会话线索列 */
+function sessionSelectList(columns: Set<string>): string {
+  const extra: string[] = []
+  if (columns.has('parent_id')) extra.push('parent_id')
+  if (columns.has('task_type')) extra.push('task_type')
+  if (columns.has('agent')) extra.push('agent')
+  return ['id', 'directory', 'title', 'time_created', 'time_updated', ...extra].join(', ')
+}
+
+/** 是否子代理/子任务会话(源库标注,不靠猜标题) */
+function subagentOf(row: SessionRow): boolean {
+  if (typeof row.parent_id === 'string' && row.parent_id.trim() !== '') return true
+  const taskType = typeof row.task_type === 'string' ? row.task_type.trim() : ''
+  return taskType !== '' && taskType !== 'interactive'
+}
+
+/**
  * Parse the whole store (or a single session when onlySessionId is given).
  * Sessions without any parseable turns are skipped.
  *
@@ -146,23 +185,25 @@ export function parseAgentSqliteSessions(
     if (layout === null) return [] // unknown schema — never throw "no such table"
 
     const since = !onlySessionId && opts?.since && opts.since > 0 ? opts.since : null
+    const table = layout === 'legacy' ? 'session' : 'session_v2'
+    const cols = sessionSelectList(sessionColumns(db, table))
     const sessions: SessionRow[] = []
     if (layout === 'legacy') {
       sessions.push(
         ...(onlySessionId
-          ? (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session WHERE id = ?').all(onlySessionId) as SessionRow[])
+          ? (db.prepare(`SELECT ${cols} FROM session WHERE id = ?`).all(onlySessionId) as SessionRow[])
           : since !== null
-            ? (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session WHERE time_updated > ? ORDER BY time_updated').all(since) as SessionRow[])
-            : (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session ORDER BY time_updated').all() as SessionRow[]))
+            ? (db.prepare(`SELECT ${cols} FROM session WHERE time_updated > ? ORDER BY time_updated`).all(since) as SessionRow[])
+            : (db.prepare(`SELECT ${cols} FROM session ORDER BY time_updated`).all() as SessionRow[]))
       )
     } else {
       // session_v2 keeps the legacy column names for id/directory/title/time_*
       sessions.push(
         ...(onlySessionId
-          ? (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session_v2 WHERE id = ?').all(onlySessionId) as SessionRow[])
+          ? (db.prepare(`SELECT ${cols} FROM session_v2 WHERE id = ?`).all(onlySessionId) as SessionRow[])
           : since !== null
-            ? (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session_v2 WHERE time_updated > ? ORDER BY time_updated').all(since) as SessionRow[])
-            : (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session_v2 ORDER BY time_updated').all() as SessionRow[]))
+            ? (db.prepare(`SELECT ${cols} FROM session_v2 WHERE time_updated > ? ORDER BY time_updated`).all(since) as SessionRow[])
+            : (db.prepare(`SELECT ${cols} FROM session_v2 ORDER BY time_updated`).all() as SessionRow[]))
       )
     }
 
@@ -182,6 +223,7 @@ export function parseAgentSqliteSessions(
         messages.push(...messageToRaw(m.data, parts, layout === 'v2' ? m.type : undefined))
       }
       if (messages.length === 0) continue
+      const isSubagent = subagentOf(s)
       out.push({
         externalId: s.id,
         agentType,
@@ -190,7 +232,10 @@ export function parseAgentSqliteSessions(
         endedAt: epoch(s.time_updated) ?? epoch(s.time_created),
         title: s.title ?? undefined,
         messages,
-        rawPath: dbPath
+        rawPath: dbPath,
+        ...(isSubagent
+          ? { isSubagent: true, parentExternalId: typeof s.parent_id === 'string' ? s.parent_id : undefined }
+          : {})
       })
     }
     return out

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { Brain, Settings2, History } from 'lucide-react'
+import { Brain, Settings2, History, Sun, Moon } from 'lucide-react'
 import appIcon from './assets/icon.png'
 import type { SearchHit, SessionSummaryRow } from '../../shared/types'
 import { api, type DigestLatest, type DigestStatusInfo, type Overview, type SessionDetail } from './api'
@@ -202,6 +202,11 @@ function useDragAutoScroll(
 
 export default function App() {
   const [filter, setFilter] = useState<string>('all')
+  // 主题的展示态跟随 <html data-theme>(主进程在 main.tsx 里已落定),
+  // 这里只是为了让按钮图标跟着换
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'
+  )
   const [sessions, setSessions] = useState<SessionSummaryRow[]>([])
   const [selected, setSelected] = useState<SessionDetail | null>(null)
   const [query, setQuery] = useState('')
@@ -226,6 +231,10 @@ export default function App() {
   const [rename, setRename] = useState<{ id: number; value: string } | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const [expandedChains, setExpandedChains] = useState<Set<number>>(new Set())
+  // 子代理会话:默认折叠在父会话下面(它们过去直接把列表挤满 —— 真机 100 条
+  // zcode 里 37 条是子代理),点开才按需拉取,不占列表分页的名额
+  const [expandedSubs, setExpandedSubs] = useState<Set<number>>(new Set())
+  const [subagentRows, setSubagentRows] = useState<Record<number, SessionSummaryRow[]>>({})
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [dropLine, setDropLine] = useState<{ afterId: number; below: boolean } | null>(null)
   /** the scrolling session list — drag auto-scroll needs its DOM node */
@@ -270,6 +279,14 @@ export default function App() {
   const [listLimit, setListLimit] = useState(200)
   // 首帧 sessions 恒为空数组,不加这个标记会把「加载中」渲染成「暂无会话」
   const [listLoaded, setListLoaded] = useState(false)
+
+  // 主进程切换主题后同步按钮图标(实际配色由 main.tsx 的桥接改 data-theme)
+  useEffect(() => {
+    return window.memorysql.on('push:theme', (state) => {
+      const effective = (state as { effective?: unknown } | undefined)?.effective
+      if (effective === 'dark' || effective === 'light') setTheme(effective)
+    })
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -544,6 +561,26 @@ export default function App() {
     return h
   }
 
+  // 子代理会话展开:首次展开才拉取,折叠不重复请求
+  const toggleSubagents = useCallback(
+    (parentId: number): void => {
+      const willOpen = !expandedSubs.has(parentId)
+      setExpandedSubs((prev) => {
+        const next = new Set(prev)
+        if (willOpen) next.add(parentId)
+        else next.delete(parentId)
+        return next
+      })
+      if (willOpen && !subagentRows[parentId]) {
+        void api
+          .subagents(parentId)
+          .then((kids) => setSubagentRows((cur) => ({ ...cur, [parentId]: kids })))
+          .catch((err) => setKbMsg(`子会话加载失败: ${String(err)}`))
+      }
+    },
+    [expandedSubs, subagentRows]
+  )
+
   const sessionRow = (
     s: SessionSummaryRow,
     depth = 0,
@@ -559,7 +596,7 @@ export default function App() {
         key={s.id}
         className={`session ${selectedRow ? 'selected' : ''} ${
           dropHere ? (dropLine?.below ? 'drop-below' : 'drop-above') : ''
-        } ${isDragging ? 'dragging' : ''}`}
+        } ${isDragging ? 'dragging' : ''} ${s.isSubagent ? 'sub' : ''}`}
         data-agent={s.agentType}
         data-id={s.id}
         data-dragging={isDragging ? '1' : '0'}
@@ -764,6 +801,14 @@ export default function App() {
             打开日志目录
           </button>
         )}
+        <button
+          className="btn btn-ghost theme-toggle"
+          title={theme === 'light' ? '切换到深色模式' : '切换到浅色模式'}
+          aria-label={theme === 'light' ? '切换到深色模式' : '切换到浅色模式'}
+          onClick={() => void api.setTheme(theme === 'light' ? 'dark' : 'light')}
+        >
+          {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+        </button>
       </header>
 
       {upBanner && (upBanner.downloaded || upBanner.available) && (
@@ -1057,6 +1102,41 @@ export default function App() {
                           dropLine
                         )
                       )
+                      // 子代理会话折叠在父会话下面 —— 默认不占列表位置
+                      const subCount = e.r.subagentCount ?? 0
+                      if (subCount > 0) {
+                        const subOpen = expandedSubs.has(e.r.id)
+                        body.push(
+                          <button
+                            key={`${e.r.id}-subs`}
+                            className="relay-fold subs"
+                            style={{ marginLeft: 14 + (e.depth + 1) * 16 }}
+                            title="这些是子代理/子任务会话(由源库 parent/task_type 标注),默认折叠以免挤占列表"
+                            onClick={() => toggleSubagents(e.r.id)}
+                          >
+                            {subOpen
+                              ? `↑ 收起 ${subCount} 个子代理会话`
+                              : `↳ ${subCount} 个子代理会话 — 展开`}
+                          </button>
+                        )
+                        if (subOpen) {
+                          for (const c of subagentRows[e.r.id] ?? []) {
+                            body.push(
+                              sessionRow(
+                                c,
+                                e.depth + 1,
+                                {
+                                  ordered: entries.filter((x) => x.kind === 'row').map((x) => x.r),
+                                  projectId: rows[0]?.projectId ?? -1,
+                                  stagger: 0
+                                },
+                                draggingId,
+                                dropLine
+                              )
+                            )
+                          }
+                        }
+                      }
                     }
                     // 项目滚动总结徽标(总开关开启才渲染;未分配项目组无 projectId 不参与)
                     const dPid = rows[0]?.projectId ?? null
@@ -1206,6 +1286,11 @@ export default function App() {
                     <AgentBadge type={selected.session.agent_type} />
                     {selected.session.title ?? selected.session.external_id}
                     <span className="tape-id">{selected.session.external_id}</span>
+                    {selected.session.is_subagent ? (
+                      <span className="subagent-tag" title="该会话由父会话派生的子代理/子任务产生">
+                        子代理
+                      </span>
+                    ) : null}
                   </div>
                   <div className="detail-meta">
                     <button

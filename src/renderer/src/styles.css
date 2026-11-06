@@ -1,6 +1,8 @@
 /* ============================================================
-   MemorySQL — Obsidian Glass Console
-   深色液态玻璃 · 紧凑密度 · token 驱动(styles/tokens.css)
+   MemorySQL — Glass Console
+   深/浅双主题 · 紧凑密度 · token 驱动(styles/tokens.css)
+   规则:这里不写死颜色,一律走 token 或 color-mix(fg/accent),
+   否则浅色主题会漏掉那一处。
    ============================================================ */
 @import './styles/tokens.css';
 
@@ -16,13 +18,17 @@ body {
   overflow: hidden;
 }
 
+/* 主题落定前不要用默认深色铺底 —— 窗口的 backgroundColor 已按主题设好,
+   这样浅色用户不会先看到一帧深色(main.tsx 在 render 之前就写上 data-theme) */
+html:not([data-theme]) body { background: transparent; }
+
 /* ---------- 漂移极光:玻璃层需要有色彩可模糊 ---------- */
 .aurora {
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background:
-    radial-gradient(720px 480px at 12% 8%, rgba(79, 140, 255, 0.16), transparent 60%),
-    radial-gradient(640px 520px at 88% 92%, rgba(167, 139, 250, 0.12), transparent 62%),
-    radial-gradient(520px 380px at 80% 12%, rgba(34, 197, 94, 0.06), transparent 60%);
+    radial-gradient(720px 480px at 12% 8%, var(--msql-aurora-1), transparent 60%),
+    radial-gradient(640px 520px at 88% 92%, var(--msql-aurora-2), transparent 62%),
+    radial-gradient(520px 380px at 80% 12%, var(--msql-aurora-3), transparent 60%);
   filter: blur(4px);
   animation: aurora-drift 46s ease-in-out infinite alternate;
 }
@@ -64,13 +70,13 @@ body {
   width: 38px; height: 38px; border-radius: var(--msql-radius-md); border: none;
   display: grid; place-items: center; cursor: pointer;
   color: var(--msql-fg-dim); background: transparent;
-  transition: color var(--msql-t-medium) var(--msql-ease), background var(--msql-t-medium) var(--msql-ease), box-shadow var(--msql-t-medium) var(--msql-ease), transform 160ms ease-out;
+  transition: color var(--msql-t-med) var(--msql-ease), background var(--msql-t-med) var(--msql-ease), box-shadow var(--msql-t-med) var(--msql-ease), transform 160ms ease-out;
 }
 /* 只剩「会话 / 记忆」两个入口:两个 tag 各占导航列的一半,图标在各自半区居中 */
 .rail-btn-fill {
   flex: 1 1 0; min-height: 0; align-content: center; padding: 0;
 }
-.rail-btn:hover { color: var(--msql-fg); background: rgba(255, 255, 255, 0.06); }
+.rail-btn:hover { color: var(--msql-fg); background: var(--msql-hover); }
 .rail-btn.active {
   color: var(--msql-accent); background: var(--msql-accent-soft);
   box-shadow: 0 0 0 1px var(--msql-glass-border-strong), 0 0 18px var(--msql-accent-glow);
@@ -90,10 +96,11 @@ body {
 .brand-mark { color: var(--msql-accent); }
 .search {
   flex: 1; max-width: 560px; padding: 7px 14px; font-size: var(--msql-fs-md);
-  color: var(--msql-fg); background: rgba(0, 0, 0, 0.3);
+  color: var(--msql-fg); background: var(--msql-input-bg);
   border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md); outline: none;
   transition: border-color var(--msql-t-med), box-shadow var(--msql-t-med);
 }
+.search::placeholder { color: var(--msql-fg-dim); }
 .search:focus { border-color: var(--msql-accent); box-shadow: 0 0 0 3px var(--msql-accent-soft); }
 
 /* ---------- sidebar (context column) ---------- */
@@ -117,18 +124,18 @@ body {
   font-size: var(--msql-fs-md); cursor: pointer; text-align: left;
   transition: all var(--msql-t-fast) var(--msql-ease);
 }
-.side-item:hover { color: var(--msql-fg); background: rgba(255, 255, 255, 0.05); }
+.side-item:hover { color: var(--msql-fg); background: var(--msql-hover); }
 .side-item.active { color: var(--msql-fg); background: var(--msql-accent-soft); }
 .side-item .count { font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); font-family: var(--msql-font-mono); }
 .capture-status { display: flex; gap: 8px; padding: 4px 6px; align-items: flex-start; }
 .capture-name { font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); }
 .capture-detail { font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); }
 .dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
-.dot.ok { background: var(--msql-success); box-shadow: 0 0 6px rgba(34, 197, 94, 0.5); }
+.dot.ok { background: var(--msql-success); box-shadow: 0 0 6px color-mix(in srgb, var(--msql-success) 50%, transparent); }
 .dot.err { background: var(--msql-danger); }
 .kb-stat { font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); padding: 2px 6px; }
 .kb-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
-.kb-msg { font-size: var(--msql-fs-sm); color: var(--msql-accent); padding: 8px 6px 0; white-space: pre-wrap; }
+.kb-msg { font-size: var(--msql-fs-sm); color: var(--msql-accent-fg-dim); padding: 8px 6px 0; white-space: pre-wrap; }
 
 /* ---------- main panes ---------- */
 .main, .list-pane, .detail-pane, .memories-pane, .settings-pane {
@@ -147,24 +154,26 @@ body {
   display: flex; align-items: center; flex-shrink: 0; font-family: var(--msql-font-mono);
   flex-wrap: wrap; gap: 4px;
 }
-.pane-msg { font-weight: 400; color: var(--msql-accent); font-family: var(--msql-font-body); }
+.pane-msg { font-weight: 400; color: var(--msql-accent-fg-dim); font-family: var(--msql-font-body); }
 
 /* ---------- buttons / chips / fields ---------- */
 .btn {
   padding: 6px 14px; border-radius: var(--msql-radius-sm); font-size: var(--msql-fs-md);
   border: 1px solid var(--msql-glass-border-strong); cursor: pointer;
-  color: var(--msql-fg); background: rgba(255, 255, 255, 0.05);
+  color: var(--msql-fg); background: var(--msql-surface-subtle);
   transition: all var(--msql-t-fast) var(--msql-ease); white-space: nowrap;
 }
-.btn:hover { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.2); }
+.btn:hover { background: var(--msql-hover-strong); border-color: var(--msql-glass-border-strong); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn-accent {
-  background: var(--msql-accent-soft); border-color: rgba(79, 140, 255, 0.4); color: #bcd4ff;
+  background: var(--msql-accent-soft);
+  border-color: color-mix(in srgb, var(--msql-accent) 40%, transparent);
+  color: var(--msql-accent-fg);
 }
-.btn-accent:hover { background: rgba(79, 140, 255, 0.22); box-shadow: 0 0 14px var(--msql-accent-glow); }
+.btn-accent:hover { background: color-mix(in srgb, var(--msql-accent) 22%, transparent); box-shadow: 0 0 14px var(--msql-accent-glow); }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--msql-fg-muted); }
 .btn-small { padding: 3px 10px; font-size: var(--msql-fs-sm); }
-.link { background: none; border: none; color: var(--msql-accent); cursor: pointer; font-size: var(--msql-fs-sm); padding: 0; }
+.link { background: none; border: none; color: var(--msql-accent-fg-dim); cursor: pointer; font-size: var(--msql-fs-sm); padding: 0; }
 .link:hover { text-decoration: underline; }
 .link.danger { color: var(--msql-danger); }
 
@@ -174,13 +183,17 @@ body {
   transition: all var(--msql-t-fast) var(--msql-ease);
 }
 .chip:hover { color: var(--msql-fg); border-color: var(--msql-glass-border-strong); }
-.chip-active { background: var(--msql-accent-soft); border-color: rgba(79, 140, 255, 0.45); color: #bcd4ff; }
+.chip-active {
+  background: var(--msql-accent-soft);
+  border-color: color-mix(in srgb, var(--msql-accent) 45%, transparent);
+  color: var(--msql-accent-fg);
+}
 
 .field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
 .field > span { font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); }
 .field input, .field select, .field textarea, input.grow, input.grow-sm {
   padding: 6px 10px; border-radius: var(--msql-radius-sm); font-size: var(--msql-fs-md);
-  border: 1px solid var(--msql-glass-border); background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--msql-glass-border); background: var(--msql-input-bg-soft);
   color: var(--msql-fg); outline: none; font-family: inherit;
   transition: border-color var(--msql-t-med), box-shadow var(--msql-t-med);
 }
@@ -199,14 +212,18 @@ body {
 .switch input { opacity: 0; width: 0; height: 0; }
 .slider {
   position: absolute; inset: 0; border-radius: 999px; cursor: pointer;
-  background: rgba(255, 255, 255, 0.12); border: 1px solid var(--msql-glass-border);
+  background: color-mix(in srgb, var(--msql-fg) 12%, transparent);
+  border: 1px solid var(--msql-glass-border);
   transition: background var(--msql-t-med);
 }
 .slider::before {
   content: ''; position: absolute; width: 13px; height: 13px; left: 2px; top: 2px;
   border-radius: 50%; background: var(--msql-fg-muted); transition: transform var(--msql-t-med) var(--msql-ease);
 }
-.switch input:checked + .slider { background: var(--msql-accent-soft); border-color: rgba(79, 140, 255, 0.5); }
+.switch input:checked + .slider {
+  background: var(--msql-accent-soft);
+  border-color: color-mix(in srgb, var(--msql-accent) 50%, transparent);
+}
 .switch input:checked + .slider::before { transform: translateX(15px); background: var(--msql-accent); }
 
 /* ---------- session list ---------- */
@@ -215,7 +232,7 @@ body {
   padding: 8px 14px; cursor: pointer; border-left: 2px solid transparent;
   transition: background var(--msql-t-fast) var(--msql-ease), border-color var(--msql-t-fast);
 }
-.session:hover { background: rgba(255, 255, 255, 0.045); border-left-color: var(--msql-accent); }
+.session:hover { background: var(--msql-surface-faint); border-left-color: var(--msql-accent); }
 .session-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .session-title { font-size: var(--msql-fs-md); color: var(--msql-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; display: flex; gap: 6px; align-items: center; }
 .sess-id { font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); flex-shrink: 0; }
@@ -233,20 +250,20 @@ body {
   padding: 10px 14px; font-size: var(--msql-fs-md); font-weight: 700;
   display: flex; align-items: center; gap: 8px; letter-spacing: 0.05em;
   font-family: var(--msql-font-mono); position: sticky; top: 0; z-index: 2;
-  color: hsl(var(--ph, 215) var(--ps, 55%) 72%);
+  color: hsl(var(--ph, 215) var(--ps, 55%) var(--msql-group-fg-l));
   background: linear-gradient(
     to right,
-    hsl(var(--ph, 215) var(--ps, 55%) 26% / 0.72),
-    hsl(var(--ph, 215) var(--ps, 55%) 18% / 0.38)
+    hsl(var(--ph, 215) var(--ps, 55%) var(--msql-group-bg-1-l) / 0.72),
+    hsl(var(--ph, 215) var(--ps, 55%) var(--msql-group-bg-2-l) / 0.38)
   );
-  border-left: 3px solid hsl(var(--ph, 215) var(--ps, 55%) 55%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  border-left: 3px solid hsl(var(--ph, 215) var(--ps, 55%) var(--msql-group-border-l));
+  box-shadow: inset 0 1px 0 var(--msql-glass-border);
   backdrop-filter: blur(var(--msql-blur));
 }
 .group-count {
   font-size: var(--msql-fs-xs); font-weight: 400;
-  color: hsl(var(--ph, 215) var(--ps, 55%) 68%);
-  background: hsl(var(--ph, 215) var(--ps, 55%) 30% / 0.5);
+  color: hsl(var(--ph, 215) var(--ps, 55%) var(--msql-group-count-fg-l));
+  background: hsl(var(--ph, 215) var(--ps, 55%) var(--msql-group-count-bg-l) / 0.5);
   border-radius: 999px; padding: 0 8px; line-height: 18px;
 }
 .group-subhead { padding: 6px 14px 2px; font-size: 11px; color: var(--msql-fg-dim); display: flex; gap: 6px; align-items: center; }
@@ -257,18 +274,19 @@ body {
   border-radius: 999px; padding: 0 8px; line-height: 18px; cursor: pointer;
   border: 1px solid transparent; transition: background var(--msql-t-fast), border-color var(--msql-t-fast);
 }
-.digest-badge.dim { color: var(--msql-fg-dim); background: rgba(255, 255, 255, 0.06); }
-.digest-badge.ok { color: #8fd6a8; background: rgba(90, 200, 130, 0.12); }
-.digest-badge.running { color: #e8c97a; background: rgba(230, 190, 90, 0.12); }
+.digest-badge.dim { color: var(--msql-fg-dim); background: color-mix(in srgb, var(--msql-fg) 6%, transparent); }
+.digest-badge.ok { color: var(--msql-success-fg); background: color-mix(in srgb, var(--msql-success) 14%, transparent); }
+.digest-badge.running { color: var(--msql-warning-fg); background: color-mix(in srgb, var(--msql-warning) 14%, transparent); }
 .digest-badge.running::before { content: '↻'; display: inline-block; margin-right: 3px; animation: msql-spin 1.1s linear infinite; }
 @keyframes msql-spin { to { transform: rotate(360deg); } }
-.digest-badge:hover { border-color: rgba(255, 255, 255, 0.22); }
+.digest-badge:hover { border-color: var(--msql-glass-border-strong); }
 .digest-now { margin-left: 2px; opacity: 0; transition: opacity var(--msql-t-fast); }
 .group-head:hover .digest-now { opacity: 1; }
 .digest-card {
   margin: 4px 14px 8px; padding: 10px 14px;
   background: var(--msql-glass);
   border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md);
+  box-shadow: var(--msql-card-shadow);
 }
 .digest-card-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
 .digest-summary { white-space: pre-wrap; font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); margin: 4px 0 8px; }
@@ -281,13 +299,13 @@ body {
 .digest-decisions { display: flex; flex-direction: column; gap: 3px; font-size: var(--msql-fs-sm); color: var(--msql-fg-dim); }
 
 /* ---------- 插件分组折叠 ---------- */
-.plugin-group { margin-bottom: 6px; border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md); overflow: hidden; }
+.plugin-group { margin-bottom: 6px; border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md); overflow: hidden; box-shadow: var(--msql-card-shadow); }
 .plugin-group-head {
   width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.04); border: none; color: var(--msql-fg);
+  background: var(--msql-surface-subtle); border: none; color: var(--msql-fg);
   font-size: var(--msql-fs-md); cursor: pointer; text-align: left;
 }
-.plugin-group-head:hover { background: rgba(255, 255, 255, 0.07); }
+.plugin-group-head:hover { background: var(--msql-hover); }
 .plugin-group-label { font-weight: 600; flex: 1; }
 .plugin-group .plugin-row { padding: 6px 12px; border-top: 1px solid var(--msql-glass-border); }
 .chev { display: inline-block; transition: transform var(--msql-t-fast); color: var(--msql-fg-dim); }
@@ -296,9 +314,9 @@ body {
 /* ---------- 会话侧栏:0 会话的 agent 弱化 ---------- */
 .side-item.dim, .capture-status.dim { opacity: .45; }
 
-/* ---------- 表单控件:暗色主题下的 select(默认白底非常刺眼) ---------- */
+/* ---------- 表单控件:原生 select(默认白底在深色下刺眼) ---------- */
 select {
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--msql-input-bg-strong);
   color: var(--msql-fg);
   border: 1px solid var(--msql-glass-border);
   border-radius: var(--msql-radius-sm);
@@ -306,7 +324,7 @@ select {
   font: inherit;
 }
 select:focus { outline: none; border-color: var(--msql-accent); }
-select option { background: #141a24; color: var(--msql-fg); }
+select option { background: var(--msql-bg-solid); color: var(--msql-fg); }
 
 /* ---------- 「项目总结」弹窗 ---------- */
 .digest-modal-body { display: flex; gap: 12px; min-height: 300px; max-height: 60vh; margin-top: 8px; }
@@ -317,35 +335,55 @@ select option { background: #141a24; color: var(--msql-fg); }
 
 /* ---------- 会话列表:项目组折叠 ---------- */
 .group-head { cursor: pointer; }
-.group-head .chev { color: hsl(var(--ph, 215) var(--ps, 55%) 68%); }
+.group-head .chev { color: hsl(var(--ph, 215) var(--ps, 55%) var(--msql-group-count-fg-l)); }
 
 .relay-fold {
   margin: 4px 14px; padding: 6px 12px; text-align: left; width: calc(100% - 28px);
-  background: var(--msql-accent-soft); border: 1px dashed rgba(79, 140, 255, 0.3);
-  border-radius: var(--msql-radius-sm); color: #7fa8e0; font-size: var(--msql-fs-sm); cursor: pointer;
+  background: var(--msql-accent-soft);
+  border: 1px dashed color-mix(in srgb, var(--msql-accent) 30%, transparent);
+  border-radius: var(--msql-radius-sm); color: var(--msql-accent-fg-dim); font-size: var(--msql-fs-sm); cursor: pointer;
   transition: background var(--msql-t-fast);
 }
-.relay-fold:hover { background: rgba(79, 140, 255, 0.14); }
-.relay-tag { color: #7fa8e0; }
+.relay-fold:hover { background: color-mix(in srgb, var(--msql-accent) 14%, transparent); }
+/* 子代理会话折叠条:与「续接会话」区分色(紫色系),同样是折叠而不是隐藏 */
+.relay-fold.subs {
+  background: color-mix(in srgb, var(--msql-agent-hermes) 8%, transparent);
+  border-color: color-mix(in srgb, var(--msql-agent-hermes) 26%, transparent);
+  color: var(--msql-fg-muted);
+}
+.relay-fold.subs:hover { background: color-mix(in srgb, var(--msql-agent-hermes) 15%, transparent); }
+/* 子代理会话行:展开后要一眼看出「这是父会话的内部过程」,不是并列的另一件事 */
+.session.sub {
+  border-left-color: color-mix(in srgb, var(--msql-agent-hermes) 40%, transparent);
+  background: color-mix(in srgb, var(--msql-agent-hermes) 4%, transparent);
+}
+.session.sub .session-title { color: var(--msql-fg-muted); font-weight: 400; }
+.relay-tag { color: var(--msql-accent-fg-dim); }
 .session .mem-actions { margin-left: auto; opacity: 0; transition: opacity var(--msql-t-fast); display: inline-flex; gap: 8px; }
 .session:hover .mem-actions { opacity: 1; }
-.session-title input { min-width: 180px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--msql-glass-border); color: var(--msql-fg); border-radius: var(--msql-radius-sm); padding: 2px 6px; }
+.session-title input { min-width: 180px; background: var(--msql-input-bg); border: 1px solid var(--msql-glass-border); color: var(--msql-fg); border-radius: var(--msql-radius-sm); padding: 2px 6px; }
 
 /* ---------- detail ---------- */
 .detail-head { margin-bottom: var(--msql-sp-3); }
 .detail-title { font-size: var(--msql-fs-xl); font-weight: 600; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .tape-id { font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); font-weight: 400; }
+.subagent-tag {
+  font-size: var(--msql-fs-xs); font-weight: 400; padding: 0 8px; line-height: 18px;
+  border-radius: 999px; color: var(--msql-agent-hermes);
+  background: color-mix(in srgb, var(--msql-agent-hermes) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--msql-agent-hermes) 32%, transparent);
+}
 .detail-meta { display: flex; gap: 12px; margin-top: 6px; font-size: var(--msql-fs-sm); color: var(--msql-fg-dim); flex-wrap: wrap; align-items: center; }
 .detail-summary { font-size: var(--msql-fs-md); color: var(--msql-fg-muted); margin: 8px 0; line-height: 1.6; }
 .copyable { cursor: pointer; }
-.copyable:hover { color: var(--msql-accent); }
+.copyable:hover { color: var(--msql-accent-fg-dim); }
 .messages { display: flex; flex-direction: column; gap: var(--msql-sp-3); }
 .load-earlier { align-self: center; color: var(--msql-fg-dim); }
-.load-earlier:hover { color: var(--msql-accent); }
-.msg { border-radius: var(--msql-radius-md); padding: var(--msql-sp-3); border: 1px solid var(--msql-glass-border); background: var(--msql-glass-soft); }
+.load-earlier:hover { color: var(--msql-accent-fg-dim); }
+.msg { border-radius: var(--msql-radius-md); padding: var(--msql-sp-3); border: 1px solid var(--msql-glass-border); background: var(--msql-glass-soft); box-shadow: var(--msql-card-shadow); }
 .msg-user { border-left: 2px solid var(--msql-accent); }
 .msg-assistant { border-left: 2px solid var(--msql-success); }
-.msg-tool { border-left: 2px solid var(--msql-warning); background: rgba(0, 0, 0, 0.2); }
+.msg-tool { border-left: 2px solid var(--msql-warning); background: var(--msql-tool-bg); }
 .msg-role { font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); margin-bottom: 6px; }
 .msg-ts { margin-left: 8px; }
 .msg-content { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: var(--msql-fs-md); line-height: 1.65; font-family: inherit; }
@@ -355,12 +393,12 @@ select option { background: #141a24; color: var(--msql-fg); }
   font-family: var(--msql-font-mono); font-size: 11px; padding: 1px 7px; border-radius: 999px;
   border: 1px solid; flex-shrink: 0; letter-spacing: 0.02em;
 }
-.badge-codex { color: var(--msql-agent-codex); border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.08); }
-.badge-zcode { color: #7fa8e0; border-color: rgba(79, 140, 255, 0.4); background: rgba(79, 140, 255, 0.08); }
-.badge-hermes { color: var(--msql-agent-hermes); border-color: rgba(167, 139, 250, 0.4); background: rgba(167, 139, 250, 0.08); }
+.badge-codex { color: var(--msql-agent-codex); border-color: color-mix(in srgb, var(--msql-agent-codex) 40%, transparent); background: color-mix(in srgb, var(--msql-agent-codex) 8%, transparent); }
+.badge-zcode { color: var(--msql-agent-zcode); border-color: color-mix(in srgb, var(--msql-agent-zcode) 40%, transparent); background: color-mix(in srgb, var(--msql-agent-zcode) 8%, transparent); }
+.badge-hermes { color: var(--msql-agent-hermes); border-color: color-mix(in srgb, var(--msql-agent-hermes) 40%, transparent); background: color-mix(in srgb, var(--msql-agent-hermes) 8%, transparent); }
 .badge-cursor, .badge-gemini, .badge-claudecode, .badge-opencode,
 .badge-qwencode, .badge-kimicli, .badge-codebuddy, .badge-workbuddy, .badge-qoder,
-.badge-dsh { color: var(--msql-fg-muted); border-color: var(--msql-glass-border-strong); background: rgba(255, 255, 255, 0.04); }
+.badge-dsh { color: var(--msql-fg-muted); border-color: var(--msql-glass-border-strong); background: var(--msql-surface-subtle); }
 
 /* ---------- search hits ---------- */
 .hit {
@@ -368,7 +406,7 @@ select option { background: #141a24; color: var(--msql-fg); }
   background: transparent; border: none; border-left: 2px solid transparent; color: var(--msql-fg);
   transition: background var(--msql-t-fast), border-color var(--msql-t-fast);
 }
-.hit:hover { background: rgba(255, 255, 255, 0.045); border-left-color: var(--msql-accent); }
+.hit:hover { background: var(--msql-surface-faint); border-left-color: var(--msql-accent); }
 .hit-head { display: flex; gap: 7px; align-items: center; }
 .hit-kind { font-family: var(--msql-font-mono); font-size: 11px; color: var(--msql-fg-dim); }
 .hit-title { font-size: var(--msql-fs-md); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -378,13 +416,13 @@ select option { background: #141a24; color: var(--msql-fg); }
 .memories-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
 .mem-edit { margin: 0 18px 12px; padding: var(--msql-sp-3); border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md); background: var(--msql-glass-soft); display: flex; flex-direction: column; gap: 8px; }
 .mem-edit select, .mem-edit textarea {
-  padding: 6px 10px; border-radius: var(--msql-radius-sm); background: rgba(0, 0, 0, 0.28);
+  padding: 6px 10px; border-radius: var(--msql-radius-sm); background: var(--msql-input-bg-soft);
   border: 1px solid var(--msql-glass-border); color: var(--msql-fg); font-family: inherit; font-size: var(--msql-fs-md);
 }
 .mem-edit-actions { display: flex; gap: 8px; align-items: center; }
 .mem-list { padding: 0 18px var(--msql-sp-5); }
 .mem-group { font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); margin: 14px 0 6px; letter-spacing: 0.06em; }
-.mem-row { padding: 10px 12px; margin-bottom: 8px; border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md); background: var(--msql-glass-soft); }
+.mem-row { padding: 10px 12px; margin-bottom: 8px; border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md); background: var(--msql-glass-soft); box-shadow: var(--msql-card-shadow); }
 .mem-retired { opacity: 0.5; }
 .mem-content { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: var(--msql-fs-md); line-height: 1.6; font-family: inherit; color: var(--msql-fg); }
 .mem-meta { display: flex; gap: 10px; margin-top: 8px; font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); align-items: center; flex-wrap: wrap; }
@@ -403,10 +441,10 @@ section h3 { font-size: var(--msql-fs-lg); margin: 0 0 4px; font-weight: 600; }
 .plugin-desc { font-size: var(--msql-fs-sm); color: var(--msql-fg-dim); padding-left: 46px; margin-top: 3px; }
 .release-item { padding: 10px 0; border-bottom: 1px solid var(--msql-glass-border); }
 .release-notes { margin: 6px 0 0; white-space: pre-wrap; font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); font-family: inherit; max-height: 200px; overflow-y: auto; line-height: 1.6; }
-.devlog-note { font-size: var(--msql-fs-sm); color: var(--msql-accent); white-space: nowrap; }
+.devlog-note { font-size: var(--msql-fs-sm); color: var(--msql-accent-fg-dim); white-space: nowrap; }
 
 /* updater download progress (banner + settings page) */
-.update-progress { position: relative; height: 6px; min-width: 160px; flex: 1; max-width: 280px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.update-progress { position: relative; height: 6px; min-width: 160px; flex: 1; max-width: 280px; border-radius: 3px; background: color-mix(in srgb, var(--msql-fg) 10%, transparent); overflow: hidden; }
 .update-progress-fill { position: absolute; top: 0; bottom: 0; left: 0; background: var(--msql-accent); border-radius: 3px; transition: width 240ms var(--msql-ease); }
 
 /* startup update banner (push:update-status) */
@@ -417,14 +455,14 @@ section h3 { font-size: var(--msql-fs-lg); margin: 0 0 4px; font-weight: 600; }
   gap: 6px;
   padding: 6px 14px;
   font-size: var(--msql-fs-sm);
-  color: var(--msql-accent);
+  color: var(--msql-accent-fg);
   background: color-mix(in srgb, var(--msql-accent) 12%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--msql-accent) 28%, transparent);
 }
 
 /* agent capture rows */
 .agent-capture { display: flex; flex-direction: column; }
-.agent-row { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.04); align-items: flex-start; }
+.agent-row { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--msql-border-faint); align-items: flex-start; }
 .agent-off { opacity: 0.5; }
 .agent-main { flex: 1; min-width: 0; }
 .agent-name { display: flex; gap: 8px; align-items: center; font-size: var(--msql-fs-md); }
@@ -440,16 +478,16 @@ section h3 { font-size: var(--msql-fs-lg); margin: 0 0 4px; font-weight: 600; }
 .spotlight { display: flex; flex-direction: column; height: 100vh; background: var(--msql-bg); position: relative; z-index: 1; }
 .spotlight::before {
   content: ''; position: fixed; inset: 0; pointer-events: none;
-  background: radial-gradient(600px 400px at 50% -5%, rgba(79, 140, 255, 0.14), transparent 60%);
+  background: radial-gradient(600px 400px at 50% -5%, var(--msql-aurora-spot), transparent 60%);
 }
 .spotlight-input {
   margin: 14px 16px 10px; padding: 11px 14px; font-size: var(--msql-fs-lg); color: var(--msql-fg);
   background: var(--msql-glass); backdrop-filter: blur(var(--msql-blur));
   border: 1px solid var(--msql-glass-border-strong); border-radius: var(--msql-radius-lg); outline: none;
-  box-shadow: var(--msql-glass-highlight), 0 8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--msql-glass-highlight), var(--msql-shadow-float);
   transition: border-color var(--msql-t-med), box-shadow var(--msql-t-med);
 }
-.spotlight-input:focus { border-color: var(--msql-accent); box-shadow: 0 0 0 3px var(--msql-accent-soft), 0 8px 32px rgba(0, 0, 0, 0.4); }
+.spotlight-input:focus { border-color: var(--msql-accent); box-shadow: 0 0 0 3px var(--msql-accent-soft), var(--msql-shadow-float); }
 .spotlight-list { flex: 1; overflow-y: auto; padding: 0 10px 12px; }
 .spotlight-hit {
   display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
@@ -464,18 +502,18 @@ section h3 { font-size: var(--msql-fs-lg); margin: 0 0 4px; font-weight: 600; }
 
 /* ---------- scrollbars ---------- */
 /* 12px 轨道 + 2px 内缩 = 8px 可见滑块(旧版 9px 轨道配 2px border 只剩 5px,
-   太细抓不住)。hover/active 明显提亮,深色玻璃面上要有足够对比度。 */
+   太细抓不住)。hover/active 明显提亮,玻璃面上要有足够对比度。 */
 ::-webkit-scrollbar { width: 12px; height: 12px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--msql-scroll-thumb);
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: padding-box;
   transition: background var(--msql-t-fast) var(--msql-ease);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.34);
+  background: var(--msql-scroll-thumb-hover);
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:active {
@@ -507,13 +545,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .mem-main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
 .group-head.drop-target {
   background: var(--msql-accent-soft);
-  outline: 1px dashed rgba(79, 140, 255, 0.6); outline-offset: -2px;
-  color: #bcd4ff;
+  outline: 1px dashed color-mix(in srgb, var(--msql-accent) 60%, transparent); outline-offset: -2px;
+  color: var(--msql-accent-fg);
 }
 .session .mem-actions { opacity: 0.55; }
 .session:hover .mem-actions { opacity: 1; }
 .modal-overlay {
-  position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.5);
+  position: fixed; inset: 0; z-index: 50; background: var(--msql-overlay);
   display: grid; place-items: center;
 }
 .modal {
@@ -521,7 +559,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   padding: var(--msql-sp-4); border-radius: var(--msql-radius-lg);
   background: var(--msql-glass-strong); backdrop-filter: blur(var(--msql-blur-strong)) saturate(1.4);
   border: 1px solid var(--msql-glass-border-strong);
-  box-shadow: var(--msql-glass-highlight), 0 24px 64px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--msql-glass-highlight), var(--msql-shadow-pop);
 }
 .modal-title { font-weight: 600; font-size: var(--msql-fs-md); }
 .modal-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
@@ -535,12 +573,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .modal-wide { width: min(680px, 92vw); max-height: 82vh; }
 .import-input {
   padding: 6px 10px; border-radius: var(--msql-radius-sm); border: 1px solid var(--msql-glass-border-strong);
-  background: rgba(255, 255, 255, 0.05); color: var(--msql-fg); font-size: var(--msql-fs-md);
+  background: var(--msql-surface-subtle); color: var(--msql-fg); font-size: var(--msql-fs-md);
 }
 .import-textarea {
   flex: 1; min-height: 240px; resize: vertical; padding: 10px 12px;
   border-radius: var(--msql-radius-sm); border: 1px solid var(--msql-glass-border-strong);
-  background: rgba(255, 255, 255, 0.05); color: var(--msql-fg);
+  background: var(--msql-surface-subtle); color: var(--msql-fg);
   font-family: var(--msql-font-mono); font-size: var(--msql-fs-sm); line-height: 1.5;
 }
 .import-input:focus, .import-textarea:focus { outline: none; border-color: var(--msql-accent); }
@@ -549,13 +587,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .session.selected {
   background: var(--msql-accent-soft);
   border-left: 3px solid var(--msql-accent);
-  box-shadow: inset 0 0 0 1px rgba(79, 140, 255, 0.35), 0 0 20px rgba(79, 140, 255, 0.15);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--msql-accent) 35%, transparent), 0 0 20px color-mix(in srgb, var(--msql-accent) 15%, transparent);
 }
-.session.selected .session-title { color: #d5e4ff; }
-
-
-/* ---------- drag yield (FLIP) ---------- */
-
+.session.selected .session-title { color: var(--msql-accent-fg-strong); }
 
 /* ---------- settings sidebar column (flush against the rail) ---------- */
 .settings-sidebar {
@@ -634,17 +668,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .rail-brand .brand-icon { width: 28px; height: 28px; border-radius: 8px; }
 .mcp-guide {
   margin: 8px 0 4px; padding: 12px 14px; border-radius: var(--msql-radius-md);
-  background: rgba(79, 140, 255, 0.06); border: 1px solid rgba(79, 140, 255, 0.18);
+  background: color-mix(in srgb, var(--msql-accent) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--msql-accent) 18%, transparent);
   font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); line-height: 1.7;
 }
-.mcp-guide .guide-title { font-weight: 600; color: #bcd4ff; margin-bottom: 4px; }
+.mcp-guide .guide-title { font-weight: 600; color: var(--msql-accent-fg); margin-bottom: 4px; }
 .mcp-guide ol { margin: 4px 0 0; padding-left: 18px; }
 .mcp-guide code {
   font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs);
-  background: rgba(0, 0, 0, 0.3); padding: 1px 5px; border-radius: 4px; color: #bcd4ff;
+  background: var(--msql-input-bg); padding: 1px 5px; border-radius: 4px; color: var(--msql-accent-fg);
 }
 .agent-pending { opacity: 0.75; }
-.agent-pending .switch .slider { outline: 1px dashed rgba(79, 140, 255, 0.45); outline-offset: 2px; }
+.agent-pending .switch .slider { outline: 1px dashed color-mix(in srgb, var(--msql-accent) 45%, transparent); outline-offset: 2px; }
 
 /* ---------- integrated title bar ---------- */
 .topbar { -webkit-app-region: drag; }
@@ -653,9 +688,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .topbar .brand-icon { -webkit-app-region: no-drag; }
 .brand { display: flex; align-items: center; gap: 8px; }
 
-/* ---------- settings sidebar title centered ---------- */
-
-/* TEMP DIAGNOSTIC 2 */
-.settings-pane { outline: 2px solid yellow; padding: 0 !important; }
-.settings-sidebar { margin: 0 !important; padding: 0 !important; }
-.body { padding: 0 !important; margin: 0 !important; }
+/* ---------- 顶栏主题切换(图标按钮) ---------- */
+.theme-toggle {
+  padding: 6px; margin-left: 2px; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--msql-fg-muted); flex-shrink: 0;
+}
+.theme-toggle:hover { color: var(--msql-fg); }

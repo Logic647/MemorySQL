@@ -81,6 +81,9 @@ const plugin: MemorySQLPlugin = {
              (SELECT m.content FROM session_messages m WHERE m.session_id = s.id AND m.role = 'assistant' ORDER BY m.seq DESC LIMIT 1) AS lastAssistant
       FROM sessions s
       WHERE s.deleted = 0 AND s.project_id = ?
+        -- 子代理会话不进总结素材:它们是父会话的内部过程,数量和体量都会
+        -- 把真正的项目进展挤掉(真机 100 条 zcode 里 37 条是子代理)
+        AND s.is_subagent = 0
         AND COALESCE(s.last_message_at, s.started_at) IS NOT NULL
         AND COALESCE(s.last_message_at, s.started_at) > ?
       ORDER BY ts ASC
@@ -346,6 +349,7 @@ const plugin: MemorySQLPlugin = {
           sqlite
             .prepare(
               `SELECT COUNT(*) AS n FROM sessions WHERE deleted = 0 AND project_id = ?
+                 AND is_subagent = 0
                  AND COALESCE(last_message_at, started_at) IS NOT NULL
                  AND COALESCE(last_message_at, started_at) > ?`
             )
@@ -365,6 +369,7 @@ const plugin: MemorySQLPlugin = {
                   EXISTS(SELECT 1 FROM project_digests d WHERE d.project_id = p.id AND d.deleted = 0) AS hasDigest,
                   (SELECT COUNT(*) FROM sessions s
                      WHERE s.deleted = 0 AND s.project_id = p.id
+                       AND s.is_subagent = 0
                        AND COALESCE(s.last_message_at, s.started_at) IS NOT NULL
                        AND COALESCE(s.last_message_at, s.started_at) > COALESCE(st.last_covered_ts, 0)) AS uncovered
              FROM projects p

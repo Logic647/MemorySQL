@@ -1,6 +1,7 @@
-import { app, BrowserWindow, globalShortcut, Menu, nativeImage, screen, Tray } from 'electron'
+import { app, BrowserWindow, globalShortcut, Menu, nativeImage, nativeTheme, screen, Tray } from 'electron'
 import path from 'node:path'
 import type { SettingsStore } from './core/settings'
+import { THEME_KEY, normalizeThemeSetting, resolveTheme, themeBackground } from './core/theme'
 import { withinRoot } from './core/safe-path'
 
 export interface SpotlightController {
@@ -69,7 +70,12 @@ export function setupSpotlight(deps: {
       skipTaskbar: true,
       show: false,
       title: 'MemorySQL 秒搜',
-      backgroundColor: '#101418',
+      backgroundColor: themeBackground(
+        resolveTheme(
+          normalizeThemeSetting(settings.get(THEME_KEY, 'dark')),
+          nativeTheme.shouldUseDarkColors
+        )
+      ),
       webPreferences: {
         preload: withinRoot(
           path.dirname(import.meta.dirname),

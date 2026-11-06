@@ -25,6 +25,10 @@ export interface SessionDetail {
     ended_at: number | null
     last_message_at: number | null
     raw_path: string | null
+    /** 子代理/子任务会话标记 + 父会话 id */
+    is_subagent?: number
+    parent_session_id?: number | null
+    parent_external_id?: string | null
   }
   messages: MessageRow[]
   /** total messages in the session (may exceed the returned page) */
@@ -72,16 +76,35 @@ export interface DigestLatest {
 }
 
 export const api = {
+  // 外观主题(主进程是真相源;写入后主进程会把结果广播给所有窗口)
+  theme: (): Promise<{ setting: 'dark' | 'light' | 'system'; effective: 'dark' | 'light' }> =>
+    window.memorysql.invoke('memorysql:host:theme') as Promise<{
+      setting: 'dark' | 'light' | 'system'
+      effective: 'dark' | 'light'
+    }>,
+  setTheme: (
+    theme: 'dark' | 'light' | 'system'
+  ): Promise<{ setting: 'dark' | 'light' | 'system'; effective: 'dark' | 'light' }> =>
+    window.memorysql.invoke('memorysql:host:theme', { theme }) as Promise<{
+      setting: 'dark' | 'light' | 'system'
+      effective: 'dark' | 'light'
+    }>,
   listSessions: (
     agentType: string,
-    opts?: { archived?: boolean; limit?: number; offset?: number }
+    opts?: { archived?: boolean; limit?: number; offset?: number; includeSubagents?: boolean }
   ): Promise<SessionSummaryRow[]> =>
     window.memorysql.invoke('core-schema:sessions:list', {
       agentType,
       limit: opts?.limit ?? 200,
       offset: opts?.offset ?? 0,
-      archived: opts?.archived ?? false
+      archived: opts?.archived ?? false,
+      includeSubagents: opts?.includeSubagents ?? false
     }) as Promise<SessionSummaryRow[]>,
+  /** 父会话下的子代理会话(列表默认不展示,展开时才拉) */
+  subagents: (parentId: number): Promise<SessionSummaryRow[]> =>
+    window.memorysql.invoke('core-schema:sessions:subagents', { parentId }) as Promise<
+      SessionSummaryRow[]
+    >,
   renameSession: (id: number, title: string): Promise<{ ok: boolean; title: string }> =>
     window.memorysql.invoke('core-schema:sessions:rename', { id, title }) as Promise<{
       ok: boolean

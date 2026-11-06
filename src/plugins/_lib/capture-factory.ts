@@ -78,18 +78,26 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
         : fs.existsSync(sourceRoot)
       lastStatus = { ...lastStatus, sourceRoot, available: exists }
 
-      /** collect (incrementally once a watermark exists) + the watermark this run covers */
-      const collectWithWatermark = (): { sessions: RawSession[]; next: number | null } => {
+      /**
+       * collect (incrementally once a watermark exists) + the watermark this run covers.
+       *
+       * `full` 表示这次没用增量水位、把源完整读了一遍 —— 用于一次性回填。
+       * 起因:某些字段是后加的(例如子代理会话标记),而增量扫描只重读
+       * `time_updated > watermark` 的会话,老会话内容没变就永远不会被重新解析,
+       * 新字段永远是默认值。所以每个适配器允许有一次强制全量重扫。
+       */
+      const collectWithWatermark = (): { sessions: RawSession[]; next: number | null; full: boolean } => {
         const watermark = spec.collectSince ? Number(ctx.settings.get('scanWatermark', 0)) || 0 : 0
-        if (spec.collectSince && watermark > 0) {
+        const backfilled = ctx.settings.get<boolean>('fullScanDone', false)
+        if (spec.collectSince && watermark > 0 && backfilled) {
           const r = spec.collectSince(sourceRoot, watermark)
-          return { sessions: r.sessions, next: r.watermark }
+          return { sessions: r.sessions, next: r.watermark, full: false }
         }
         const sessions = spec.collect(sourceRoot)
-        if (!spec.collectSince) return { sessions, next: null }
+        if (!spec.collectSince) return { sessions, next: null, full: true }
         let maxEnded = 0
         for (const s of sessions) if ((s.endedAt ?? 0) > maxEnded) maxEnded = s.endedAt ?? 0
-        return { sessions, next: maxEnded > 0 ? maxEnded * 1000 : null }
+        return { sessions, next: maxEnded > 0 ? maxEnded * 1000 : null, full: true }
       }
 
       /** 入库成功后才推进水位(失败则下次重读);秒级时间戳*1000 只会低估、不会漏读 */
@@ -101,9 +109,13 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
 
       const scan = async (): Promise<CaptureStatus> => {
         try {
-          const { sessions, next } = collectWithWatermark()
+          const { sessions, next, full } = collectWithWatermark()
           const res = await ctx.services.use<IngestService>('ingest').ingestSessions(sessions)
           commitWatermark(next)
+          // 完整读过一遍才允许进入纯增量模式(见 collectWithWatermark 注释)
+          if (full && !ctx.settings.get<boolean>('fullScanDone', false)) {
+            ctx.settings.set('fullScanDone', true)
+          }
           lastStatus = {
             ...lastStatus,
             available: true,

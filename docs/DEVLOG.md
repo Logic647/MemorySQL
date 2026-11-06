@@ -4,6 +4,50 @@
 
 ---
 
+## 2026-11-06 · 子代理会话不再占会话列表(折叠到父会话)
+
+**问题:** 会话里派子代理时,子代理会作为独立会话入库,把列表挤满。真机实测:**zcode 100 条里 37 条、opencode 36 条里 5 条是子代理**,合计 42 条(列表 314 → 272),标题全是「你是 xxx 子代理…」这类任务提示词。它们不是用户在跟 agent 对话,却和真会话平起平坐。
+
+**关键判断:不删数据,只收位置。** 子代理会话里有真实的中间产出(性能分域报告就写在里面),直接丢弃等于丢证据。所以照常入库、照常可搜,只是**默认不在列表/上下文/总结里占位**,折叠到父会话下按需展开。
+
+**溯源(不靠猜标题,源库本来就标了):**
+- **zcode**:`session.parent_id` + `session.task_type`(`interactive` / `subagent_child` / `workflow_child` / `selection_side_chat`)
+- **opencode**:`session.parent_id`(子会话的 `agent` 通常是 `explore`)
+- **claudecode**:无独立会话 —— 子代理写在同一个 jsonl 的行里,带 `isSidechain`,解析器早就跳过了
+- **codex / 其余**:当前样本没有子代理 rollout(`thread_source` 全为 `user`),不做猜测
+- **dsh**:原本就在适配层跳过(`delegationDepth > 0`)
+
+**改动:**
+1. **schema v8**(`core-schema/migrations.ts`):`sessions` 增 `is_subagent` / `parent_external_id` / `parent_session_id` + 两个索引。
+2. **解析**(`_lib/agent-db-parser.ts`):先 `PRAGMA table_info` 探测 `parent_id`/`task_type`/`agent` 列再拼 SELECT —— 这两列在不同代/不同 fork 里并不都存在,硬查会 `no such column`。判定:`parent_id` 非空 **或** `task_type` 存在且非 `interactive`。
+3. **入库**(`core-schema/ingest.ts`):写入两个来源字段;每次入库后跑一次廉价回填,把 `parent_external_id` 解析成 `parent_session_id`(`(agent_type, external_id)` 有唯一索引),所以**父会话晚到也能补上**。
+4. **老库升级**(`_lib/capture-factory.ts`):这步最容易漏 —— 增量扫描只读 `time_updated > watermark` 的会话,老会话内容没变就永远不重新解析,新字段永远是默认值。加了一次性 `fullScanDone` 标记:标记不存在时强制全量扫一次再进入纯增量。同时 ingest 的「哈希相同就早退」分支也补上了标记比对。
+5. **列表/统计口径统一**(`core-schema/index.ts`):`sessions:list` 默认 `is_subagent = 0`,`stats:overview` 同步排除 —— 否则侧栏显示 100 而列表只有 63,用户只会以为丢数据。新增 `sessions:subagents {parentId}` 给展开用。
+6. **UI**(`App.tsx` + `styles.css`):父会话下多一条紫色折叠条「↳ N 个子代理会话 — 展开」,展开后按需拉取,子会话行缩进 + 紫色左边框 + 弱化标题,一眼看出是「父会话的内部过程」;详情页标题旁有「子代理」标签。
+7. **MCP**(`core-schema/mcp-tools.ts`):`memory_list_sessions` 默认排除,新增 `includeSubagents` 显式要;`memory_get_context` 的最近会话同步排除 —— 否则「用户最近做过什么」会被子代理刷屏。
+8. **项目总结**(`project-digest`):素材与「未覆盖」计数都排除子会话。**两处必须同时改**:只改素材不改计数,watermark 会被子会话的 ts 卡住,追赶循环永远跑不完。
+
+**验证:** vitest **562:562**(+10 条:`test/subagent-sessions.test.ts` 覆盖源库标记/父晚到的回填/哈希未变也要补标记/MCP 默认过滤);typecheck 0;**真库副本全流程**(迁移 → 全量扫 → 42 条子会话全部识别且 42 条都解析到父会话,列表 314 → 272);GUI 实测折叠条出现/展开/详情「子代理」标签(CDP 截图确认)。**未做**:codex 侧若有子代理 rollout 需另行核对;「显示全部子代理」的全局开关(目前只有按父展开)。
+
+---
+
+## 2026-11-06 · 浅色主题 + 双主题切换(token 化改造)
+
+**目标:** 加浅色模式并支持切换。原实现是「深色唯一主题」,而且 `styles.css` 里散着约 30 处字面颜色(`rgba(255,255,255,.05)` 这类悬停底、`#bcd4ff` 这类 accent 文本),直接反色只会得到一堆在浅底上看不见或对比度不足的地方。所以先做 token 化,再加主题。
+
+**改动:**
+1. **token 层(`styles/tokens.css`)** —— 新增语义 token 覆盖原来写死的那批:`--msql-hover` / `--msql-hover-strong` / `--msql-surface-subtle|faint` / `--msql-input-bg(-soft|-strong)` / `--msql-tool-bg` / `--msql-overlay` / `--msql-scroll-thumb*` / `--msql-shadow-pop|float` / `--msql-card-shadow` / `--msql-accent-fg(-strong|-dim)` / `--msql-success-fg|danger-fg|warning-fg`,以及项目组头的**明度** token(`--msql-group-*-l`,色相仍由 `--ph/--ps` 提供)。`[data-theme='light']` 只覆盖变量,组件样式一行不用改。同时 `color-scheme` 跟着主题走,原生 select/滚动条不再需要单独兜底。
+2. **组件样式(`styles.css`)** —— 字面颜色清零,统一走 token 或 `color-mix(in srgb, var(--msql-…) N%, transparent)`(accent 边框/光晕这类按比例派生的值,写死就必然只有一套主题对)。**顺手删掉文件末尾遗留的 `TEMP DIAGNOSTIC 2`**(`.settings-pane{outline:2px solid yellow}`)—— 那是个真 bug,设置页一直带着黄框。
+3. **主进程是真相源(`core/theme.ts` + `index.ts`)** —— 设置存 `ui:theme`(`dark|light|system`),`nativeTheme.themeSource` 写同一个值;窗口 `backgroundColor` 与 Windows 标题栏覆盖层(WCO)配色在**建窗时**就按解析结果取,切换时用 `win.setBackgroundColor()` + `setTitleBarOverlay()` 就地更新,并广播 `push:theme` 给所有窗口(主窗口 + 秒搜)。
+4. **渲染层(`renderer/src/theme.ts` + `main.tsx`)** —— 在 `createRoot` 之前读 localStorage 缓存落定 `<html data-theme>`,再拉一次主进程当前值纠正(CSP 是 `script-src 'self'`,不能写内联引导脚本,所以放在模块顶部)。
+5. **入口**:设置 → 通用 → 「外观」三态 chip(深色 / 浅色 / 跟随系统)+ 顶栏右上角太阳/月亮一键切换。
+
+**测试(`test/theme.test.ts`,9 条):** 解析纯函数(显式优先 / 跟随系统 / 脏值回落深色)+ **token 层自洽**——①深色里每个颜色 token 都必须在浅色块有覆盖(漏了就会静默继承深色值)②浅色块不许出现深色块没有的 token(抓拼写错误)③`styles.css` 引用的 token 必须存在 ④`styles.css` 里不许再出现字面颜色。这四条是这次真正的防回归:以后新增样式忘了走 token,CI 直接红。
+
+**验收:** typecheck 0;vitest **552:552**(+9);`npm run build` 通过;用 CDP 连 Electron 截真实画面 7 张(会话列表 / 会话详情 / 设置页 / 记忆页,深浅各一套),切换走的是真实链路 `IPC → 主进程 → push:theme → data-theme`(截图里 `data-theme` 实测从 dark 变 light),`ui:theme` 已落盘到 settings.json。**未做**:秒搜窗口(Ctrl+Alt+M 懒创建,复用同一份 bundle 与广播,未单独截图);浅色下的语义检索/外部插件页等边缘页面沿用同一套 token,未逐页截图。
+
+---
+
 ## 2026-11-06 · 语义检索推理搬进 worker(主进程不再跑 ONNX)
 
 **问题:** `FlagEmbedding.init` 152ms、每次 `queryEmbed` 24–33ms 都在主进程同步执行,搜索时会卡住 UI 与 MCP 请求。

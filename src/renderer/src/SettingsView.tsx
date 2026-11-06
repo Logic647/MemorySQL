@@ -78,6 +78,7 @@ export default function SettingsView() {
     }
   })
   const [category, setCategory] = useState<Category>('通用')
+  const [themeSetting, setThemeSetting] = useState<'dark' | 'light' | 'system'>('dark')
   const [llmTesting, setLlmTesting] = useState(false)
   const [llmTest, setLlmTest] = useState<{ ok: boolean; message: string } | null>(null)
 
@@ -107,6 +108,16 @@ export default function SettingsView() {
   useEffect(() => {
     void load()
   }, [load])
+
+  // 外观主题:主进程是真相源,设置页打开时读一次当前值
+  useEffect(() => {
+    void api
+      .theme()
+      .then((t) => setThemeSetting(t.setting))
+      .catch(() => {
+        /* host 通道不可用时保持默认值 */
+      })
+  }, [])
 
   const set = (key: string, value: string): void => setCfg((c) => (c ? { ...c, [key]: value } : c))
 
@@ -159,6 +170,35 @@ export default function SettingsView() {
       <div className="settings-body">
         {category === '通用' && (
           <>
+            <section>
+              <h3>外观</h3>
+              <p className="hint">
+                深色适合长时间阅读;浅色在白天/投屏/打印场景更清楚。选「跟随系统」会随操作系统的外观设置自动切换。切换对所有窗口(含秒搜)立即生效。
+              </p>
+              <div className="field-row">
+                {(
+                  [
+                    ['dark', '深色'],
+                    ['light', '浅色'],
+                    ['system', '跟随系统']
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    className={`chip ${themeSetting === value ? 'chip-active' : ''}`}
+                    onClick={() => {
+                      setThemeSetting(value)
+                      void api
+                        .setTheme(value)
+                        .catch((e) => setMsg(`主题切换失败: ${String(e)}`))
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </section>
+
             <section>
               <h3>启动</h3>
               <p className="hint">

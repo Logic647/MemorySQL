@@ -105,28 +105,44 @@ export function createIngestService(deps: IngestDeps): IngestService {
     'UPDATE sessions SET cwd = ?, project_id = ?, updated_at = ? WHERE cwd = ? AND deleted = 0'
   )
   const stmtSessionFind = sqlite.prepare(
-    `SELECT id, content_hash, title_locked, title, cwd, project_id, summary, last_message_at
+    `SELECT id, content_hash, title_locked, title, cwd, project_id, summary, last_message_at,
+            is_subagent, parent_external_id, parent_session_id
      FROM sessions WHERE agent_type = ? AND external_id = ?`
   )
   const stmtSessionIns = sqlite.prepare(`
     INSERT INTO sessions (agent_type, external_id, project_id, cwd, started_at, ended_at,
                           last_message_at, title, summary, raw_path, content_hash,
-                          message_count, tool_call_count, updated_at, device_id)
+                          message_count, tool_call_count, updated_at, device_id,
+                          is_subagent, parent_external_id)
     VALUES (@agent_type, @external_id, @project_id, @cwd, @started_at, @ended_at,
             @last_message_at, @title, @summary, @raw_path, @content_hash,
-            @message_count, @tool_call_count, @updated_at, @device_id)
+            @message_count, @tool_call_count, @updated_at, @device_id,
+            @is_subagent, @parent_external_id)
   `)
   const stmtSessionUpdate = sqlite.prepare(`
     UPDATE sessions SET project_id = @project_id, cwd = @cwd, started_at = @started_at,
       ended_at = @ended_at, last_message_at = @last_message_at, title = @title, summary = @summary,
       content_hash = @content_hash, message_count = @message_count, tool_call_count = @tool_call_count,
-      updated_at = @updated_at, raw_path = COALESCE(@raw_path, raw_path)
+      updated_at = @updated_at, raw_path = COALESCE(@raw_path, raw_path),
+      is_subagent = @is_subagent, parent_external_id = @parent_external_id
     WHERE id = @id
+  `)
+  // 父会话可能比子会话晚入库(首次全量导入、或父会话先被删再恢复),
+  // 所以每次入库后做一次廉价回填 —— (agent_type, external_id) 有唯一索引。
+  const stmtReconcileParents = sqlite.prepare(`
+    UPDATE sessions
+       SET parent_session_id = (
+             SELECT p.id FROM sessions p
+              WHERE p.agent_type = sessions.agent_type
+                AND p.external_id = sessions.parent_external_id
+                AND p.deleted = 0)
+     WHERE is_subagent = 1 AND parent_session_id IS NULL AND parent_external_id IS NOT NULL
   `)
   // hash unchanged: only project/cwd/title/last_message_at may still need a refresh
   const stmtSessionMeta = sqlite.prepare(`
     UPDATE sessions SET project_id = @project_id, cwd = @cwd, title = @title,
-      last_message_at = @last_message_at, updated_at = @updated_at
+      last_message_at = @last_message_at, updated_at = @updated_at,
+      is_subagent = @is_subagent, parent_external_id = @parent_external_id
     WHERE id = @id
   `)
   // message-level diff: compare the stored prefix against the freshly parsed
@@ -240,8 +256,16 @@ export function createIngestService(deps: IngestDeps): IngestService {
           project_id: number | null
           summary: string | null
           last_message_at: number | null
+          is_subagent: number
+          parent_external_id: string | null
+          parent_session_id: number | null
         }
       | undefined
+
+    // 子会话标记(源库标注)。老库升级后这一列是默认 0,内容哈希又没变,
+    // 所以下面「哈希相同」的早退里也要比对它,否则历史子会话永远不会被标上。
+    const isSubagent = s.isSubagent ? 1 : 0
+    const parentExternalId = s.isSubagent ? (s.parentExternalId ?? null) : null
 
     // a user-renamed title survives re-ingest (auto summaries never clobber it)
     const lockedTitle =
@@ -268,19 +292,24 @@ export function createIngestService(deps: IngestDeps): IngestService {
       // refresh last_message_at here. Keep it monotonic and refresh it too.
       const lastMessageAt = latestMessageTs(s) ?? s.endedAt ?? null
       const needLast = lastMessageAt != null && lastMessageAt > (existing.last_message_at ?? 0)
-      if (!needTitle && !needCwd && !needProject && !needLast) return { outcome: 'skipped' }
+      const needSub =
+        isSubagent !== existing.is_subagent || parentExternalId !== (existing.parent_external_id ?? null)
+      if (!needTitle && !needCwd && !needProject && !needLast && !needSub) return { outcome: 'skipped' }
       stmtSessionMeta.run({
         id: existing.id,
         project_id: nextProjectId,
         cwd: effectiveCwd,
         title: nextTitle,
         last_message_at: needLast ? lastMessageAt : existing.last_message_at,
-        updated_at: now()
+        updated_at: now(),
+        is_subagent: isSubagent,
+        parent_external_id: parentExternalId
       })
       if (needTitle) {
         stmtFtsSessionDel.run(existing.id)
         stmtFtsSessionIns.run(existing.id, nextTitle, existing.summary ?? '')
       }
+      stmtReconcileParents.run()
       return { outcome: 'updated', id: existing.id }
     }
 
@@ -309,6 +338,8 @@ export function createIngestService(deps: IngestDeps): IngestService {
           summary: summaryText,
           content_hash: contentHash,
           raw_path: s.rawPath ?? null,
+          is_subagent: isSubagent,
+          parent_external_id: parentExternalId,
           ...counts,
           updated_at: now()
         })
@@ -317,6 +348,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
         stmtFtsSessionIns.run(sessionId, title, summaryText)
       })
       tx()
+      stmtReconcileParents.run()
       return { outcome: 'updated', id: sessionId }
     }
 
@@ -337,13 +369,16 @@ export function createIngestService(deps: IngestDeps): IngestService {
           content_hash: contentHash,
           ...counts,
           updated_at: now(),
-          device_id: 'local'
+          device_id: 'local',
+          is_subagent: isSubagent,
+          parent_external_id: parentExternalId
         }) as { lastInsertRowid: number | bigint }).lastInsertRowid
       )
       insertMessages(newId, s)
       stmtFtsSessionIns.run(newId, title, summaryText)
     })
     tx()
+    stmtReconcileParents.run()
     return { outcome: 'imported', id: newId }
   }
 

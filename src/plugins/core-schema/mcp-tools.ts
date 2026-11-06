@@ -160,13 +160,14 @@ export function createMcpTools(deps: {
    */
   const recentSessionsOf = (projectIds: number[] | null, limit = 5): SessionRow[] => {
     // most recently *conversing* first — a session that started long ago but
-    // talked yesterday belongs above one that started and finished this morning
+    // talked yesterday belongs above one that started and finished this morning.
+    // 子代理会话排除在外:它们说得再多也不是「用户做过什么」。
     const order = 'COALESCE(last_message_at, started_at, updated_at) DESC'
     if (projectIds === null) {
       return sqlite
         .prepare(
           `SELECT id, title, summary, started_at, last_message_at, agent_type FROM sessions
-           WHERE deleted = 0 ORDER BY ${order} LIMIT ?`
+           WHERE deleted = 0 AND is_subagent = 0 ORDER BY ${order} LIMIT ?`
         )
         .all(limit) as SessionRow[]
     }
@@ -174,7 +175,8 @@ export function createMcpTools(deps: {
     return sqlite
       .prepare(
         `SELECT id, title, summary, started_at, last_message_at, agent_type FROM sessions
-         WHERE deleted = 0 AND project_id IN (${projectIds.map(() => '?').join(',')})
+         WHERE deleted = 0 AND is_subagent = 0
+           AND project_id IN (${projectIds.map(() => '?').join(',')})
          ORDER BY ${order} LIMIT ?`
       )
       .all(...projectIds, limit) as SessionRow[]
@@ -471,7 +473,11 @@ export function createMcpTools(deps: {
           agent: { type: 'string', description: '按 agent 过滤,如 codex / hermes / zcode' },
           since: { type: 'number', description: '只看最近 N 天,如 7' },
           limit: { type: 'number', description: '返回条数,默认 20,上限 100' },
-          offset: { type: 'number', description: '分页偏移,默认 0' }
+          offset: { type: 'number', description: '分页偏移,默认 0' },
+          includeSubagents: {
+            type: 'boolean',
+            description: '是否包含子代理/子任务会话(默认 false —— 它们由父会话派生,会把列表挤满)'
+          }
         }
       },
       handler: (args) => {
@@ -480,6 +486,7 @@ export function createMcpTools(deps: {
         const sinceDays = Number(args.since)
         const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100)
         const offset = Math.max(Number(args.offset) || 0, 0)
+        const includeSubagents = args.includeSubagents === true
 
         // 同名项目全部纳入(换机/斜杠写法/src 子目录都会产生同名的独立项目);
         // 只取第一个会静默丢会话,见 findProjectsByKeyword 的注释
@@ -489,6 +496,9 @@ export function createMcpTools(deps: {
         }
         const where = ['deleted = 0']
         const params: unknown[] = []
+        // 子代理会话默认不进列表:它们是父会话派生的内部过程,数量和长度都
+        // 会压过真正的项目会话(真机 100 条 zcode 里 37 条是子代理)
+        if (!includeSubagents) where.push('is_subagent = 0')
         if (matched.length > 0) {
           where.push(`project_id IN (${matched.map(() => '?').join(',')})`)
           params.push(...matched.map((p) => p.id))

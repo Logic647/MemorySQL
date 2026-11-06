@@ -41,6 +41,14 @@ export interface RawSession {
   messages: RawMessage[]
   /** source file/db reference for traceability */
   rawPath?: string
+  /**
+   * 子会话(Task/子代理)标记。zcode 的 `task_type != 'interactive'`、
+   * opencode 的 `parent_id` 都在源库里明确标了,不 import 就等于丢数据,
+   * import 又会把会话列表挤爆 —— 所以入库但默认不在列表里占位。
+   */
+  isSubagent?: boolean
+  /** 父会话的 agent 原生 id(同 agentType 内解析成 parent_session_id) */
+  parentExternalId?: string
 }
 
 export interface SessionSummaryRow {
@@ -61,6 +69,12 @@ export interface SessionSummaryRow {
   similarTo?: number | null
   sortKey?: number | null
   projectId?: number | null
+  /** 该会话本身是子代理/子任务会话 */
+  isSubagent?: number
+  /** 指向父会话(已解析;父未入库时为空) */
+  parentSessionId?: number | null
+  /** 该会话派生的子代理会话数(仅父会话上有值) */
+  subagentCount?: number
 }
 
 export interface MessageRow {

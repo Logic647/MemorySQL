@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -15,6 +15,14 @@ import {
   SYNC_FOLDER
 } from './core/cli-args'
 import { connectAgent, agentSnippet } from './core/agent-connect'
+import {
+  THEME_KEY,
+  normalizeThemeSetting,
+  resolveTheme,
+  themeBackground,
+  titleBarColors
+} from './core/theme'
+import type { ResolvedTheme, ThemeSetting, ThemeState } from './core/theme'
 import { SettingsStore } from './core/settings'
 import { EventBus } from './core/event-bus'
 import { Db } from './core/db'
@@ -158,6 +166,9 @@ async function bootstrap(opts: { deferStart?: boolean } = {}): Promise<{
   const env = resolveAppEnv()
   processPendingImport(env.dataDir, env.dbPath, env.vaultDir)
   const settings = new SettingsStore(env)
+  // 主题必须在建窗口之前定好:窗口底色/标题栏用的是解析后的值,
+  // 晚一步就会先闪一帧深色(浅色主题下尤其明显)
+  nativeTheme.themeSource = normalizeThemeSetting(settings.get(THEME_KEY, 'dark'))
   const db = new Db(env.dbPath)
   const events = new EventBus()
   const host = new PluginHost(env, db, settings, events)
@@ -391,6 +402,46 @@ async function startupUpdateCheck(): Promise<void> {
   }
 }
 
+/** 当前解析后的主题(nativeTheme 已按 themeSource 计算系统偏好) */
+function currentResolvedTheme(setting: ThemeSetting): ResolvedTheme {
+  return resolveTheme(setting, nativeTheme.shouldUseDarkColors)
+}
+
+/** 把主题应用到单个窗口:底色防闪 + Windows 标题栏覆盖层配色 */
+function applyWindowTheme(win: BrowserWindow, theme: ResolvedTheme): void {
+  if (win.isDestroyed()) return
+  try {
+    win.setBackgroundColor(themeBackground(theme))
+  } catch {
+    // 某些平台/窗口状态下不支持;底色只是防闪,失败不影响功能
+  }
+  if (process.platform === 'linux') return // Linux 无 WCO 覆盖层
+  try {
+    win.setTitleBarOverlay({ ...titleBarColors(theme), height: 46 })
+  } catch {
+    // 非 WCO 窗口会抛;忽略
+  }
+}
+
+/** 主题的当前状态(设置值 + 解析后的实际主题) */
+function currentThemeState(settings: SettingsStore): ThemeState {
+  const setting = normalizeThemeSetting(settings.get(THEME_KEY, 'dark'))
+  return { setting, effective: currentResolvedTheme(setting) }
+}
+
+/** 把主题同步给所有窗口:窗口底色/标题栏 + 渲染层 data-theme */
+function broadcastTheme(state: ThemeState): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed()) continue
+    applyWindowTheme(w, state.effective)
+    try {
+      w.webContents.send('push:theme', state)
+    } catch {
+      // 窗口正在销毁:忽略
+    }
+  }
+}
+
 function registerHostChannels(
   host: PluginHost,
   settings: SettingsStore,
@@ -398,6 +449,18 @@ function registerHostChannels(
   db: Db,
   spotlight: SpotlightController
 ): void {
+  // 外观主题:主进程是真相源(nativeTheme),渲染层只负责把结果写到
+  // <html data-theme>。读 = 返回当前值;写 = 落盘 + 立即广播给所有窗口。
+  hostChannels.set('memorysql:host:theme', (payload) => {
+    const { theme } = (payload ?? {}) as { theme?: unknown }
+    if (theme === undefined) return currentThemeState(settings)
+    const setting = normalizeThemeSetting(theme)
+    settings.set(THEME_KEY, setting)
+    nativeTheme.themeSource = setting
+    const state: ThemeState = { setting, effective: currentResolvedTheme(setting) }
+    broadcastTheme(state)
+    return state
+  })
   hostChannels.set('memorysql:host:plugins', () => ({
     plugins: [
       ...BUILTIN_PLUGINS.map((p) => ({
@@ -598,7 +661,8 @@ function registerHostChannels(
   })
 }
 
-function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
+function createWindow(host: PluginHost, events: EventBus, settings: SettingsStore): BrowserWindow {
+  const theme = currentResolvedTheme(normalizeThemeSetting(settings.get(THEME_KEY, 'dark')))
   const win = new BrowserWindow({
     width: 1360,
     height: 860,
@@ -607,7 +671,7 @@ function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
     show: !LAUNCH_HIDDEN,
     title: 'MemorySQL',
     icon: path.join(app.getAppPath(), 'build', 'icon.png'),
-    backgroundColor: '#101418',
+    backgroundColor: themeBackground(theme),
     autoHideMenuBar: true,
     // integrated title bar: native white strip removed; system window
     // controls overlay the dark topbar instead (Windows / macOS only; Linux window
@@ -617,11 +681,7 @@ function createWindow(host: PluginHost, events: EventBus): BrowserWindow {
       ? {}
       : {
           titleBarStyle: 'hidden' as const,
-          titleBarOverlay: {
-            color: '#0a0e16',
-            symbolColor: '#d8e2ee',
-            height: 46
-          }
+          titleBarOverlay: { ...titleBarColors(theme), height: 46 }
         }),
     webPreferences: {
       preload: withinRoot(
@@ -695,9 +755,11 @@ app.whenReady().then(async () => {
     })
     const boot = await bootstrap({ deferStart: true })
     running = { host: boot.host, db: boot.db }
-    const win = createWindow(boot.host, boot.events)
+    const win = createWindow(boot.host, boot.events, boot.settings)
     const spotlight = setupSpotlight({ win, settings: boot.settings })
     registerHostChannels(boot.host, boot.settings, boot.env, boot.db, spotlight)
+    // 系统主题变化(设置=跟随系统时)以及任何外部改动,统一走同一条广播
+    nativeTheme.on('updated', () => broadcastTheme(currentThemeState(boot.settings)))
     // 插件 start 阶段(watcher / MCP 监听 / 语义栈)推迟到窗口创建之后:
     // 实测它们串行起来要 300-500ms(其中 ~/.gemini 全树 chokidar 377ms),
     // 而窗口与首帧只需要 init 阶段注册好的 IPC 通道。

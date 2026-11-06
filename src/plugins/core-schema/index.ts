@@ -57,14 +57,18 @@ const plugin: MemorySQLPlugin = {
 
     // ----- renderer-facing IPC -------------------------------------------
     ctx.ipc.handle('sessions:list', (payload) => {
-      const { agentType, limit = 100, offset = 0, archived = false } = (payload ?? {}) as {
-        agentType?: string
-        limit?: number
-        offset?: number
-        archived?: boolean
-      }
-      const where = agentType && agentType !== 'all' ? 'AND agent_type = ?' : ''
+      const { agentType, limit = 100, offset = 0, archived = false, includeSubagents = false } =
+        (payload ?? {}) as {
+          agentType?: string
+          limit?: number
+          offset?: number
+          archived?: boolean
+          includeSubagents?: boolean
+        }
+      const where = agentType && agentType !== 'all' ? 'AND s.agent_type = ?' : ''
       const archivedWhere = archived ? 'AND s.archived = 1' : 'AND s.archived = 0'
+      // 子代理会话默认不占列表位置(它们挂在父会话下面,见 sessions:subagents)
+      const subWhere = includeSubagents ? '' : 'AND s.is_subagent = 0'
       const params: unknown[] = agentType && agentType !== 'all' ? [agentType] : []
       const rows = ctx.db.sqlite
         .prepare(
@@ -74,14 +78,39 @@ const plugin: MemorySQLPlugin = {
                   s.last_message_at AS lastMessageAt,
                   s.message_count AS messageCount, s.tool_call_count AS toolCallCount,
                   s.title_locked AS titleLocked, s.archived AS archived, s.similar_to AS similarTo,
-                  s.sort_key AS sortKey, s.project_id AS projectId
+                  s.sort_key AS sortKey, s.project_id AS projectId,
+                  s.is_subagent AS isSubagent, s.parent_session_id AS parentSessionId,
+                  (SELECT COUNT(*) FROM sessions c
+                    WHERE c.parent_session_id = s.id AND c.deleted = 0) AS subagentCount
            FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
-           WHERE s.deleted = 0 ${archivedWhere} ${where}
+           WHERE s.deleted = 0 ${archivedWhere} ${subWhere} ${where}
            ORDER BY COALESCE(s.started_at, s.updated_at) DESC
            LIMIT ? OFFSET ?`
         )
         .all(...params, limit, offset)
       return rows as SessionSummaryRow[]
+    })
+
+    // 父会话展开时取子代理会话(顺序与列表一致:新的在前)
+    ctx.ipc.handle('sessions:subagents', (payload) => {
+      const { parentId } = (payload ?? {}) as { parentId?: number }
+      if (!parentId) return []
+      return ctx.db.sqlite
+        .prepare(
+          `SELECT s.id, s.agent_type AS agentType, s.external_id AS externalId,
+                  s.title, s.summary, p.name AS project,
+                  s.started_at AS startedAt, s.ended_at AS endedAt,
+                  s.last_message_at AS lastMessageAt,
+                  s.message_count AS messageCount, s.tool_call_count AS toolCallCount,
+                  s.title_locked AS titleLocked, s.archived AS archived, s.similar_to AS similarTo,
+                  s.sort_key AS sortKey, s.project_id AS projectId,
+                  s.is_subagent AS isSubagent, s.parent_session_id AS parentSessionId,
+                  0 AS subagentCount
+           FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
+           WHERE s.deleted = 0 AND s.parent_session_id = ?
+           ORDER BY COALESCE(s.started_at, s.updated_at) ASC`
+        )
+        .all(parentId) as SessionSummaryRow[]
     })
 
     ctx.ipc.handle('sessions:get', (payload) => {
@@ -275,10 +304,12 @@ const plugin: MemorySQLPlugin = {
     })
 
     ctx.ipc.handle('stats:overview', () => {
+      // 计数口径必须和列表一致:子代理会话不在列表里占位,这里也不计入,
+      // 否则侧栏显示 100 而列表只有 63 条,用户只会觉得丢数据了
       const byAgent = ctx.db.sqlite
         .prepare(
           `SELECT agent_type, COUNT(*) AS sessions, SUM(message_count) AS messages
-           FROM sessions WHERE deleted = 0 GROUP BY agent_type`
+           FROM sessions WHERE deleted = 0 AND is_subagent = 0 GROUP BY agent_type`
         )
         .all()
       const memories = (

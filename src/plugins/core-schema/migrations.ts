@@ -152,5 +152,23 @@ UPDATE sessions
 
 CREATE INDEX idx_sessions_last ON sessions(last_message_at);
 `
+  },
+  {
+    version: 8,
+    up: `
+-- v8: 子代理/子任务会话(Task 子代理)。
+-- 源库本来就标了(zcode: session.task_type != 'interactive' 且 parent_id 非空;
+-- opencode: session.parent_id 非空),过去一律当成普通会话入库,于是
+-- 「你是 xxx 子代理」这类会话把列表挤满(真机 100 条 zcode 里 37 条是子会话)。
+-- 现在照常入库(内容和检索都不能丢),但列表默认不占位,折叠到父会话下面。
+ALTER TABLE sessions ADD COLUMN is_subagent INTEGER NOT NULL DEFAULT 0;
+-- 源里的父会话 id(跨扫描解析,父还没入库时先留空)
+ALTER TABLE sessions ADD COLUMN parent_external_id TEXT;
+-- 解析后的父会话行 id(便于 JOIN;由 ingest 在每次入库后回填)
+ALTER TABLE sessions ADD COLUMN parent_session_id INTEGER;
+
+CREATE INDEX idx_sessions_subagent ON sessions(is_subagent);
+CREATE INDEX idx_sessions_parent ON sessions(parent_session_id);
+`
   }
 ]
