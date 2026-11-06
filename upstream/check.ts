@@ -366,11 +366,80 @@ async function checkJsonl(c: AgentContract, root: string): Promise<CheckResult> 
   }
 }
 
-function checkJson(c: AgentContract, root: string): CheckResult {
+/**
+ * JSON 形态的源(gemini)。2026-11-06 之前这里是**空检查** —— 无条件 return ok,
+ * 详情却写着「逐条 parseGeminiHistory」:本机 ~/.gemini 连 history 目录都没有,
+ * 探针照样报 🟢(用户当场质问「探针检查的是存储结构,和登不登录没关系吧」)。
+ * 一个永远返回 ok 的检查器等于没有检查器,改成真的调生产 parser:
+ *
+ *   - 有会话文件且解析出消息         → ok(报出文件名与条数)
+ *   - 文件自称会话(顶层有 messages/history 数组)却解析出 0 条 → **drift**
+ *     (这正是"上游改了消息形状"的形态,与 jsonl 源同一判据)
+ *   - 一个会话文件都没有(只有 oauth_creds/settings 之类) → absent
+ *     ("源目录在,但没有会话数据"——不是故障,也不能算验证通过)
+ *
+ * 注意:**登录与否从不参与判定**。检查只读磁盘文件;登录只影响"能不能产生新数据",
+ * 那是探针侧的新鲜度降级(tools/upstream-watch/nas-freshness.mjs)负责的事。
+ */
+async function checkJson(c: AgentContract, root: string): Promise<CheckResult> {
+  const b = base(c, root)
+  if (c.source.kind !== 'json') return b
+
+  let findFiles: (root: string) => string[]
+  let parse: (rel: string, parsed: unknown) => { messages?: unknown[] } | null
+  try {
+    // 动态载入生产实现(与 jsonl 分支同款):检查器不二次实现解析
+    const m = await import('../src/plugins/capture-gemini/gemini-parser.ts')
+    findFiles = m.findGeminiFiles
+    parse = m.parseGeminiHistory
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return { ...b, verdict: 'checker_error', detail: `检查器自身故障(非上游问题):${msg.slice(0, 140)}` }
+  }
+
+  const files = findFiles(root)
+  if (files.length === 0) {
+    return { ...b, verdict: 'absent', detail: '源目录存在但没有 JSON 文件(尚未产生会话)' }
+  }
+
+  // 与 dsh 分支同款:多试几个样本,别让结论取决于目录遍历顺序
+  const sample = files.slice(0, 8)
+  let parsedOk: { file: string; n: number } | null = null
+  const suspicious: string[] = []
+  let readError: string | null = null
+
+  for (const f of sample) {
+    let json: unknown
+    try {
+      json = JSON.parse(fs.readFileSync(f, 'utf-8'))
+    } catch (e) {
+      readError = `${path.basename(f)}: ${(e as Error).message.slice(0, 80)}`
+      continue
+    }
+    const n = parse(path.basename(f), json)?.messages?.length ?? 0
+    if (n > 0) {
+      parsedOk = { file: path.basename(f), n }
+      break
+    }
+    const obj = json as Record<string, unknown> | null
+    if (obj && (Array.isArray(obj.messages) || Array.isArray(obj.history))) suspicious.push(path.basename(f))
+  }
+
+  if (parsedOk) {
+    return { ...b, verdict: 'ok', detail: `解析 ${parsedOk.file} → ${parsedOk.n} 条消息` }
+  }
+  if (suspicious.length) {
+    return {
+      ...b,
+      verdict: 'drift',
+      detail: `${suspicious.length} 个会话文件有 messages/history 却解析出 0 条 —— 消息形状可能已变(样本:${suspicious[0]})`
+    }
+  }
+  // 有 JSON 但都不是会话(oauth_creds/settings 等):未验证,不是故障
   return {
-    ...base(c, root),
-    verdict: 'ok',
-    detail: 'JSON 源:逐条 parseGeminiHistory,不做 schema 探测'
+    ...b,
+    verdict: 'absent',
+    detail: `只找到非会话 JSON(${sample.length} 个样本),没有会话数据${readError ? `;首个读取错误: ${readError}` : ''}`
   }
 }
 
@@ -399,7 +468,7 @@ export async function checkOne(c: AgentContract): Promise<CheckResult> {
       ? checkSqlite(c, resolved.path)
       : c.source.kind === 'jsonl'
         ? await checkJsonl(c, resolved.path)
-        : checkJson(c, resolved.path)
+        : await checkJson(c, resolved.path)
   return { ...r, notes: c.notes }
 }
 

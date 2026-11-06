@@ -260,7 +260,11 @@ export const AGENTS: AgentContract[] = [
       kind: 'json',
       json: {
         entry: 'history',
-        note: 'history 目录下的 JSON 文件,逐条 parseGeminiHistory'
+        note:
+          '遍历 ~/.gemini 下的 JSON 文件(会话可能在 history/ 或 tmp/<proj>/chats/),最多 8 个样本逐条 ' +
+          'parseGeminiHistory。2026-11-06 前检查器对 json 源无条件判绿(等于没查):现在有会话且能解析=绿;' +
+          '顶层有 messages/history 却解析出 0 条=漂移;只有 oauth_creds/settings 之类=未验证(黄)。' +
+          '判据只看磁盘数据,与是否登录无关'
       }
     },
     mcp: {

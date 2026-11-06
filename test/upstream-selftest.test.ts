@@ -106,6 +106,64 @@ describe('检查器自测:能抓到上游漂移', () => {
     expect(r.verdict).toBe('absent')
   })
 
+  /**
+   * JSON 源(gemini)此前是**空检查**:无条件 return ok,详情却写着
+   * 「逐条 parseGeminiHistory」。实测本机 ~/.gemini 连 history 都没有也报 🟢。
+   * 这四条锁住"它真的在看数据":能解析=绿、自称会话却解析不出=红、
+   * 只有配置文件=黄(未验证)、空目录=黄。判据里**没有登录状态**。
+   */
+  describe('gemini(JSON 源)必须真的解析,不能无条件判绿', () => {
+    const gemini = () => AGENT_BY_ID.get('gemini')!
+    const dir = (name: string) => {
+      const d = path.join(tmp, name)
+      fs.mkdirSync(d, { recursive: true })
+      return d
+    }
+
+    it('已知形状能解析出消息 → 绿,并报出条数', async () => {
+      const root = dir('gem-known')
+      fs.writeFileSync(
+        path.join(root, 'session-1.json'),
+        JSON.stringify({
+          sessionId: 's1',
+          messages: [
+            { role: 'user', parts: [{ text: '你好' }] },
+            { role: 'model', parts: [{ text: '在的' }] }
+          ]
+        })
+      )
+      const r = await checkOne({ ...gemini(), localRoots: [root] })
+      expect(r.verdict).toBe('ok')
+      expect(r.detail).toContain('2 条')
+    })
+
+    it('有 messages 数组但消息形状变了 → 红(这才是漂移)', async () => {
+      const root = dir('gem-drift')
+      fs.writeFileSync(
+        path.join(root, 'session-1.json'),
+        JSON.stringify({ messages: [{ author: 'human', blocks: [{ text: 'hi' }] }] })
+      )
+      const r = await checkOne({ ...gemini(), localRoots: [root] })
+      expect(r.verdict).toBe('drift')
+      expect(r.detail).toContain('形状可能已变')
+    })
+
+    it('只有配置文件(oauth/settings)没有会话 → 黄,不是绿也不是红', async () => {
+      const root = dir('gem-config-only')
+      fs.writeFileSync(path.join(root, 'oauth_creds.json'), JSON.stringify({ token: 'x' }))
+      fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({ theme: 'dark' }))
+      const r = await checkOne({ ...gemini(), localRoots: [root] })
+      expect(r.verdict).toBe('absent')
+      expect(r.detail).toContain('没有会话数据')
+    })
+
+    it('空目录 → 黄(旧实现会判绿,那是假绿)', async () => {
+      const root = dir('gem-empty')
+      const r = await checkOne({ ...gemini(), localRoots: [root] })
+      expect(r.verdict).toBe('absent')
+    })
+  })
+
   it('台账里的 sqlite 期望自身能被解析器满足(防止声明了不存在的表)', () => {
     for (const c of AGENTS) {
       if (c.source.kind !== 'sqlite') continue
