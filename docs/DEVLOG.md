@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-11-06 · 新增「🟢 只覆盖旧版本」标注(开发机侧新鲜度)+ dsh 不做本机实测的决定
+
+**起因:** 白盒恢复后第一次真实评估就抓到 hermes **v0.23.0** —— 上游把会话改成**单一 gateway 持有**(one queue / one history,CLI/TUI/Desktop/ACP 不再各自跑一份 agent 对着同一会话),LLM 判 `affectsCapture=true / severity=medium`,理由「sessions/messages 的写入路径与落库方式可能随之变化」。**但本机黑盒报的是 🟢**,因为本机装的是 0.21、磁盘上那份数据是旧版本写的。这正是"陈旧数据假绿"——NAS 侧有 `nas-freshness` 按安装时间降级,**开发机侧没有安装时间,这个缺口一直看不见**。
+
+**做法(按用户拍板:只标注,不降级):**
+- `scripts/upstream-probe.mjs` 给每条判定附 `dataAt`(本机最新数据 mtime),路径取 check.ts 已解析的 `source`(`absent`/`blackbox_only` 不附)
+- `nas-freshness.scanLatestMtime` 支持**文件根**:sqlite 源的 localRoots 直接指向 db 文件,旧实现只 walk 目录、对文件根一 stat 就放弃 → 开发机侧永远拿不到 dataAt
+- `summarize.buildBrief` 新增 `versionGap`(黑盒 `ok` 且 `publishedAt > dataAt`),renderBrief 单独一段,prompt 硬规则:出现该事实时在 actions 里给「升级该 agent 后重跑探针」,**不许算作已验证**
+- 前端 `probeBar` 加「🟢 仅覆盖旧版本」徽章(带 title 说明)
+- **为什么只标注**:用户可能只是最近没用过该 agent;降成黄字会让看板在上游每次发版后满屏黄,那是噪音。「🟢 只覆盖旧版本」这条事实本身已经足够行动
+- 测试 +5(4 条 versionGap 语义:发表晚于数据/数据更新/只对 ok/缺字段安静跳过;1 条文件根 mtime),vitest **588:590**
+- 实测数据(本机):opencode dataAt 10-16、codex 09-22、hermes 09-15、zcode 11-06 —— 前三个都会进 versionGap,正是它们"装了但很久没用"的真实状态
+
+**dsh 不做本机实测(用户决定,记录在案):** dsh 开源,会话格式可直接对着 `deepseek-ai/deepseek-harness` 源码核对(`session-format` codec + `dsh-home-paths`),**不需要装一个跑一次会话**。相应地:双机都 absent,黑盒对它零覆盖 —— 这是**有意接受的取舍**,不是漏做。风险形态明确:白盒 changelog 若出现会话格式变更(如 v0.2.2-rc.1 那条「整单元 JSON 与 SQLite 存储…以新版本格式写入」),需要人工按源码复核,黑盒不会替我们发现。**当前 dsh 仍是 high(规则层)**,LLM 判捕获不受影响、MCP 可能受影响(WebSocket 压缩),已进 attention 名单。
+
+**仍待用户:** 服务器 `cd /root/MemorySQL && git pull && pm2 restart msql-upstream-watch --update-env`(本轮 `589c87f`:versionGap 渲染 + probeBar 徽章)。
+
+---
+
 ## 2026-11-06 · 更正上一条:登录状态从不参与判定;gemini 的 json 检查原本是"无条件判绿"
 
 **用户质疑上一条的措辞:「探针检查的是会话的存储结构,和登不登录没关系吧」——质疑成立。** 探针只读磁盘文件(`checkSqlite` 只读打开库、`checkJsonl` 只读文件),**从不检查登录态**。上一条写「gemini 未登录故恒 🟠」把因果说拧了:🟠 是 `nas-freshness` 的判据 `dataAt < updatedAt`(当前版本还没写过数据)产生的,登录只是"为什么没有新数据"的可能原因之一。职责划分应表述为:**check.ts 回答"磁盘上的数据还能不能读",nas-freshness 回答"这份数据是不是当前版本写的"**;两者都与"登没登录"无关。
