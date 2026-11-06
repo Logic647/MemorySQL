@@ -51,6 +51,19 @@ export function scanLatestMtime(roots, home) {
   }
   for (const r of roots ?? []) {
     const abs = path.isAbsolute(r) ? r : path.join(home, r)
+    // 根也可能是**文件**:sqlite 源的 localRoots 直接指向 db 文件
+    // (如 ~/.zcode/cli/db/db.sqlite)。旧实现只 walk 目录,对文件根一 stat 就放弃,
+    // 于是开发机侧永远拿不到 dataAt。
+    let st = null
+    try {
+      st = fs.statSync(abs)
+    } catch {
+      /* 不存在,walk 里也会静默返回 */
+    }
+    if (st?.isFile()) {
+      if (st.mtimeMs > latest) latest = st.mtimeMs
+      continue
+    }
     walk(abs, 0)
   }
   return latest ? new Date(latest).toISOString() : null

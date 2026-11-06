@@ -7,6 +7,8 @@ export interface EvalLike {
   agentId: string
   risk: 'none' | 'low' | 'medium' | 'high' | 'unknown'
   version?: string | null
+  /** 上游最新 release 的发布时间(ISO)。与探针的 dataAt 比,可标出"🟢 只覆盖旧版本" */
+  publishedAt?: string | null
   notes?: string
   blackboxOnly?: boolean
   llm?: { affectsCapture?: boolean; affectsMcp?: boolean; reason?: string } | null
@@ -20,6 +22,9 @@ export interface ProbeLike {
     id: string
     verdict: 'ok' | 'drift' | 'checker_error' | 'absent' | 'blackbox_only' | string
     detail?: string
+    /** 本机该 agent 最新数据的 mtime(ISO),探针上报;NAS 侧由 nas-freshness 附上 */
+    dataAt?: string | null
+    version?: string | null
   }>
 }
 
@@ -62,6 +67,11 @@ export interface Brief {
    * "抓取失败 N 家"里的一行。触发时摘要必须说"白盒不可信",不能说"无风险"。
    */
   whiteboxBlind: { failed: number; tracked: number; blind: boolean }
+  /**
+   * 黑盒 🟢 但本机数据早于上游最新发布(🟢 只覆盖旧版本)。**只标注不降级** ——
+   * 用户可能只是最近没用过该 agent,降成黄字会让看板每次发版后满屏黄。
+   */
+  versionGap: Array<{ id: string; version: string | null; dataAt: string; upstreamAt: string }>
 }
 
 export interface Summary {

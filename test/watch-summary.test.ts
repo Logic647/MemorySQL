@@ -168,6 +168,64 @@ describe('buildBrief — 纯函数,不联网', () => {
     expect(b.whiteboxBlind).toMatchObject({ failed: 0, tracked: 0, blind: false })
   })
 
+  /**
+   * 🟢 只覆盖旧版本。2026-11-06 实证:hermes v0.23.0 把会话改成单一 gateway
+   * 持有(LLM 判捕获受影响),本机装 0.21 → 黑盒照样 🟢,因为那份数据是旧版
+   * 本写的。这块**只标注不降级**:用户可能只是最近没用过,降成黄字会让看板
+   * 在上游每次发版后满屏黄。
+   */
+  describe('versionGap:黑盒🟢但数据早于上游发布', () => {
+    it('上游发布晚于本机数据 → 进 versionGap,但黑盒判定仍是 ok(不降级)', () => {
+      const b = buildBrief(
+        [R({ agentId: 'hermes', risk: 'medium', version: 'v0.23.0', publishedAt: '2026-11-01T00:00:00Z' })],
+        { checkedAt: 'x', results: [{ id: 'hermes', verdict: 'ok', detail: '', dataAt: '2026-10-20T00:00:00Z' }] }
+      )
+      expect(b.versionGap).toEqual([
+        { id: 'hermes', version: 'v0.23.0', dataAt: '2026-10-20T00:00:00Z', upstreamAt: '2026-11-01T00:00:00Z' }
+      ])
+      expect(b.blackbox.ok, '只标注,不把 ok 改成别的').toBe(1)
+    })
+
+    it('数据比上游发布新 → 不进 versionGap', () => {
+      const b = buildBrief(
+        [R({ agentId: 'zcode', risk: 'none', publishedAt: '2026-10-01T00:00:00Z' })],
+        { checkedAt: 'x', results: [{ id: 'zcode', verdict: 'ok', detail: '', dataAt: '2026-11-05T00:00:00Z' }] }
+      )
+      expect(b.versionGap).toEqual([])
+    })
+
+    it('只对 ok 标注:drift / absent 不进(它们已有自己的结论)', () => {
+      const b = buildBrief(
+        [
+          R({ agentId: 'a', publishedAt: '2026-11-01T00:00:00Z' }),
+          R({ agentId: 'b', publishedAt: '2026-11-01T00:00:00Z' })
+        ],
+        {
+          checkedAt: 'x',
+          results: [
+            { id: 'a', verdict: 'drift', detail: '', dataAt: '2026-10-01T00:00:00Z' },
+            { id: 'b', verdict: 'absent', detail: '', dataAt: '2026-10-01T00:00:00Z' }
+          ]
+        }
+      )
+      expect(b.versionGap).toEqual([])
+    })
+
+    it('缺 dataAt 或 publishedAt 时安静跳过(旧探针/旧代码兼容)', () => {
+      const b = buildBrief(
+        [R({ agentId: 'a', publishedAt: '2026-11-01T00:00:00Z' }), R({ agentId: 'b' })],
+        {
+          checkedAt: 'x',
+          results: [
+            { id: 'a', verdict: 'ok', detail: '' }, // 无 dataAt
+            { id: 'b', verdict: 'ok', detail: '', dataAt: '2026-10-01T00:00:00Z' } // 无 publishedAt
+          ]
+        }
+      )
+      expect(b.versionGap).toEqual([])
+    })
+  })
+
   it('空输入不炸', () => {
     const b = buildBrief([], null)
     expect(b.total).toBe(0)

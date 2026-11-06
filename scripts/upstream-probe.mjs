@@ -18,11 +18,13 @@
  *   PROBE_ENDPOINT=https://watch.logic-yjb.top PROBE_TOKEN=xxx node ... --dry-run
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { ledgerFingerprint } from '../tools/upstream-watch/fingerprint.mjs'
 import { shouldRetryUpload, uploadBackoffMs } from '../tools/upstream-watch/retry.mjs'
+import { scanLatestMtime } from '../tools/upstream-watch/nas-freshness.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.join(HERE, '..')
@@ -72,6 +74,28 @@ function runBlackbox() {
     }
   }
   return JSON.parse(out)
+}
+
+/**
+ * 给每条判定附 `dataAt`(本机该 agent 最新数据的 mtime)。
+ *
+ * 为什么需要:黑盒 🟢 只证明"**磁盘上这份数据**读得懂",不证明"当前上游版本
+ * 写出来的东西读得懂"。实测 hermes v0.23.0 把会话改成单一 gateway 持有
+ * (LLM 判捕获可能受影响),而本机装的是 0.21 —— 黑盒照样 🟢,因为那是旧数据。
+ * 云端拿 dataAt 与上游 publishedAt 一比,就能标出"🟢 只覆盖旧版本"
+ * (见 summarize.mjs 的 versionGap)。**只标注,不降级** —— 用户多半只是最近
+ * 没用过该 agent,降成黄字会让看板天天满屏黄。
+ *
+ * 路径取自 check.ts 的 `source`(已解析的绝对路径;sqlite 是 db 文件,
+ * jsonl/json 是目录)。未解析的合成串(如 "a | b")忽略。
+ */
+function attachDataAt(blackbox) {
+  for (const r of blackbox.results ?? []) {
+    if (r.verdict === 'absent' || r.verdict === 'blackbox_only') continue
+    const src = typeof r.source === 'string' && fs.existsSync(r.source) ? r.source : null
+    r.dataAt = src ? scanLatestMtime([src], os.homedir()) : null
+  }
+  return blackbox
 }
 
 /** 生成 Markdown 报告(进 git,供 review 与追溯) */
@@ -220,7 +244,7 @@ async function report(blackbox) {
   }
 }
 
-const blackbox = runBlackbox()
+const blackbox = attachDataAt(runBlackbox())
 const { day, text } = renderReport(blackbox)
 
 const file = path.join(REPORTS, `${day}.md`)

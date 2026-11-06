@@ -338,9 +338,21 @@ function probeBar(id) {
   const srcLabel = p.src === 'nas' ? 'NAS' : '本机';
   const meta = [p.version, p.dataAt ? '数据 ' + String(p.dataAt).slice(0, 10) : '']
     .filter(Boolean).join(' · ');
+  /**
+   * 🟢 只覆盖旧版本:黑盒读的是磁盘上那份数据,若上游最新发布晚于数据 mtime,
+   * 这颗绿只证明旧版本写的东西读得懂。**只标注不降级** —— 用户可能只是最近
+   * 没用过该 agent,降成黄字会让看板每次发版后满屏黄。
+   */
+  const w = (STATE.results || []).find(r => r.agentId === id);
+  const gap = p.verdict === 'ok' && p.dataAt && w?.publishedAt &&
+              new Date(w.publishedAt) > new Date(p.dataAt);
+  const gapBadge = gap
+    ? `<span class="badge b-medium" title="黑盒只证明旧版本格式可读;升级该 agent 并跑一次会话后重测">🟢 仅覆盖旧版本</span>`
+    : '';
   return `<div class="probe">
     <span class="tag">${srcLabel}</span>
     <span class="badge ${cls}">${label}</span>
+    ${gapBadge}
     ${meta ? `<span class="txt">${esc(meta)}</span>` : ''}
     <span class="txt">${esc(p.detail)}</span>
   </div>`;

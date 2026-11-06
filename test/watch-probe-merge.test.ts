@@ -213,6 +213,24 @@ describe('scanLatestMtime', () => {
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  /**
+   * 根可以是**文件**:sqlite 源的 localRoots 直接指向 db 文件
+   * (~/.zcode/cli/db/db.sqlite)。旧实现只会 walk 目录,对文件根一 stat 就放弃
+   * —— 开发机侧因此永远拿不到 dataAt,"🟢 只覆盖旧版本"的标注也就无从谈起。
+   */
+  it('文件根取其自身 mtime(sqlite 源)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'msql-fresh-file-'))
+    try {
+      const db = path.join(dir, 'db.sqlite')
+      fs.writeFileSync(db, 'x')
+      const t = new Date('2026-03-04T05:06:07Z')
+      fs.utimesSync(db, t, t)
+      expect(scanLatestMtime([db], dir)).toBe('2026-03-04T05:06:07.000Z')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('冒烟:真服务双源上报互不覆盖', () => {

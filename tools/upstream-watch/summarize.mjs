@@ -134,6 +134,31 @@ export function buildBrief(results, probe, ledger = { state: 'unknown', server: 
     blind: trackedCount > 0 && fetchErrors.length * 2 >= trackedCount
   }
 
+  /**
+   * 黑盒 🟢 但本机数据早于上游最新发布 —— **只标注,不降级**。
+   *
+   * 黑盒只能证明"磁盘上这份数据读得懂",不证明"当前上游版本写出来的东西读得懂"。
+   * 实测(2026-11-06):hermes v0.23.0 把会话改成单一 gateway 持有(LLM 判捕获
+   * 可能受影响),本机装的是 0.21 → 黑盒照样 🟢,因为那份数据是旧版本写的。
+   * NAS 侧由 nas-freshness 按"安装时间"降级;开发机侧没有安装时间,于是用
+   * "上游发布日 vs 数据 mtime"来标注这个缺口。
+   *
+   * 为什么只标注:用户可能只是最近没用过该 agent。降成黄字会让看板在上游每次
+   * 发版后满屏黄,那是噪音;而"🟢 只覆盖旧版本"这条事实本身已经足够行动。
+   */
+  const versionGap = []
+  for (const r of R) {
+    const p = verdictOf(probe, r.agentId)
+    if (!p || p.verdict !== 'ok') continue
+    const dataAt = p.dataAt
+    const upstreamAt = r.publishedAt
+    if (!dataAt || !upstreamAt) continue
+    if (new Date(upstreamAt) > new Date(dataAt)) {
+      versionGap.push({ id: r.agentId, version: r.version ?? null, dataAt, upstreamAt })
+    }
+  }
+  versionGap.sort((a, b) => a.id.localeCompare(b.id))
+
   return {
     total: R.length,
     whitebox,
@@ -143,7 +168,8 @@ export function buildBrief(results, probe, ledger = { state: 'unknown', server: 
     attention,
     closedSource,
     fetchErrors,
-    whiteboxBlind
+    whiteboxBlind,
+    versionGap
   }
 }
 
@@ -204,6 +230,15 @@ function renderBrief(brief) {
         '白盒这一栏今天**不能作为"无风险"的依据**,先修抓取(常见根因:GITHUB_TOKEN 失效/过期,表现为 HTTP 401)'
     )
   }
+  if (brief.versionGap?.length) {
+    L.push('')
+    L.push('黑盒🟢但本机数据早于上游最新发布(🟢 只覆盖旧版本,不等于当前上游版本可读):')
+    for (const g of brief.versionGap) {
+      L.push(
+        `  - ${g.id}: 本机数据 ${String(g.dataAt).slice(0, 10)} · 上游 ${g.version ?? '?'} 发布于 ${String(g.upstreamAt).slice(0, 10)}`
+      )
+    }
+  }
   return L.join('\n')
 }
 
@@ -217,6 +252,7 @@ const PROMPT = [
   '2. 不要重复罗列全部 agent,只讲值得注意的。',
   '3. 如果事实里没有任何需要处理的问题,就直说"本周无风险",不要硬造紧迫感。',
   '3.5 **事实里出现「白盒大面积失效」时,headline 必须说明白盒不可信,绝不能说"无风险"** —— 抓不到数据 ≠ 没有风险,那是最危险的一种误读。',
+  '3.6 事实里出现「黑盒🟢但数据早于上游发布」时,在 actions 里给一条具体的「升级该 agent 后重跑探针」;不要把它算作已验证。',
   '4. 如果黑盒尚未上报或闭源 agent 无人看守,要点出来 —— 这是当前最大的盲区。',
   '5. actions 是给人做的事,每条要具体到"做什么"(例如"本机跑 npm run upstream:check 确认"),不要写"持续关注"这种空话。',
   '',
