@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-11-06 · v0.7.2 已发版(macOS 镜像退役 · 20 资产 · x64 首次构建成功)
+
+**已发布:** https://github.com/Logic647/MemorySQL/releases/tag/v0.7.2 —— **20 资产**(比以往多 5 个,因为 mac **两个架构都出来了**),`latest.yml`(347B)/ `latest-linux.yml`(526B)/ `latest-mac.yml`(811B)公网全 200,`Setup-0.7.2.exe` 的 Content-Length 104,351,671 与 `latest.yml` 声明一致。
+
+**发版撞到一个「镜像退役」型的静默失败,值得记:** 第一次推 tag,macOS arm64 的 job **创建后 1 秒就 cancelled**——`started==created`、`steps: []`、`runner_name` 为空。看起来像被并发取消,实际是 **macos-14 镜像于 2026-11-02 退役**(actions/runner-images README 明写 "All macOS 14 images retired from GitHub Actions on November 2, 2026")。10-26 发 v0.7.1 时它还好用,十天窗口里就没了。
+**教训:runner 标签是外部依赖,会静默消失;症状是「秒取消 + 0 steps + 无 runner」,不是排队也不是失败。** 排查顺序:先看 job 的 `started/completed/runner_name`,再去 runner-images 的镜像表核对标签。
+顺带**顺手解决了老问题**:换成 `macos-15`(arm64)+ `macos-15-intel`(x64)后,**Intel 包第一次真正构建成功**(此前 macos-13 长期排队到永远,一直只有 arm64)。
+
+**第二个坑:退役 job 会把 concurrency 组占死。** 旧 tag run 因为 macos-13 永远 queued,整个 run 停在 in_progress → 同名组 `ci-tag-vX.Y.Z` 被占 → 后面重推的 tag run 停在 `pending`、**连 job 都不创建**。`cancel-in-progress: false`(发版不能被挤掉)反而让它永远卡住。解法:`POST /actions/runs/<id>/cancel` 先释放组,新 run 立刻从 pending 变 in_progress。
+
+**第三个坑(每日都要面临的):两个 mac job 各产一份 `latest-mac.yml`,后传的覆盖先传的。** 本次 x64 后传(10:51 > 10:49),不处理的话 **Apple Silicon 会被推 x64 包**。流程:从两个 mac artifact 里各取 `latest-mac.yml` → `node scripts/merge-mac-manifest.mjs out.yml arm.yml x64.yml`(它用 electron-updater 自己的 `filterFilesForArch` 校验两个架构都解析得到 zip)→ **DELETE 旧资产 → POST 上传合并件**(GitHub 不能直接覆盖同名资产)→ 回读确认两份都在。**这次 x64 第一次存在,所以这个合并第一次真正必要。**
+
+**其他:** CI 六个 job 全绿(ci×2 + package×4);`npx electron-rebuild` + 双 mac 架构 `npm ci` 均正常;发布走 `publish-release.mjs`(单草稿,无需删重复)。
+
+---
+
 ## 2026-11-06 · 子代理会话不再占会话列表(折叠到父会话)
 
 **问题:** 会话里派子代理时,子代理会作为独立会话入库,把列表挤满。真机实测:**zcode 100 条里 37 条、opencode 36 条里 5 条是子代理**,合计 42 条(列表 314 → 272),标题全是「你是 xxx 子代理…」这类任务提示词。它们不是用户在跟 agent 对话,却和真会话平起平坐。
