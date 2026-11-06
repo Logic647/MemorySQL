@@ -460,7 +460,8 @@ const plugin: MemorySQLPlugin = {
     ctx.mcp.registerTool({
       name: 'memory_get_project_digest',
       description:
-        '获取项目滚动总结:定期把项目新会话总结成 摘要+待办+决策(带覆盖时间范围)。接手项目先读它,成本远低于逐个翻历史会话;需要细节再配合 memory_list_sessions / memory_get_session。',
+        '【何时调用】接手一个项目的第一件事(成本远低于逐个翻会话);用户问"这个项目最近在做什么/还有什么没做完"时也用它。\n' +
+        '返回项目滚动总结:摘要 + 待办 + 决策,带覆盖时间范围;需要细节再配合 memory_list_sessions / memory_get_session。',
       inputSchema: {
         type: 'object',
         properties: {

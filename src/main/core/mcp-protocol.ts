@@ -54,7 +54,8 @@ function textResult(text: string): unknown {
 export async function handleRpc(
   req: JsonRpcRequest,
   tools: McpToolLike[],
-  serverInfo: { name: string; version: string } = SERVER_INFO
+  serverInfo: { name: string; version: string } = SERVER_INFO,
+  instructions?: string
 ): Promise<JsonRpcResponse | null> {
   const method = req.method ?? ''
   const isNotification = req.id === undefined || req.id === null
@@ -65,7 +66,10 @@ export async function handleRpc(
       return ok(req.id, {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo
+        serverInfo,
+        // 规范里的可选字段:客户端可以把它放进系统提示。没有它,模型只知道
+        // 有 8 个工具,不知道什么时候该调 —— 这就是"被动调用"的根因。
+        ...(instructions ? { instructions } : {})
       })
     case 'notifications/initialized':
       return null

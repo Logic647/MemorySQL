@@ -3,6 +3,7 @@ import { app } from 'electron'
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import type { PluginContext } from '../../main/core/plugin-host'
 import { handleRpc, parseRpcMessage, type JsonRpcRequest } from '../../main/core/mcp-protocol'
+import { MEMORYSQL_INSTRUCTIONS } from '../../shared/mcp-instructions'
 
 /**
  * Serves every tool registered through ctx.mcp over MCP Streamable HTTP
@@ -97,10 +98,12 @@ function startServer(): void {
             )
             return
           }
-          const response = await handleRpc(msg as JsonRpcRequest, ctx.mcp.list(), {
-            name: 'memorysql',
-            version: app.getVersion()
-          })
+          const response = await handleRpc(
+            msg as JsonRpcRequest,
+            ctx.mcp.list(),
+            { name: 'memorysql', version: app.getVersion() },
+            MEMORYSQL_INSTRUCTIONS
+          )
           if (response === null) {
             res.writeHead(202).end()
             return

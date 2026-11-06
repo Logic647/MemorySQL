@@ -435,7 +435,8 @@ export function createMcpTools(deps: {
     {
       name: 'memory_get_context',
       description:
-        '获取"续接包":开发者画像 + 长期记忆 + 项目状态 + 最近会话(带 id,可直接深读)。agent 新会话开始时调用一次即可恢复上下文。可选按 agent 过滤记忆、内联最近会话 tail 作为上一棒交接摘要。',
+        '【何时调用】开始一个任务、进入不熟悉的项目、或用户说"续接/接着上次/继续做"时,先调一次(每个会话最多一次)。\n' +
+        '返回"续接包":开发者画像 + 长期记忆 + 项目状态 + 最近会话(带 id,可直接深读),可选按 agent 过滤记忆、内联上一棒交接摘要。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -452,7 +453,8 @@ export function createMcpTools(deps: {
     {
       name: 'memory_get_project_brief',
       description:
-        '获取项目交接简报:最近会话、上一棒 tail、相关活跃记忆、待确认进度,从知识库自动汇编,用于换 agent 接手或回滚上下文。',
+        '【何时调用】要接手别人做了一半的项目、或用户问"这个项目进展到哪了"时用;比逐个翻会话便宜得多。\n' +
+        '返回项目交接简报:最近会话、上一棒 tail、相关活跃记忆、待确认进度,从知识库自动汇编。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -465,7 +467,7 @@ export function createMcpTools(deps: {
     {
       name: 'memory_list_sessions',
       description:
-        '枚举会话列表(带 id):按项目、agent、时间范围过滤,返回 id/标题/agent/开始时间/消息数。找"某项目最近做过什么"用这个;关键词内容检索用 memory_search。',
+        '【何时调用】需要按项目/agent/时间**列清单**时(例如"这个项目都有哪些会话""上周跑过什么"),或要拿会话 id 去 memory_get_session 深读时。按内容找东西用 memory_search。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -533,7 +535,8 @@ export function createMcpTools(deps: {
     {
       name: 'memory_get_session',
       description:
-        '按会话 id 获取消息时间线(角色/内容/时间/工具名)。默认取**最后**若干条并按 4 万字符预算截断(避免一次调用撑爆上下文);需要更早内容用 tail 调整,单条长消息用 full=true。列表见 memory_list_sessions;读项目整体结论优先用 memory_get_project_digest。',
+        '【何时调用】已有会话 id、需要逐条看原始对话时(排查"当时到底怎么说的"、复核某个决定)。只要结论不要细节时,优先 memory_get_project_digest。\n' +
+        '返回消息时间线(角色/内容/时间/工具名);默认取最后若干条并按 4 万字符预算截断,要更早内容用 tail,单条长消息用 full=true。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -635,7 +638,8 @@ export function createMcpTools(deps: {
     {
       name: 'memory_search',
       description:
-        '全文检索会话/消息/记忆(trigram,支持中文),可按 kind、agent、项目、时间范围收窄;语义检索启用时,字面未命中的概念性查询会以「·语义」标注补足召回。列举会话(不按内容)用 memory_list_sessions。',
+        '【何时调用】用户问"上次怎么做的""为什么这样定""之前踩过什么坑",或你需要引用历史决策/偏好时 —— **先搜再答,不要凭印象**。\n' +
+        '全文检索会话/消息/记忆(trigram,支持中文),可按 kind/agent/项目/时间收窄;语义检索启用时,字面未命中的概念查询会以「·语义」补足召回。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -745,7 +749,8 @@ export function createMcpTools(deps: {
     {
       name: 'memory_write',
       description:
-        '向知识库写入一条长期记忆(用户偏好、事实、决策等),跨项目跨 agent 生效。可附 agent 归因、项目关联与标签;内容与现有记忆完全相同时拒绝重复写入。',
+        '【何时调用】用户表达了偏好/习惯、你们拍板了架构决策、或确认了一个以后还会用到的事实 —— **当场记一条**,不必等用户要求。\n' +
+        '写入长期记忆(跨项目跨 agent 生效),可附 agent 归因、项目关联与标签;内容完全相同时拒绝重复写入。一条只写一件事。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -794,7 +799,8 @@ export function createMcpTools(deps: {
     {
       name: 'memory_log_progress',
       description:
-        '收工汇报:结构化记录本轮做了什么/下一步/卡在哪,生成一条待确认的进度记忆(候选),下次任何 agent 拉取交接简报时可见。建议每次收工或换 agent 前调用。',
+        '【何时调用】本轮活儿告一段落、用户说"先这样/明天继续"、或要把任务交给下一个 agent 之前 —— 不用等用户提醒。\n' +
+        '收工汇报:结构化记录做了什么/下一步/卡在哪,生成一条待确认的进度记忆(候选),任何 agent 拉交接简报时都能看到。',
       inputSchema: {
         type: 'object',
         properties: {
