@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-11-06 · dsh 首次真机校准(改掉一个 title 缺陷)+ hermes v0.23.0 捕获验证通过
+
+**背景:** 用户把 the agent harness(桌面版)装到本机并发了一轮对话、把 Hermes 升到 0.23 也发了对话。两件事同时解掉了两个悬了很久的验证缺口(dsh 此前双机 absent、hermes 的"单 gateway"改造被 LLM 判为捕获可能受影响)。
+
+**dsh 真机校准(格式 v4 / 桌面版 2.0.22-next)——源码推导与真实文件逐项吻合:**
+- 路径布局 `~/.dsh/sessions/<slug>/<session-id>/session.v4.jsonl.zstd` = `dshSessionsRoot` + `latestGenerationFiles` 的预期
+- zstd **10 个独立帧**拼接,`decodeDshFile` 按 RFC 8878 边界逐帧解出 31 行 ✓
+- header 字段全对:`version:4`、`createdAt` 毫秒、`cwd`、`delegationDepth:0`、`isSeeded:false`、`agentPreset`
+- 19 种事件类型里,只提炼出该提炼的:`user/message` × 5 → **只有 `source.kind==='user'` 那条是真提问**("你好"),其余 4 条(`user-approval` 改权限策略通知、`runtime-context`、`skill-catalog`、`time-context`)按设计跳过;`assistant/message` 正文在 **`data.message.content[]`**(不是 `data.content`)——与源码核对结论一致;`reasoning` 块跳过
+- 入库结果:1 会话 / 2 消息,标题、cwd、时间戳(毫秒→秒)全对
+- **发现并修掉一个缺陷:`session/title` 会落多次**(先 `fallback`=用户第一句"你好",再 `provider`=模型总结"问候",改名还会追加),旧实现 `&& !title` **取第一次**,库里永远显示原始提问。改为**最后一次生效**,真机复解已得到"问候"(与应用显示一致),补 2 条 fixture 测试(三次 title 取最后/空串不清标题)
+
+**hermes v0.23.0 捕获验证(LLM 的"可能受影响"警报解除):**
+- 库表从 **20 张涨到 38 张**(单 gateway 改造确实动了库),但 `check.ts` 的 `sessions`/`messages` 两表及必需列**全部匹配** → 黑盒 🟢
+- 真机捕获:`capture-hermes` 扫到 8 个会话、新导入 2 个(用户升级后发的两轮),消息数 2/1,标题/时间正确入库 → **schema 层面确认兼容**,LLM 那条 `affectsCapture` 的风险按"已验证不成立"处理
+
+**versionGap 实测闭环:** 探针上报新 `dataAt` 后,hermes 因"数据=今天"**自动掉出**缺口名单;剩 codex(数据 09-22 / 上游 rust-v0.167.0)与 opencode(10-16 / process-daemon-v0.5.0),摘要 actions 直接给出"升级 X 后重跑探针,当前黑盒🟢只覆盖 <日期> 的旧数据"。**"标注不降级"的口径在真实数据上成立。**
+
+**决定更新:** 上一条记录的"dsh 不做本机实测(开源可对源码核对)"**作废**——用户已在装机后自行安装并发对话。真机校准反而证明了源码核对的价值(19 种事件全对上),同时抓出源码看不出的一处行为差异(title 多次落盘)。幸存的小尾巴:已入库的那条 dsh 会话标题仍是旧的"你好"(增量水位不会重读未变更文件),下一条消息进来即会更新。
+
+---
+
 ## 2026-11-06 · 新增「🟢 只覆盖旧版本」标注(开发机侧新鲜度)+ dsh 不做本机实测的决定
 
 **起因:** 白盒恢复后第一次真实评估就抓到 hermes **v0.23.0** —— 上游把会话改成**单一 gateway 持有**(one queue / one history,CLI/TUI/Desktop/ACP 不再各自跑一份 agent 对着同一会话),LLM 判 `affectsCapture=true / severity=medium`,理由「sessions/messages 的写入路径与落库方式可能随之变化」。**但本机黑盒报的是 🟢**,因为本机装的是 0.21、磁盘上那份数据是旧版本写的。这正是"陈旧数据假绿"——NAS 侧有 `nas-freshness` 按安装时间降级,**开发机侧没有安装时间,这个缺口一直看不见**。

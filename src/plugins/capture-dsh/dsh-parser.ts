@@ -194,7 +194,15 @@ export function parseDshSession(filePath: string, text: string): RawSession | nu
     } else if (entry.type === 'assistant/message') {
       const msg = data.message
       if (msg?.role === 'assistant') messages.push(...assistantContentToMessages(msg.content, ts))
-    } else if (entry.type === 'session/title' && !title) {
+    } else if (entry.type === 'session/title') {
+      /**
+       * **最后一次生效**,不是第一次。真机实测(2026-11-06,桌面版 2.0.22-next,
+       * 会话格式 v4):同一个会话里 `session/title` 会出现多次 ——
+       *   1. 先落一条 `source.kind:'fallback'`,标题就是用户第一句("你好")
+       *   2. 再落一条 `source.kind:'provider'`,是模型总结出来的标题("问候")
+       * 用户手动改名时也会再追加一条。旧实现 `&& !title` 取第一次,于是库里
+       * 永远显示原始提问,和应用里看到的标题不一致。
+       */
       if (typeof data.title === 'string' && data.title.trim()) title = data.title.trim()
     }
   }

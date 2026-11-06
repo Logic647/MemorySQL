@@ -131,6 +131,30 @@ describe('parseDshSession', () => {
     expect(s!.messages[0].content).toBe('无 source 的用户行')
   })
 
+  /**
+   * 真机实测(2026-11-06,桌面版 2.0.22-next / 会话格式 v4):一个会话里
+   * `session/title` 会落多次 —— 先 fallback(取用户第一句),再由模型生成
+   * provider 标题,手动改名还会追加。旧实现 `&& !title` 只取第一次,于是库里
+   * 显示原始提问("你好"),而应用里看到的是"问候"。
+   */
+  it('session/title 多次出现时取最后一次(fallback → provider → 手动改名)', () => {
+    const fallback = JSON.stringify({ type: 'session/title', data: { title: '你好', source: { kind: 'fallback' } } })
+    const provider = JSON.stringify({ type: 'session/title', data: { title: '问候', source: { kind: 'provider' } } })
+    const s = parseDshSession(
+      'x/session.v4.jsonl',
+      [HEADER, userLine('你好'), fallback, provider, titleLine('登录排错')].join('\n')
+    )
+    expect(s!.title).toBe('登录排错')
+  })
+
+  it('后续 title 为空串时不清掉已有标题', () => {
+    const s = parseDshSession(
+      'x/session.v4.jsonl',
+      [HEADER, userLine('你好'), titleLine('问候'), titleLine('   ')].join('\n')
+    )
+    expect(s!.title).toBe('问候')
+  })
+
   it('子 agent 会话(delegationDepth>0 / origin=subagent)跳过', () => {
     const sub = JSON.stringify({
       type: 'session',
