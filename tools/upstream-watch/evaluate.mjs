@@ -216,6 +216,10 @@ export function ruleEvaluate(changelog, agent) {
  * 「无法评估」—— 绝不假装评估过。
  */
 export function evaluate(agent, upstream) {
+  // 闭源且**没拿到** notes → 只能靠黑盒,此时不该假装能评估
+  // (但若用户从看板手动粘贴了 changelog,就必须正常评估,否则手动入口形同虚设)
+  const blackboxOnly = agent.monitor === 'blackbox_only' || agent.upstream?.kind === 'none'
+
   const base = {
     agentId: agent.id,
     version: upstream?.version ?? null,
@@ -224,12 +228,15 @@ export function evaluate(agent, upstream) {
     notes: upstream?.notes ?? '',
     fetchError: upstream?.error ?? null,
     fallbackUsed: upstream?.fallbackUsed ?? false,
-    fallbackReason: upstream?.fallbackReason ?? null
+    fallbackReason: upstream?.fallbackReason ?? null,
+    /**
+     * 必须落在 base 里,三条返回路径都要带上 —— 2026-11-06 踩过:
+     * 它原先只写在「正常评估」的返回里,闭源那条提前返回丢了该字段,
+     * 于是摘要侧按 `r.blackboxOnly` 判闭源时把 qoder/codebuddy/workbuddy
+     * 当成了普通 tracked:闭源名单空了,它们反而进了「抓取失败」。
+     */
+    blackboxOnly
   }
-
-  // 闭源且**没拿到** notes → 只能靠黑盒,此时不该假装能评估
-  // (但若用户从看板手动粘贴了 changelog,就必须正常评估,否则手动入口形同虚设)
-  const blackboxOnly = agent.monitor === 'blackbox_only' || agent.upstream?.kind === 'none'
 
   if (blackboxOnly && !base.notes) {
     return {
@@ -263,7 +270,6 @@ export function evaluate(agent, upstream) {
     reason: blackboxOnly
       ? `${rule.note}(changelog 由人工提供;该 agent 仍无自动监控,漂移只能靠黑盒发现)`
       : rule.note,
-    blackboxOnly,
     llm: null
   }
 }

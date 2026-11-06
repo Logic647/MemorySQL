@@ -212,3 +212,31 @@ describe('evaluate(汇总)', () => {
     expect(r.fallbackReason).toContain('commit')
   })
 })
+
+/**
+ * blackboxOnly 必须出现在**每条**返回路径上。
+ *
+ * 2026-11-06 生产回归:该字段原先只写在「正常评估」的返回里,闭源那条提前返回
+ * (blackboxOnly && !notes)把它丢了 → 摘要侧按 r.blackboxOnly 判闭源时,
+ * qoder/codebuddy/workbuddy 被当成普通 tracked:闭源名单变空,它们反而被列进
+ * 「抓取失败」。摘要的测试一直手写 blackboxOnly:true,所以没测出来 ——
+ * 现在从 evaluate 的产出直接断言。
+ */
+describe('evaluate 的 blackboxOnly 契约', () => {
+  it('闭源 + 无 notes(真实生产路径)→ 仍带 blackboxOnly', () => {
+    const r = evaluate(blackbox, { notes: '', error: '闭源,无公开更新日志' })
+    expect(r.risk).toBe('unknown')
+    expect((r as { blackboxOnly?: boolean }).blackboxOnly).toBe(true)
+  })
+
+  it('闭源 + 人工补的 changelog → 也带 blackboxOnly', () => {
+    const r = evaluate(blackbox, { notes: 'feat: change schema', notesProvided: true })
+    expect(r.risk).toBe('high')
+    expect((r as { blackboxOnly?: boolean }).blackboxOnly).toBe(true)
+  })
+
+  it('开源 agent → blackboxOnly 明确为 false(不能是 undefined,否则过滤条件会误判)', () => {
+    const r = evaluate(agent, { notes: '' })
+    expect((r as { blackboxOnly?: boolean }).blackboxOnly).toBe(false)
+  })
+})

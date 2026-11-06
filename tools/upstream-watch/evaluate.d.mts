@@ -56,6 +56,8 @@ export function evaluate(
     error?: string | null
     fallbackUsed?: boolean
     fallbackReason?: string | null
+    /** /api/manual 手动粘贴 changelog 时置 true(当前只影响调用方语义,评估逻辑不看它) */
+    notesProvided?: boolean
   }
 ): EvalResult
 
