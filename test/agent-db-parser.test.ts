@@ -122,6 +122,34 @@ describe('parseAgentSqliteSessions (opencode-lineage stores)', () => {
     fs.rmSync(file, { force: true })
   })
 
+  it('filters by time_updated when since is given (incremental startup scan)', () => {
+    const file = path.join(os.tmpdir(), `agent-db-since-${Math.random().toString(36).slice(2)}.db`)
+    const db = new Database(file)
+    db.exec(`
+      CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER);
+      CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT);
+      CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT);
+    `)
+    const ins = db.prepare('INSERT INTO session VALUES (?,?,?,?,?)')
+    ins.run('old', '/p', 'old', 1000000000000, 1000000000000)
+    ins.run('new', '/p', 'new', 1000000500000, 1000000500000)
+    const msg = db.prepare('INSERT INTO message VALUES (?,?,?)')
+    msg.run('m-old', 'old', JSON.stringify({ role: 'user', time: { created: 1000000000000 } }))
+    msg.run('m-new', 'new', JSON.stringify({ role: 'user', time: { created: 1000000500000 } }))
+    // legacy layout keeps the body in part rows
+    const part = db.prepare('INSERT INTO part VALUES (?,?,?,?)')
+    part.run('p-old', 'm-old', 'old', JSON.stringify({ type: 'text', text: 'old turn' }))
+    part.run('p-new', 'm-new', 'new', JSON.stringify({ type: 'text', text: 'new turn' }))
+    db.close()
+
+    expect(
+      parseAgentSqliteSessions(file, 'zcode', undefined, { since: 1000000200000 }).map((s) => s.externalId)
+    ).toEqual(['new'])
+    // no watermark → everything (first run)
+    expect(parseAgentSqliteSessions(file, 'zcode')).toHaveLength(2)
+    fs.rmSync(file, { force: true })
+  })
+
   it('returns an empty list when the db does not exist', () => {
     expect(parseAgentSqliteSessions(path.join(os.tmpdir(), 'no-such-db-x9.db'), 'opencode')).toEqual([])
   })

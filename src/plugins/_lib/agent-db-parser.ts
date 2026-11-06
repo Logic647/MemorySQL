@@ -123,11 +123,16 @@ function detectLayout(db: ReturnType<typeof openForeignDb>['db']): 'legacy' | 'v
 /**
  * Parse the whole store (or a single session when onlySessionId is given).
  * Sessions without any parseable turns are skipped.
+ *
+ * `opts.since` (epoch ms) restricts a full scan to sessions whose
+ * `time_updated` is newer — the startup scan used to re-parse every session
+ * (788 ms for 73 zcode sessions / 30k messages) even when nothing changed.
  */
 export function parseAgentSqliteSessions(
   dbPath: string,
   agentType: RawSession['agentType'],
-  onlySessionId?: string
+  onlySessionId?: string,
+  opts?: { since?: number }
 ): RawSession[] {
   let db: ReturnType<typeof openForeignDb>['db']
   let cleanup: () => void
@@ -140,19 +145,24 @@ export function parseAgentSqliteSessions(
     const layout = detectLayout(db)
     if (layout === null) return [] // unknown schema — never throw "no such table"
 
+    const since = !onlySessionId && opts?.since && opts.since > 0 ? opts.since : null
     const sessions: SessionRow[] = []
     if (layout === 'legacy') {
       sessions.push(
         ...(onlySessionId
           ? (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session WHERE id = ?').all(onlySessionId) as SessionRow[])
-          : (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session ORDER BY time_updated').all() as SessionRow[]))
+          : since !== null
+            ? (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session WHERE time_updated > ? ORDER BY time_updated').all(since) as SessionRow[])
+            : (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session ORDER BY time_updated').all() as SessionRow[]))
       )
     } else {
       // session_v2 keeps the legacy column names for id/directory/title/time_*
       sessions.push(
         ...(onlySessionId
           ? (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session_v2 WHERE id = ?').all(onlySessionId) as SessionRow[])
-          : (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session_v2 ORDER BY time_updated').all() as SessionRow[]))
+          : since !== null
+            ? (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session_v2 WHERE time_updated > ? ORDER BY time_updated').all(since) as SessionRow[])
+            : (db.prepare('SELECT id, directory, title, time_created, time_updated FROM session_v2 ORDER BY time_updated').all() as SessionRow[]))
       )
     }
 

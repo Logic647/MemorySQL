@@ -51,6 +51,19 @@ export default createCapturePlugin({
     const storage = findOpencodeStorage(home, userDataDir('local'))
     return storage ? parseOpencodeStorage(storage) : []
   },
+  // db 型来源可按 time_updated 增量;JSON 树(旧版)没有可靠的时间字段,
+  // 返回 watermark:null 让工厂不要推进水位(否则会漏读)
+  collectSince: (home, sinceMs) => {
+    const dbPath = findOpencodeDb()
+    if (dbPath) {
+      const sessions = parseAgentSqliteSessions(dbPath, 'opencode', undefined, { since: sinceMs })
+      let maxEnded = 0
+      for (const s of sessions) if ((s.endedAt ?? 0) > maxEnded) maxEnded = s.endedAt ?? 0
+      return { sessions, watermark: maxEnded > 0 ? maxEnded * 1000 : null }
+    }
+    const storage = findOpencodeStorage(home, userDataDir('local'))
+    return { sessions: storage ? parseOpencodeStorage(storage) : [], watermark: null }
+  },
   // db-backed: any write to opencode.db(-wal) re-reads the whole (small) store —
   // title/cwd renames show up without waiting for the next app launch.
   // watchPaths is a function so a db created after plugin load is still watched.

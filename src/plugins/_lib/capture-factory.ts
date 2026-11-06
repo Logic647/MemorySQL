@@ -18,6 +18,15 @@ export interface CaptureSpec {
   defaultRoot: string
   /** collect every RawSession currently on disk */
   collect: (sourceRoot: string) => RawSession[]
+  /**
+   * DB-backed adapters: collect only what changed since `sinceMs` (epoch ms).
+   * `watermark` is the newest timestamp this collection covered — return null
+   * when the source can't be filtered safely (then the watermark is left alone).
+   */
+  collectSince?: (
+    sourceRoot: string,
+    sinceMs: number
+  ) => { sessions: RawSession[]; watermark: number | null }
   /** whether the source exists at all (drives "未检测到" in the UI) */
   sourceExists?: (sourceRoot: string) => boolean
   /** dirs to watch; defaults to [sourceRoot] (db-backed adapters watch the db folder).
@@ -69,10 +78,32 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
         : fs.existsSync(sourceRoot)
       lastStatus = { ...lastStatus, sourceRoot, available: exists }
 
+      /** collect (incrementally once a watermark exists) + the watermark this run covers */
+      const collectWithWatermark = (): { sessions: RawSession[]; next: number | null } => {
+        const watermark = spec.collectSince ? Number(ctx.settings.get('scanWatermark', 0)) || 0 : 0
+        if (spec.collectSince && watermark > 0) {
+          const r = spec.collectSince(sourceRoot, watermark)
+          return { sessions: r.sessions, next: r.watermark }
+        }
+        const sessions = spec.collect(sourceRoot)
+        if (!spec.collectSince) return { sessions, next: null }
+        let maxEnded = 0
+        for (const s of sessions) if ((s.endedAt ?? 0) > maxEnded) maxEnded = s.endedAt ?? 0
+        return { sessions, next: maxEnded > 0 ? maxEnded * 1000 : null }
+      }
+
+      /** 入库成功后才推进水位(失败则下次重读);秒级时间戳*1000 只会低估、不会漏读 */
+      const commitWatermark = (next: number | null): void => {
+        if (next === null) return
+        const current = Number(ctx.settings.get('scanWatermark', 0)) || 0
+        if (next > current) ctx.settings.set('scanWatermark', next)
+      }
+
       const scan = async (): Promise<CaptureStatus> => {
         try {
-          const sessions = spec.collect(sourceRoot)
+          const { sessions, next } = collectWithWatermark()
           const res = await ctx.services.use<IngestService>('ingest').ingestSessions(sessions)
+          commitWatermark(next)
           lastStatus = {
             ...lastStatus,
             available: true,
@@ -134,8 +165,11 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
           const runIncremental = async (changed: string): Promise<void> => {
             try {
               let sessions: RawSession[]
+              let next: number | null = null
               if (rescan) {
-                sessions = spec.collect(sourceRoot)
+                const r = collectWithWatermark()
+                sessions = r.sessions
+                next = r.next
               } else if (watchSpec.parseFile) {
                 sessions = watchSpec.parseFile(changed).filter(Boolean)
               } else {
@@ -143,6 +177,7 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
               }
               if (sessions.length === 0) return
               const res = await ctx.services.use<IngestService>('ingest').ingestSessions(sessions)
+              commitWatermark(next)
               if (res.imported + res.updated > 0) {
                 ctx.log.info(`incremental import from ${path.basename(changed)}`)
               }

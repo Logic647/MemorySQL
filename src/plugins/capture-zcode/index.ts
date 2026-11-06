@@ -51,10 +51,22 @@ const plugin: MemorySQLPlugin = {
       try {
         let sessions: RawSession[] = []
         let source: string
+        let nextWatermark: number | null = null
         const parseFailures: string[] = []
         if (fs.existsSync(dbPath)) {
           source = dbPath
-          sessions = parseAgentSqliteSessions(dbPath, 'zcode')
+          // 增量:只读 time_updated 超过水位的会话。全量解析 73 个会话/3 万条消息
+          // 实测 788ms,而绝大多数启动期间一个会话都没变。
+          const watermark = Number(ctx.settings.get('scanWatermark', 0)) || 0
+          sessions = parseAgentSqliteSessions(
+            dbPath,
+            'zcode',
+            undefined,
+            watermark > 0 ? { since: watermark } : undefined
+          )
+          let maxEnded = 0
+          for (const s of sessions) if ((s.endedAt ?? 0) > maxEnded) maxEnded = s.endedAt ?? 0
+          if (maxEnded * 1000 > watermark) nextWatermark = maxEnded * 1000
         } else {
           source = rolloutRoot
           for (const f of findZcodeRollouts(rolloutRoot)) {
@@ -68,6 +80,8 @@ const plugin: MemorySQLPlugin = {
           }
         }
         const res = await ingest().ingestSessions(sessions)
+        // 入库成功才推进水位(失败则下次重读这批)
+        if (nextWatermark !== null) ctx.settings.set('scanWatermark', nextWatermark)
         // 有 rollout 解析失败时不算完全健康,但只有「全军覆没」才升级为连续失败
         const allFailed = parseFailures.length > 0 && sessions.length === 0
         const n = lastStatus.consecutiveFailures + (allFailed ? 1 : 0)
