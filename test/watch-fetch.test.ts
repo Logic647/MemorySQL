@@ -127,6 +127,20 @@ describe('httpJson — 403/429 分类', () => {
     expect(r.status).toBe(404)
     expect(r.error).toContain('404')
   })
+
+  /**
+   * 401 = token 失效/撤销(2026-11-06 生产事故:12 家全 401,摘要却写「均无风险」)。
+   * 错误文案必须直接点出「换 GITHUB_TOKEN」并说明重试无用 ——
+   * 只写 `HTTP 401` 时没人知道该改什么。
+   */
+  it('401 直指 token 失效并给出处置,不落进笼统 HTTP 401', async () => {
+    mockFetch({ status: 401, headers: {}, body: '{"message":"Bad credentials"}' })
+    const r = await expectErr()
+    expect(r.status).toBe(401)
+    expect(r.error).toContain('GITHUB_TOKEN')
+    expect(r.error).toContain('重试无用')
+    expect(r.rateLimited, '401 不是限流,不能标成可重试').toBeFalsy()
+  })
 })
 
 describe('httpJson — 正常路径', () => {

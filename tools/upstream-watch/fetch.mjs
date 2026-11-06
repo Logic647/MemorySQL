@@ -72,6 +72,20 @@ export async function httpJson(url, opts = {}) {
         }
       }
       if (res.status === 404) return { ok: false, error: '不存在 (404)', status: 404 }
+      /**
+       * 401 = 凭据本身不成立(GitHub 对「token 被撤销/过期」返 401 Bad credentials)。
+       * 必须单独说清"换 token",不能落进通用 `HTTP 401` —— 2026-11-06 生产事故:
+       * 服务器 GITHUB_TOKEN 失效,12 家全报 `HTTP 401`,摘要却写成「13 家均无风险」,
+       * 白盒瘫痪一小时无人发现。错误文案是给人看的最后一道提示,要直接给处置。
+       */
+      if (res.status === 401) {
+        return {
+          ok: false,
+          error:
+            'GitHub 401 未授权 —— token 已失效/被撤销,需更换服务器上的 GITHUB_TOKEN(不是限流,重试无用)',
+          status: 401
+        }
+      }
       if (!res.ok) return { ok: false, error: `HTTP ${res.status}`, status: res.status }
       return { ok: true, data: await res.json(), status: res.status }
     } catch (e) {

@@ -416,6 +416,10 @@ function summaryPanel() {
     ? `<span class="fact${b.blackbox.drift ? ' bad' : ''}">黑盒 漂移 <b>${b.blackbox.drift}</b> · 匹配 ${b.blackbox.ok} · 未装/仅黑盒 ${b.blackbox.absent}${b.blackbox.checkerError ? ` · 检查器故障 <b>${b.blackbox.checkerError}</b>` : ''}</span>`
     : `<span class="fact bad">黑盒 <b>尚未上报</b> —— 闭源 agent 的漂移目前无人看守</span>`);
   if (b.fetchErrors.length) facts.push(`<span class="fact bad">抓取失败 <b>${b.fetchErrors.length}</b> 家</span>`);
+  // 白盒整体失效 = 结论不可信,单独一条红事实,不藏在"抓取失败 N"里
+  if (b.whiteboxBlind?.blind) {
+    facts.push(`<span class="fact bad">白盒不可信 <b>${b.whiteboxBlind.failed}/${b.whiteboxBlind.tracked}</b> 抓不到</span>`);
+  }
 
   // ---- 需要处理的名单(判定来自代码,不是 LLM) ----
   let attn = '';

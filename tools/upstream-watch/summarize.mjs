@@ -90,10 +90,17 @@ export function buildBrief(results, probe, ledger = { state: 'unknown', server: 
   attention.sort((a, b) => (rank[a.risk] ?? 9) - (rank[b.risk] ?? 9) || a.id.localeCompare(b.id))
 
   /**
-   * 闭源那 4 家必须单独拎出来说:它们没有 changelog,白盒对它们**完全无效**,
+   * 闭源必须单独拎出来说:它们没有 changelog,白盒对它们**完全无效**,
    * 黑盒是唯一防线。混在总数里会让人以为"还有 8 家在监控",这是危险的错觉。
+   *
+   * 判据只看 `blackboxOnly`(台账 monitor='blackbox_only'),**不看 risk==='unknown'**。
+   * 2026-11-06 生产事故:服务器 GITHUB_TOKEN 失效 → 12 家 tracked 全 401 →
+   * evaluate 把它们都置成 risk='unknown',旧判据于是把 9 家**开源** agent 也塞进
+   * 这份名单,提示词还告诉 LLM「它们没有 changelog,黑盒是唯一防线」——
+   * 摘要因此写成「13 家均无风险」,而真相是白盒全线瘫痪。
+   * 「unknown」是结论缺失,不是闭源;两者处置完全相反。
    */
-  const closedSource = R.filter((r) => r.blackboxOnly || r.risk === 'unknown').map((r) => {
+  const closedSource = R.filter((r) => r.blackboxOnly).map((r) => {
     const p = verdictOf(probe, r.agentId)
     return {
       id: r.agentId,
@@ -103,13 +110,29 @@ export function buildBrief(results, probe, ledger = { state: 'unknown', server: 
   })
 
   /**
-   * 真正的抓取失败 —— **必须排除闭源 agent**。
-   * 闭源那 4 家的 fetchError 恒为「闭源,无公开更新日志」,那是**预期状态**不是故障;
+   * 真正的抓取失败 —— **只排除闭源 agent**。
+   * 闭源那几家的 fetchError 恒为「闭源,无公开更新日志」,那是**预期状态**不是故障;
    * 混进来会显示成红色「抓取失败 4 家」,而且紧挨着「黑盒尚未上报」自相矛盾。
    * 它们由 closedSource 单独呈现,不进这里。
+   *
+   * ⚠ 不要再用 `risk !== 'unknown'` 过滤:坏掉的抓取**本来就会**把 risk 置成
+   * unknown,那正是它该被看见的时候(旧写法让全表 401 一个小时都"零抓取失败")。
    */
-  const fetchErrors = R.filter((r) => r.fetchError && !r.blackboxOnly && r.risk !== 'unknown')
+  const fetchErrors = R.filter((r) => r.fetchError && !r.blackboxOnly)
     .map((r) => ({ id: r.agentId, error: r.fetchError }))
+
+  /**
+   * 白盒大面积失效 —— 单独一个布尔位,因为这是**结论不可信**级别的状态,
+   * 不能只是"抓取失败 N 家"里的一行(那种会被当成偶发抖动跳过)。
+   * 阈值:非闭源里过半抓不到。触发时 renderBrief 会打醒目段,prompt 也要求
+   * 摘要第一句就说明白盒不可信,而不是继续念"无风险"。
+   */
+  const trackedCount = R.filter((r) => !r.blackboxOnly).length
+  const whiteboxBlind = {
+    failed: fetchErrors.length,
+    tracked: trackedCount,
+    blind: trackedCount > 0 && fetchErrors.length * 2 >= trackedCount
+  }
 
   return {
     total: R.length,
@@ -119,7 +142,8 @@ export function buildBrief(results, probe, ledger = { state: 'unknown', server: 
     ledger,
     attention,
     closedSource,
-    fetchErrors
+    fetchErrors,
+    whiteboxBlind
   }
 }
 
@@ -171,6 +195,15 @@ function renderBrief(brief) {
     L.push('抓取失败(可能是限流或源变更,别把它当成"没更新"):')
     for (const f of brief.fetchErrors) L.push(`  - ${f.id}: ${f.error}`)
   }
+  // 大面积失败放在最后 = 提示词里最靠后但最醒目的一段;它的结论是
+  // 「白盒这一栏今天不能信」,不是「无风险」
+  if (brief.whiteboxBlind?.blind) {
+    L.push('')
+    L.push(
+      `!! 白盒大面积失效:非闭源 ${brief.whiteboxBlind.tracked} 家里 ${brief.whiteboxBlind.failed} 家抓不到 ——` +
+        '白盒这一栏今天**不能作为"无风险"的依据**,先修抓取(常见根因:GITHUB_TOKEN 失效/过期,表现为 HTTP 401)'
+    )
+  }
   return L.join('\n')
 }
 
@@ -183,6 +216,7 @@ const PROMPT = [
   '1. **只能引用上面出现过的数字和 agent 名**。绝对不要自己计算、不要推测、不要补充任何未列出的信息。',
   '2. 不要重复罗列全部 agent,只讲值得注意的。',
   '3. 如果事实里没有任何需要处理的问题,就直说"本周无风险",不要硬造紧迫感。',
+  '3.5 **事实里出现「白盒大面积失效」时,headline 必须说明白盒不可信,绝不能说"无风险"** —— 抓不到数据 ≠ 没有风险,那是最危险的一种误读。',
   '4. 如果黑盒尚未上报或闭源 agent 无人看守,要点出来 —— 这是当前最大的盲区。',
   '5. actions 是给人做的事,每条要具体到"做什么"(例如"本机跑 npm run upstream:check 确认"),不要写"持续关注"这种空话。',
   '',

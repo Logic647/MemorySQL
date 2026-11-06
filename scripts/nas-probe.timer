@@ -1,0 +1,20 @@
+# NAS 黑盒探针定时器 —— 每日 10:37(错开开发机 10:07)
+#
+# Persistent=true 是关键:cron 在 NAS 关机/休眠时错过触发点后**永远不会补跑**,
+# 实测导致闭源 agent 一周只被检查一次(报告 10-25 / 10-27 / 11-03 / 11-06)。
+# systemd 会把上次触发时间戳存在 /var/lib/systemd/timers/,开机后立即补跑一次。
+#
+# RandomizedDelaySec:错开整点负载,也让网络就绪后再动手(与 probe 内的
+# network-online 等待叠加,早到不会白跑)。
+[Unit]
+Description=Daily NAS black-box probe timer (catches up after boot)
+
+[Timer]
+OnCalendar=*-*-* 10:37:00
+Persistent=true
+RandomizedDelaySec=300
+AccuracySec=1min
+Unit=nas-probe.service
+
+[Install]
+WantedBy=timers.target

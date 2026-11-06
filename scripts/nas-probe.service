@@ -1,0 +1,31 @@
+# NAS 黑盒探针常驻单元(定时器见 nas-probe.timer)
+#
+# 为什么不用 cron(2026-11-06 实测):NAS 经常在 10:37 处于关机/休眠,
+# **cron 不会补跑错过的时间点**,于是 ~/memorysql-probe.log 根本不存在 ——
+# 报告日期是 10-25 / 10-27 / 11-03 / 11-06 这种跳跃,全是手动触发的,
+# 而闭源 agent 的看守就此变成"开机那天才看一次"。
+# systemd timer 的 Persistent=true 会在开机后补跑错过的触发点。
+#
+# 安装(在 NAS 上):
+#   sudo install -m 644 scripts/nas-probe.service scripts/nas-probe.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now nas-probe.timer
+#   systemctl list-timers nas-probe.timer        # 下次触发时间
+#   journalctl -u nas-probe --since today        # 每轮输出(不再写 ~/memorysql-probe.log)
+#
+# 路径写绝对路径:实测 Ubuntu 26.04 的 systemd 在 ExecStart 里把 %h 展开成
+# /root(service manager 自己的 home)而不是 User= 的 home —— 与 nas-panel 同一条教训。
+[Unit]
+Description=MemorySQL NAS black-box probe (upgrade -> session -> check -> upload)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=logic
+# 凭据从 env 文件注入,不在 unit 里明文写 token(文件本身 600)
+EnvironmentFile=/home/logic/.memorysql-nas/probe.env
+ExecStart=/home/logic/local/node-v22.22.1-linux-x64/bin/node /home/logic/apps/MemorySQL/scripts/nas-probe.mjs
+# 五家 CLI 的 npm 升级 + 最小会话可能跑几分钟,给足超时
+TimeoutStartSec=1800
+Nice=10

@@ -125,6 +125,49 @@ describe('buildBrief — 纯函数,不联网', () => {
     expect(b.fetchErrors.map((f) => f.id)).toEqual(['claudecode'])
   })
 
+  /**
+   * 2026-11-06 生产事故回归:服务器 GITHUB_TOKEN 失效 → tracked 全 401 →
+   * evaluate 把 risk 置 unknown。旧写法 `blackboxOnly || risk==='unknown'`
+   * 把 9 家**开源** agent 塞进「闭源」名单,提示词据此告诉 LLM「它们没有
+   * changelog」,摘要写成「13 家均无风险」——白盒全线瘫痪一小时无人发现。
+   * 判据必须只看 blackboxOnly;unknown+fetchError 是**抓取失败**。
+   */
+  it('tracked 的 unknown+fetchError 算抓取失败,不许混进闭源名单', () => {
+    const b = buildBrief([
+      R({ agentId: 'opencode', risk: 'unknown', fetchError: 'HTTP 401' }),
+      R({ agentId: 'dsh', risk: 'unknown', fetchError: 'HTTP 401' }),
+      R({ agentId: 'qoder', risk: 'unknown', blackboxOnly: true, fetchError: '闭源,无公开更新日志' })
+    ])
+    expect(b.fetchErrors.map((f) => f.id).sort()).toEqual(['dsh', 'opencode'])
+    expect(b.closedSource.map((c) => c.id)).toEqual(['qoder'])
+  })
+
+  it('非闭源过半抓取失败 → whiteboxBlind 置位(结论不可信级别)', () => {
+    const blind = buildBrief([
+      R({ agentId: 'a', risk: 'unknown', fetchError: 'HTTP 401' }),
+      R({ agentId: 'b', risk: 'unknown', fetchError: 'HTTP 401' }),
+      R({ agentId: 'c', risk: 'low' })
+    ])
+    expect(blind.whiteboxBlind).toMatchObject({ failed: 2, tracked: 3, blind: true })
+
+    // 少数失败不算盲:仍可基于剩下的家下结论
+    const partial = buildBrief([
+      R({ agentId: 'a', risk: 'unknown', fetchError: 'HTTP 401' }),
+      R({ agentId: 'b', risk: 'low' }),
+      R({ agentId: 'c', risk: 'low' }),
+      R({ agentId: 'd', risk: 'low' })
+    ])
+    expect(partial.whiteboxBlind).toMatchObject({ failed: 1, tracked: 4, blind: false })
+  })
+
+  it('闭源全挂不算白盒盲(它们本来就没有 changelog)', () => {
+    const b = buildBrief([
+      R({ agentId: 'q1', risk: 'unknown', blackboxOnly: true, fetchError: '闭源,无公开更新日志' }),
+      R({ agentId: 'q2', risk: 'unknown', blackboxOnly: true, fetchError: '闭源,无公开更新日志' })
+    ])
+    expect(b.whiteboxBlind).toMatchObject({ failed: 0, tracked: 0, blind: false })
+  })
+
   it('空输入不炸', () => {
     const b = buildBrief([], null)
     expect(b.total).toBe(0)

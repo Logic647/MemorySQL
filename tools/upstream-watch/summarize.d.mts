@@ -57,6 +57,11 @@ export interface Brief {
   attention: AttentionItem[]
   closedSource: Array<{ id: string; blackbox: string; detail: string }>
   fetchErrors: Array<{ id: string; error: string | null }>
+  /**
+   * 白盒大面积失效(tracked 里过半抓不到)—— 结论不可信级别,不能当成
+   * "抓取失败 N 家"里的一行。触发时摘要必须说"白盒不可信",不能说"无风险"。
+   */
+  whiteboxBlind: { failed: number; tracked: number; blind: boolean }
 }
 
 export interface Summary {
