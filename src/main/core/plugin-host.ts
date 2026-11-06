@@ -125,6 +125,8 @@ export class PluginHost {
   private started = false
   /** plugins skipped due to being disabled (or depending on a disabled one) */
   private skipped: string[] = []
+  /** plugins whose init threw — skipped in the start pass */
+  private failedInit = new Set<string>()
   private external: MemorySQLPlugin[] = []
   private loadErrorLog: string[] = []
 
@@ -157,25 +159,32 @@ export class PluginHost {
     if (external) this.external.push(plugin)
   }
 
-  /** Topologically sort by manifest.requires, then init + start.
-   * A plugin whose init/start throws is disabled for this run (recorded as a
-   * load error) instead of taking the whole app down. */
-  async startAll(): Promise<void> {
+  /** Topologically sort by manifest.requires, then init.
+   * A plugin whose init throws is disabled for this run (recorded as a
+   * load error) instead of taking the whole app down.
+   *
+   * init 与 start 拆开:`init` 只注册 IPC/服务(渲染层首帧需要),`start`
+   * 才建 watcher/起 HTTP 监听——后者可以推迟到窗口创建之后再跑。 */
+  async initAll(): Promise<void> {
     const order = this.topoSort()
-    const failedInit = new Set<string>()
+    this.failedInit.clear()
     for (const plugin of order) {
       const ctx = this.createContext(plugin)
       this.contexts.set(plugin.manifest.id, ctx)
       try {
         await plugin.init(ctx)
       } catch (err) {
-        failedInit.add(plugin.manifest.id)
+        this.failedInit.add(plugin.manifest.id)
         this.loadErrorLog.push(`${plugin.manifest.id}: init 失败 — ${String(err)}`)
         console.error(`[plugin-host] init failed for ${plugin.manifest.id}:`, err)
       }
     }
-    for (const plugin of order) {
-      if (failedInit.has(plugin.manifest.id)) continue
+  }
+
+  async startAll(): Promise<void> {
+    if (this.started) return
+    for (const plugin of this.topoSort()) {
+      if (this.failedInit.has(plugin.manifest.id)) continue
       try {
         await plugin.start?.()
       } catch (err) {

@@ -148,7 +148,7 @@ function processPendingImport(dataDir: string, dbPath: string, vaultDir: string)
 // kept for graceful shutdown on window close
 let running: { host: PluginHost; db: Db } | null = null
 
-async function bootstrap(): Promise<{
+async function bootstrap(opts: { deferStart?: boolean } = {}): Promise<{
   host: PluginHost
   db: Db
   events: EventBus
@@ -163,7 +163,10 @@ async function bootstrap(): Promise<{
   const host = new PluginHost(env, db, settings, events)
   for (const p of BUILTIN_PLUGINS) host.add(p)
   await loadExternalPlugins(env.dataDir, host)
-  await host.startAll()
+  // init 只注册 IPC/服务(渲染层首帧要用);start 才建 watcher/HTTP 监听,
+  // GUI 路径把它推到窗口创建之后再跑(headless 仍在这里跑完)
+  await host.initAll()
+  if (!opts.deferStart) await host.startAll()
   return { host, db, events, settings, env }
 }
 
@@ -690,11 +693,17 @@ app.whenReady().then(async () => {
         w.focus()
       }
     })
-    const boot = await bootstrap()
+    const boot = await bootstrap({ deferStart: true })
     running = { host: boot.host, db: boot.db }
     const win = createWindow(boot.host, boot.events)
     const spotlight = setupSpotlight({ win, settings: boot.settings })
     registerHostChannels(boot.host, boot.settings, boot.env, boot.db, spotlight)
+    // 插件 start 阶段(watcher / MCP 监听 / 语义栈)推迟到窗口创建之后:
+    // 实测它们串行起来要 300-500ms(其中 ~/.gemini 全树 chokidar 377ms),
+    // 而窗口与首帧只需要 init 阶段注册好的 IPC 通道。
+    void boot.host.startAll().catch((err) => {
+      console.error('[bootstrap] plugin start failed:', err)
+    })
     // Startup capture scan: sessions written while the app was off should show
     // up on launch, not only after a manual 立即扫描.
     //
