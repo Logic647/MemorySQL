@@ -117,6 +117,11 @@ export default function SettingsView() {
       .catch(() => {
         /* host 通道不可用时保持默认值 */
       })
+    // 顶栏的日月按钮也能切主题 —— 不订阅的话这里的 chip 会停留在他处切换前的值
+    return window.memorysql.on('push:theme', (state) => {
+      const setting = (state as { setting?: unknown } | undefined)?.setting
+      if (setting === 'dark' || setting === 'light' || setting === 'system') setThemeSetting(setting)
+    })
   }, [])
 
   const set = (key: string, value: string): void => setCfg((c) => (c ? { ...c, [key]: value } : c))

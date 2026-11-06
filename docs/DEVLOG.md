@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-11-06 · README 截图全部按 v0.7.2 重截(换成虚构演示库)
+
+**起因:** 旧截图是 0.5.x/0.6.0 的界面(没有浅色主题、没有子代理折叠),而且 02/03 用的是**真实库**(含真实项目名与会话标题)。这次全部用一份**虚构演示库**重拍,隐私问题从"事后检查"变成"结构上不存在"。
+
+**新增 `scripts/seed-demo.ts`(入仓)**:生成 3 个虚构项目(nebula-notes / pulse-api / garden-bot)、13 条会话(含 2 条子代理会话,用来展示折叠)、16 条记忆(画像/偏好/事实/决策 + 2 条候选)。**它同时写一份 settings.json 把 14 个 capture 插件全关** —— 这步不能省:否则第一次启动就会把本机真实 agent 会话导进演示库,截图直接变成隐私事故。另外关掉 mcp-server,避免和正在运行的实例抢 8642。
+
+**截图方式:** CDP(`--remote-debugging-port`)+ `Page.captureScreenshot`,7 张全部重出(01 续接包 / 02 会话库 / 03 详情 / 04 记忆 / 05 **浅色主题**(新) / 06 秒搜 / 07 连接向导)。01 的内容是用演示库**真实调用** `memory_get_context` 的返回原文,只做终端样式排版;06 是在主窗口内按秒搜窗口真实尺寸(680×460)渲染 `?spotlight=1`。
+
+**踩到一个以前没记录的坑:窗口被遮挡时 Chromium 会把 CSS 动画冻在起始帧。** 设置页的 `.settings-body` 有 `fade-in-fast ... both`,窗口被别的窗口盖住时动画不推进,`opacity` 停在 **0** —— 截出来整页发灰,看起来像样式坏了(`getComputedStyle` 一查才发现是 0,而 `document.visibilityState` 是 `hidden`)。解法:截图前注入 `*{animation:none!important;transition:none!important}`,这些过渡只有 120–320ms,停掉不影响观感。
+
+**顺手修的两个小问题**(都是截图时暴露的):
+- 捕获插件全关时侧栏只留一个空的「捕获状态」标题,像坏了 → 无行时整段不渲染
+- 设置页「外观」的 chip 只在挂载时读一次主题,用顶栏日月按钮切换后 chip 停在旧值 → 订阅 `push:theme` 同步
+
+**验收:** typecheck 0 / vitest 562:562;7 张图逐张目检;`docs/promo/screenshots.md` 状态块与表格(05 改为浅色主题、07 的 10 家改 13 家)同步更新。
+
+---
+
 ## 2026-11-06 · v0.7.2 已发版(macOS 镜像退役 · 20 资产 · x64 首次构建成功)
 
 **已发布:** https://github.com/Logic647/MemorySQL/releases/tag/v0.7.2 —— **20 资产**(比以往多 5 个,因为 mac **两个架构都出来了**),`latest.yml`(347B)/ `latest-linux.yml`(526B)/ `latest-mac.yml`(811B)公网全 200,`Setup-0.7.2.exe` 的 Content-Length 104,351,671 与 `latest.yml` 声明一致。

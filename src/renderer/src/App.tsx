@@ -883,27 +883,31 @@ export default function App() {
             })()}
           </div>
 
-          <div className="side-section">
-            <div className="side-title">捕获状态</div>
-            {(() => {
-              const counts = new Map((overview?.byAgent ?? []).map((x) => [x.agent_type, x.sessions]))
-              const ordered = [...CAPTURE_PLUGINS.filter(({ id }) => enabledCaptures[id] !== false)].sort(
-                (x, y) => (counts.get(y.id.replace('capture-', '')) ?? 0) - (counts.get(x.id.replace('capture-', '')) ?? 0)
-              )
-              return ordered.map(({ id, label }) => {
-                const n = counts.get(id.replace('capture-', '')) ?? 0
-                return (
-                  <div key={id} className={`capture-status ${n === 0 ? 'dim' : ''}`}>
-                    <span className={`dot ${statuses[id]?.startsWith('错误') ? 'err' : 'ok'}`} />
-                    <div>
-                      <div className="capture-name">{label}</div>
-                      <div className="capture-detail">{statuses[id] ?? '…'}</div>
+          {/* 捕获插件全关时(演示/精简配置)整段不渲染 —— 只剩一个空标题会像坏了 */}
+          {(() => {
+            const counts = new Map((overview?.byAgent ?? []).map((x) => [x.agent_type, x.sessions]))
+            const ordered = [...CAPTURE_PLUGINS.filter(({ id }) => enabledCaptures[id] !== false)].sort(
+              (x, y) => (counts.get(y.id.replace('capture-', '')) ?? 0) - (counts.get(x.id.replace('capture-', '')) ?? 0)
+            )
+            if (ordered.length === 0) return null
+            return (
+              <div className="side-section">
+                <div className="side-title">捕获状态</div>
+                {ordered.map(({ id, label }) => {
+                  const n = counts.get(id.replace('capture-', '')) ?? 0
+                  return (
+                    <div key={id} className={`capture-status ${n === 0 ? 'dim' : ''}`}>
+                      <span className={`dot ${statuses[id]?.startsWith('错误') ? 'err' : 'ok'}`} />
+                      <div>
+                        <div className="capture-name">{label}</div>
+                        <div className="capture-detail">{statuses[id] ?? '…'}</div>
+                      </div>
                     </div>
-                  </div>
-                )
-              })
-            })()}
-          </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
 
           <div className="side-section">
             <div className="side-title">知识库</div>
