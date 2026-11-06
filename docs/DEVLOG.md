@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-11-06 · 性能修复第二批(插件启动后置 / 扫描水位增量 / 渲染层本地化)
+
+接上一条(ingest diff + 启动扫描后置 + 分页 + minify)之后按计划继续:
+
+1. **插件 init/start 拆开(`plugin-host.ts` + `index.ts`)**:`init`(注册 IPC/服务)留在启动路径,`start`(watcher / MCP `listen` / 语义栈)推迟到 `createWindow()` 之后。实测 start 阶段串行 300–500ms(其中 `~/.gemini` 全树 chokidar 树 walk 377ms),现在不再挡窗口。headless(`--scan`/`--digest`)仍在 bootstrap 里跑完两阶段。顺带修了自己引入的 `new PluginHost(env, db, settings, env)` 笔误(typecheck 立刻抓到)。
+2. **启动扫描水位增量(`agent-db-parser` + `capture-factory` + capture-zcode/opencode)**:DB 型来源按 `time_updated > watermark` 只解析变更会话;水位存 `scanWatermark` 设置,**入库成功后才推进**;不可安全过滤的来源(如 opencode 旧 JSON 树)返回 `watermark:null` 不推进,避免漏读。真库实测:**zcode 809ms → 22ms(74 会话 → 1)、opencode 640ms → 19ms(22 → 1)**;dev 连跑两次确认 74→1 / 22→1。新增 `test/agent-db-parser.test.ts` 的 since 过滤用例。**恢复手段:删掉设置里的 `scanWatermark` 即触发全量重扫。**
+3. **渲染层本地化(`App.tsx`)**:`RenameEditor` 自己持有草稿——之前每敲一个字符重渲染整棵树(实测 5.29ms/次 @131 行);`captureStatus` 的 13 次 IPC 从 `refresh` 的依赖里拆出,点 agent 筛选 chip 从 16 次 IPC 降到 3 次。dev 冒烟:筛选 `zcode` 正常(`会话 (97)`)、重命名输入框可输入。
+4. **`PRAGMA optimize`(`db.ts`)**:开会话时跑一次(便宜,只在统计缺失/过期时真正 ANALYZE),此前全库从未 ANALYZE。
+
+**本轮未做(理由):** 语义检索 ONNX 仍在主进程(改造需 Worker/utilityProcess + electron-vite worker 入口 + 打包路径,风险高,建议单独排期);2 字中文查询仍走 `LIKE` 全表(50ms 级,要治需 bigram 索引,会重写 FTS schema);`notes/notes_fts` 死表(2.7MB)与 `messages_fts_content`(38.5MB)属空间项,VACUUM 后已不痛。
+
+**验收:** typecheck 0;vitest **543:543**(+1);dev 两次启动 + 筛选/重命名冒烟通过;装机版已恢复常驻(v0.7.1,MCP 8 工具)。
+
+---
+
 ## 2026-11-06 · 性能分析 + 一批 P0/P1 修复(ingest 50×、启动扫描不抢首屏、列表 200 上限)
 
 **做法:** 先装 4 个性能技能(`cpu-profile-analysis`/`heap-snapshot-analysis`/`memory-leak-audit` 来自 microsoft/vscode 的 `.github/skills`,`performance-optimization` 来自 addyosmani/agent-skills),再派 3 个子代理分域做只读剖析 + 隔离微基准(真库 702MB 只读快照,**不启动 GUI**),报告在 `out/perf/`(`SUMMARY.md` + `main-process.md` + `database.md` + `renderer.md`,含全部复现脚本;快照已删,重拷命令在 SUMMARY.md);**合并摘要另存 `docs/perf-analysis-2026-11-06.md`(入仓,`out/` 是 gitignored)**。

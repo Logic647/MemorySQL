@@ -23,6 +23,13 @@ export class Db {
     this.sqlite = new Database(dbPath)
     this.sqlite.pragma('journal_mode = WAL')
     this.sqlite.pragma('foreign_keys = ON')
+    // 从未 ANALYZE 过的库,查询计划只能靠启发式统计。PRAGMA optimize 很便宜
+    // (只在统计缺失/过期时才跑 ANALYZE),放在开会话时做一次即可。
+    try {
+      this.sqlite.pragma('optimize')
+    } catch {
+      /* 统计不是正确性前提 —— 失败不阻塞启动 */
+    }
     this.sqlite.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         plugin     TEXT NOT NULL,
