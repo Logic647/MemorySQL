@@ -550,12 +550,29 @@ export function createMcpTools(deps: {
             }
           | undefined
         if (!session) return `未找到会话 #${id}`
-        let messages = sqlite
-          .prepare('SELECT role, content, ts, tool_name FROM session_messages WHERE session_id = ? ORDER BY seq')
-          .all(id) as Array<{ role: string; content: string; ts: number | null; tool_name: string | null }>
         const tail = Number(args.tail)
-        const omitted = tail > 0 && messages.length > tail ? messages.length - tail : 0
-        if (omitted > 0) messages = messages.slice(-tail)
+        const totalMsgs = (
+          sqlite.prepare('SELECT count(*) AS n FROM session_messages WHERE session_id = ?').get(id) as {
+            n: number
+          }
+        ).n
+        // tail is pushed into SQL: a 7.3k-message session used to be read in full
+        // (3.6 MB) and then sliced — 10.99 ms vs 0.19 ms with LIMIT.
+        let messages = (
+          tail > 0
+            ? sqlite
+                .prepare(
+                  'SELECT role, content, ts, tool_name FROM session_messages WHERE session_id = ? ORDER BY seq DESC LIMIT ?'
+                )
+                .all(id, tail)
+                .reverse()
+            : sqlite
+                .prepare(
+                  'SELECT role, content, ts, tool_name FROM session_messages WHERE session_id = ? ORDER BY seq'
+                )
+                .all(id)
+        ) as Array<{ role: string; content: string; ts: number | null; tool_name: string | null }>
+        const omitted = tail > 0 && totalMsgs > messages.length ? totalMsgs - messages.length : 0
         const perMessage = args.full === true ? 20000 : 2000
         /**
          * 总输出预算。过去是 120_000 —— 实测一次 memory_get_session 真能吐
@@ -598,7 +615,6 @@ export function createMcpTools(deps: {
         const lines = kept
         const droppedByCap = messages.length - kept.length
         const body = lines.join(SEP)
-        const totalMsgs = messages.length + omitted
         const head = `# ${session.title ?? `会话 #${id}`}\n- id: ${id}\n- agent: ${session.agent_type}\n- 开始: ${when(session.started_at)}\n- 最后: ${when(session.last_message_at)}\n- 消息数: ${totalMsgs}${omitted > 0 ? `(本次取最后 ${messages.length} 条,已省略前 ${omitted} 条 — 用 tail 调整)` : ''}\n`
         const capNote = capped
           ? `\n\n> [输出已达 ${TOTAL_CAP} 字符上限,保留了**最近** ${lines.length}/${messages.length} 条(最早 ${droppedByCap} 条未显示)。要看更早的内容:tail=N 取最近 N 条,或先读本会话的 summary/项目总结再决定是否深读]`

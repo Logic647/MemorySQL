@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-11-06 · 性能分析 + 一批 P0/P1 修复(ingest 50×、启动扫描不抢首屏、列表 200 上限)
+
+**做法:** 先装 4 个性能技能(`cpu-profile-analysis`/`heap-snapshot-analysis`/`memory-leak-audit` 来自 microsoft/vscode 的 `.github/skills`,`performance-optimization` 来自 addyosmani/agent-skills),再派 3 个子代理分域做只读剖析 + 隔离微基准(真库 702MB 只读快照,**不启动 GUI**),报告在 `out/perf/`(`SUMMARY.md` + `main-process.md` + `database.md` + `renderer.md`,含全部复现脚本;快照已删,重拷命令在 SUMMARY.md);**合并摘要另存 `docs/perf-analysis-2026-11-06.md`(入仓,`out/` 是 gitignored)**。
+
+**诊断结论:瓶颈不在查询、也不在索引** —— 现有 8 条索引覆盖全部高频查询(实测全 <0.6ms),逐条加 5 个候选索引做对照最大收益只有 0.47→0.26ms,**明确结论是不该加索引**。真凶是两条写/重建路径 + 两个用户可见问题。
+
+**已修(全部带回归测试,vitest 536→542):**
+1. **ingest 消息级 diff(`core-schema/ingest.ts`)**:内容哈希一变就删全部消息+FTS 再逐条重插。改成「按 seq 走查已存行,找到与新会话的最长公共前缀,只删/插从第一处差异起的尾部」。真会话 #260(7,303 条 / 3.61MB)实测:**追加 1 条 1,409ms → 28ms(50×)**;尾部 5 条改写 27ms;中间改写只重写后半段(392ms)。新增 `test/ingest-diff.test.ts` 6 用例(前缀 rowid 不变、中间改写、缩短、meta/ts 保留、message_count、跳过)。
+2. **opencode 全库重解析(`capture-opencode` + `_lib/capture-factory.ts`)**:去掉 `-shm` 监听(shm 在只读查询时也会变,等于 agent 每查一次就触发重扫);rescan 型 watcher 加**单飞+合并**——一次事件风暴最多跑 1 次 + 1 次补跑(原来 db/-wal/-shm 三条路径各跑一遍,各 633ms)。
+3. **启动扫描不再抢首屏(`main/index.ts`)**:原实现 `whenReady` 后立刻串行扫 13 个适配器(实测 5 个启用 ≈1.5s 连续主线程块,且 await 链不让出事件循环)。改为等 `did-finish-load` + 2s 再开始(另有 15s 兜底,防 `--hidden` 不触发 load),且**每个适配器之间 `setImmediate` 让出**。
+4. **首屏假空态(`renderer/App.tsx`)**:`sessions=[]` 首帧直接渲染「暂无会话 — 点击立即扫描」(加载中与真没数据长得一样)。加 `listLoaded` 标记,加载中显示「正在加载会话…」;`refresh()` 三次串行 IPC 改 `Promise.all`;`try/finally` 保证失败也会结束 loading。
+5. **会话列表 200 条硬上限(`api.ts` + `App.tsx`)**:真库 307 会话时有 107 条在界面上根本不存在,且标题写 200、chip 写 307。`listSessions` 接 `limit/offset`,列表从 200 起按需「加载更多」,标题显示 `会话 (N+)`。
+6. **分组排序 O(n²)(`App.tsx`)**:原来是 sort 比较器里对每组反复 `Math.max(...map())`,改为预先算好每组最新时间再排序(这正是「放开 200 上限」的前置)。
+7. **renderer 开 minify(`electron.vite.config.ts`)**:electron-vite 5 默认 `minify:false`,产物 **711,566 → 276,491 B(-61.1%)**,CSS 39,390 → 29,879 B。零风险白捡。
+
+**同时修的 P1:**
+- `memory_get_session` 的 `tail` 下推到 SQL(`ORDER BY seq DESC LIMIT ?`):真会话 58× 差距(10.99ms → 0.19ms);默认无 tail 路径仍按全量读(预算截断在内存里做),留作后续。
+- `capture-hermes` 的 `reg.exe` 探测:负结果也缓存(5 分钟 TTL)——未装 Hermes 的机器每次扫描/启动都会重复 spawn;timeout 4000ms → 1500ms(注册表读要么很快要么直接失败,长尾只会卡住同步的启动路径)。
+
+**未做(需要拍板/单独安排):**
+- **`VACUUM`**:真库 702MB 里 517MB 是空闲页(整会话重写造成的),VACUUM 后 185MB/1.19s。这会重写真库文件,需要显式同意 + 备份;而消息级 diff 落地后空闲页增长会显著变慢。
+- **语义检索 ONNX 推理在主进程**(init 152ms / 每次 query 24–33ms)、`~/.gemini` 全树 chokidar(321 目录/377ms)、28 插件串行 init/start、渲染层 memo 化 + chip 点击 16 次 IPC —— 都是真问题但改动面大,建议下一步单独做。
+
+**验收:** typecheck 0 错;vitest **542:542**(47 文件,+6 新用例);`npm run build` 通过;真库快照基准见上。**未做过 GUI 真机验收**(装机版仍在运行、单实例锁),首屏/加载更多的观感需要开 dev 或装新版确认。
+
+---
+
 ## 2026-10-30 · README 同步到 v0.7.1 + scoop bucket 从 0.4.0 修到 0.7.1(两个真 bug)
 
 **README**:补 v0.7.1 变更块(原来只写到 v0.7.0)、开发段加 `npm run upstream:check` 与「适配器维护」说明、文档表加 `docs/releases/`。

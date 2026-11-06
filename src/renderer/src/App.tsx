@@ -228,18 +228,33 @@ export default function App() {
     }
   })
 
+  // 会话列表分页:LIMIT 从 200 起按需翻倍,避免把超出部分藏起来(真库 307 条时
+  // 旧代码写死 200 且无入口,107 条在界面上根本不存在)
+  const [listLimit, setListLimit] = useState(200)
+  // 首帧 sessions 恒为空数组,不加这个标记会把「加载中」渲染成「暂无会话」
+  const [listLoaded, setListLoaded] = useState(false)
+
   const refresh = useCallback(async () => {
-    setSessions(await api.listSessions(filter, { archived: showArchived }))
-    setOverview(await api.overview())
     try {
-      const hp = await api.hostPlugins()
-      const map: Record<string, boolean> = {}
-      for (const p of hp.plugins) if (p.id.startsWith('capture-')) map[p.id] = p.enabled
-      setEnabledCaptures(map)
-    } catch {
-      /* host channels unavailable — assume all enabled */
+      // three independent reads — run them together instead of a serial waterfall
+      const [rows, ov, hp] = await Promise.all([
+        api.listSessions(filter, { archived: showArchived, limit: listLimit }),
+        api.overview(),
+        api.hostPlugins().catch(() => null)
+      ])
+      setSessions(rows)
+      setOverview(ov)
+      if (hp) {
+        const map: Record<string, boolean> = {}
+        for (const p of hp.plugins) if (p.id.startsWith('capture-')) map[p.id] = p.enabled
+        setEnabledCaptures(map)
+      }
+    } finally {
+      // even on failure stop claiming "loading" — otherwise the empty state
+      // stays hidden forever
+      setListLoaded(true)
     }
-  }, [filter, showArchived])
+  }, [filter, showArchived, listLimit])
 
   useEffect(() => {
     void refresh()
@@ -879,7 +894,7 @@ export default function App() {
           ) : (
             <div className="list-pane">
               <div className="pane-title">
-                会话 ({sessions.length})
+                会话 ({sessions.length}{sessions.length === listLimit ? '+' : ''})
                 <label className="hint" style={{ marginLeft: 10, display: 'inline-flex', gap: 4, alignItems: 'center' }}>
                   <input
                     type="checkbox"
@@ -900,12 +915,18 @@ export default function App() {
                     if (bucket) bucket.push(s)
                     else groups.set(key, [s])
                   }
+                  // 每组的最新开始时间只算一次。原来是 sort 比较器里对每组
+                  // 重新 Math.max(...map()) —— 分组多+行多时是 O(组×行) 的重复扫描
+                  const newestAt = new Map<string, number>()
+                  for (const [k, list] of groups) {
+                    let m = 0
+                    for (const r of list) if ((r.startedAt ?? 0) > m) m = r.startedAt ?? 0
+                    newestAt.set(k, m)
+                  }
                   const keys = [...groups.keys()].sort((x, y) => {
                     if (x === '(未分配项目)') return 1
                     if (y === '(未分配项目)') return -1
-                    const lx = Math.max(...groups.get(x)!.map((r) => r.startedAt ?? 0))
-                    const ly = Math.max(...groups.get(y)!.map((r) => r.startedAt ?? 0))
-                    return ly - lx
+                    return (newestAt.get(y) ?? 0) - (newestAt.get(x) ?? 0)
                   })
                   return keys.flatMap((project) => {
                     const rows = groups.get(project)!
@@ -1119,7 +1140,15 @@ export default function App() {
                     ]
                   })
                 })()}
-                {sessions.length === 0 && (
+                {sessions.length === listLimit && (
+                  <div style={{ padding: '10px 12px', textAlign: 'center' }}>
+                    <button className="btn btn-small" onClick={() => setListLimit((n) => n + 200)}>
+                      加载更多(已显示 {sessions.length} 条)
+                    </button>
+                  </div>
+                )}
+                {!listLoaded && <div className="empty">正在加载会话…</div>}
+                {listLoaded && sessions.length === 0 && (
                   <div className="empty">暂无会话 — 点击右上角「立即扫描」导入 agent 会话</div>
                 )}
               </div>

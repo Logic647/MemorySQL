@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import type Database from 'better-sqlite3'
-import type { RawSession } from '../../shared/types'
+import type { RawMessage, RawSession } from '../../shared/types'
 import type { SummarizerProvider } from '../../main/core/plugin-host'
 
 const CONTENT_CAP = 100_000
@@ -129,8 +129,20 @@ export function createIngestService(deps: IngestDeps): IngestService {
       last_message_at = @last_message_at, updated_at = @updated_at
     WHERE id = @id
   `)
-  const stmtMsgIds = sqlite.prepare('SELECT id FROM session_messages WHERE session_id = ?')
-  const stmtMsgDel = sqlite.prepare('DELETE FROM session_messages WHERE session_id = ?')
+  // message-level diff: compare the stored prefix against the freshly parsed
+  // session and only rewrite the tail that actually changed. A long session
+  // appending one message used to delete+reinsert every row (and every FTS
+  // trigram entry) — measured at ~1.4 s for a 7.3k-message session.
+  const stmtMsgCount = sqlite.prepare('SELECT count(*) AS n FROM session_messages WHERE session_id = ?')
+  const stmtMsgIter = sqlite.prepare(
+    'SELECT id, role, content, ts, tool_name, meta FROM session_messages WHERE session_id = ? ORDER BY seq'
+  )
+  const stmtMsgTailIds = sqlite.prepare(
+    'SELECT id FROM session_messages WHERE session_id = ? AND seq >= ? ORDER BY seq'
+  )
+  const stmtMsgDelTail = sqlite.prepare(
+    'DELETE FROM session_messages WHERE session_id = ? AND seq >= ?'
+  )
   const stmtMsgIns = sqlite.prepare(`
     INSERT INTO session_messages (session_id, seq, role, content, ts, tool_name, meta)
     VALUES (@session_id, @seq, @role, @content, @ts, @tool_name, @meta)
@@ -285,11 +297,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
 
     if (existing) {
       const sessionId = existing.id
-      // drop old messages + their FTS rows before rewriting
-      const oldIds = (stmtMsgIds.all(sessionId) as Array<{ id: number }>).map((r) => r.id)
       const tx = sqlite.transaction(() => {
-        for (const mid of oldIds) stmtFtsMsgDel.run(mid)
-        stmtMsgDel.run(sessionId)
         stmtSessionUpdate.run({
           id: sessionId,
           project_id: projectId,
@@ -304,7 +312,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
           ...counts,
           updated_at: now()
         })
-        insertMessages(sessionId, s)
+        syncMessages(sessionId, s)
         stmtFtsSessionDel.run(sessionId)
         stmtFtsSessionIns.run(sessionId, title, summaryText)
       })
@@ -339,8 +347,57 @@ export function createIngestService(deps: IngestDeps): IngestService {
     return { outcome: 'imported', id: newId }
   }
 
-  function insertMessages(sessionId: number, s: RawSession): void {
-    s.messages.forEach((m, seq) => {
+  interface StoredMessage {
+    id: number
+    role: string
+    content: string
+    ts: number | null
+    tool_name: string | null
+    meta: string | null
+  }
+
+  /** Field-for-field comparison against what insertMessages would have stored. */
+  function sameMessage(row: StoredMessage, m: RawMessage): boolean {
+    return (
+      row.role === m.role &&
+      row.content === cap(m.content) &&
+      (row.ts ?? null) === (m.ts ?? null) &&
+      (row.tool_name ?? null) === (m.toolName ?? null) &&
+      (row.meta ?? null) === (m.meta ? JSON.stringify(m.meta) : null)
+    )
+  }
+
+  /**
+   * Rewrite only the messages that changed.
+   *
+   * Adapters re-parse the whole source file, so the overwhelmingly common case
+   * is "old messages are a prefix of the new ones". Walk the stored rows in
+   * `seq` order, stop at the first mismatch, and delete + reinsert from there.
+   * Appending one message to a 7.3k-message session therefore touches one row
+   * instead of deleting and re-inserting 7.3k rows (FTS trigram maintenance was
+   * 94% of the old cost).
+   */
+  function syncMessages(sessionId: number, s: RawSession): void {
+    const oldCount = (stmtMsgCount.get(sessionId) as { n: number }).n
+    let keep = 0
+    for (const row of stmtMsgIter.iterate(sessionId) as IterableIterator<StoredMessage>) {
+      if (keep >= s.messages.length) break
+      if (!sameMessage(row, s.messages[keep])) break
+      keep++
+    }
+    if (keep === oldCount && keep === s.messages.length) return
+    if (keep < oldCount) {
+      for (const r of stmtMsgTailIds.all(sessionId, keep) as Array<{ id: number }>) {
+        stmtFtsMsgDel.run(r.id)
+      }
+      stmtMsgDelTail.run(sessionId, keep)
+    }
+    insertMessages(sessionId, s, keep)
+  }
+
+  function insertMessages(sessionId: number, s: RawSession, from = 0): void {
+    for (let seq = from; seq < s.messages.length; seq++) {
+      const m = s.messages[seq]
       const res = stmtMsgIns.run({
         session_id: sessionId,
         seq,
@@ -354,7 +411,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
       if (m.content.trim().length > 0) {
         stmtFtsMsgIns.run(Number(res.lastInsertRowid), cap(m.content))
       }
-    })
+    }
   }
 
   const ingestTx = sqlite.transaction(

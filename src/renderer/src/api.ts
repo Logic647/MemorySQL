@@ -72,10 +72,14 @@ export interface DigestLatest {
 }
 
 export const api = {
-  listSessions: (agentType: string, opts?: { archived?: boolean }): Promise<SessionSummaryRow[]> =>
+  listSessions: (
+    agentType: string,
+    opts?: { archived?: boolean; limit?: number; offset?: number }
+  ): Promise<SessionSummaryRow[]> =>
     window.memorysql.invoke('core-schema:sessions:list', {
       agentType,
-      limit: 200,
+      limit: opts?.limit ?? 200,
+      offset: opts?.offset ?? 0,
       archived: opts?.archived ?? false
     }) as Promise<SessionSummaryRow[]>,
   renameSession: (id: number, title: string): Promise<{ ok: boolean; title: string }> =>

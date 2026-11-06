@@ -27,8 +27,13 @@ import path from 'node:path'
  * 的,两者都试一遍最省事;而调用方若自己拼路径,带引号就会得到一个
  * 以 `"` 开头结尾的非法路径,existsSync 恒 false 且毫无提示。
  */
+/** 负结果也缓存:**未安装**的机器每次扫描/启动都会白白 spawn 一次 reg.exe */
+let regCache: { at: number; value: string | null } | null = null
+const REG_CACHE_TTL_MS = 5 * 60_000
+
 function readRegistryInstallDir(): string | null {
   if (process.platform !== 'win32') return null
+  if (regCache && Date.now() - regCache.at < REG_CACHE_TTL_MS) return regCache.value
   try {
     const out = execFileSync(
       'reg',
@@ -38,11 +43,15 @@ function readRegistryInstallDir(): string | null {
         '/v',
         'InstallLocation'
       ],
-      { encoding: 'utf-8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'] }
+      // 注册表读要么很快要么直接失败,4s 的长尾只会卡住调用方(启动路径是同步的)
+      { encoding: 'utf-8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] }
     )
     const m = out.match(/REG_SZ\s+(.+)/)
-    return m ? m[1].trim() : null
+    const value = m ? m[1].trim() : null
+    regCache = { at: Date.now(), value }
+    return value
   } catch {
+    regCache = { at: Date.now(), value: null }
     return null
   }
 }

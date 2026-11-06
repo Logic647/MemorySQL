@@ -20,8 +20,12 @@ function findOpencodeDb(): string | null {
   return candidates.find((c) => fs.existsSync(c)) ?? null
 }
 
-/** db file and its -wal/-shm sidecars (WAL writes may not touch the main file) */
-const OPENCODE_DB_WATCH = /opencode\.db(-wal|-shm)?$/i
+/**
+ * db file and its -wal sidecar. `-shm` is deliberately excluded: it is the
+ * shared-memory index and churns on plain reads, which would turn every query
+ * by the agent into a full-store rescan.
+ */
+const OPENCODE_DB_WATCH = /opencode\.db(-wal)?$/i
 
 function watchPaths(): string[] {
   const db = findOpencodeDb()

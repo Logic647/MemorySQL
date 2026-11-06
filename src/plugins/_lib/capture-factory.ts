@@ -124,52 +124,70 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
           }
           const dirs = resolved && resolved.length > 0 ? resolved : [sourceRoot]
           const rescan = watchSpec.rescan === true
-          ctx.watcher.watch(
-            dirs,
-            (changed) => {
-              void (async () => {
-                try {
-                  let sessions: RawSession[]
-                  if (rescan) {
-                    sessions = spec.collect(sourceRoot)
-                  } else if (watchSpec.parseFile) {
-                    sessions = watchSpec.parseFile(changed).filter(Boolean)
-                  } else {
-                    return
-                  }
-                  if (sessions.length === 0) return
-                  const res = await ctx.services.use<IngestService>('ingest').ingestSessions(sessions)
-                  if (res.imported + res.updated > 0) {
-                    ctx.log.info(`incremental import from ${path.basename(changed)}`)
-                  }
-                  // 增量捕获成功 = 格式仍读得懂。归零失败计数,让偶发失败不累积成告警
-                  lastStatus = {
-                    ...lastStatus,
-                    health: healthFrom(0, true),
-                    consecutiveFailures: 0,
-                    lastSuccessAt: Date.now()
-                  }
-                } catch (err) {
-                  // 增量失败必须落到状态里:过去这里只写日志,导致上游改格式后
-                  // 每条新会话都解析失败,而 UI 始终显示「N 条会话 / M 扫描」——
-                  // 静默失效的根因。
-                  const n = lastStatus.consecutiveFailures + 1
-                  lastStatus = {
-                    ...lastStatus,
-                    health: healthFrom(n, lastStatus.lastSuccessAt !== null),
-                    consecutiveFailures: n,
-                    lastFailureAt: Date.now(),
-                    lastFailureDetail: failureDetail(err, changed)
-                  }
-                  ctx.log.warn(
-                    `incremental parse failed (${n}x) for ${changed}:`,
-                    err
-                  )
-                }
-              })()
-            },
-            { match: watchSpec.match, debounceMs: 1000 }
-          )
+          // rescan plugins re-parse the whole store, so a single burst of
+          // events (db + -wal + -shm in one debounce window) must not run the
+          // parse N times back-to-back. Coalesce into one run plus at most one
+          // follow-up for events that landed while it was running.
+          let rescanInFlight = false
+          let rescanQueued = false
+
+          const runIncremental = async (changed: string): Promise<void> => {
+            try {
+              let sessions: RawSession[]
+              if (rescan) {
+                sessions = spec.collect(sourceRoot)
+              } else if (watchSpec.parseFile) {
+                sessions = watchSpec.parseFile(changed).filter(Boolean)
+              } else {
+                return
+              }
+              if (sessions.length === 0) return
+              const res = await ctx.services.use<IngestService>('ingest').ingestSessions(sessions)
+              if (res.imported + res.updated > 0) {
+                ctx.log.info(`incremental import from ${path.basename(changed)}`)
+              }
+              // 增量捕获成功 = 格式仍读得懂。归零失败计数,让偶发失败不累积成告警
+              lastStatus = {
+                ...lastStatus,
+                health: healthFrom(0, true),
+                consecutiveFailures: 0,
+                lastSuccessAt: Date.now()
+              }
+            } catch (err) {
+              // 增量失败必须落到状态里:过去这里只写日志,导致上游改格式后
+              // 每条新会话都解析失败,而 UI 始终显示「N 条会话 / M 扫描」——
+              // 静默失效的根因。
+              const n = lastStatus.consecutiveFailures + 1
+              lastStatus = {
+                ...lastStatus,
+                health: healthFrom(n, lastStatus.lastSuccessAt !== null),
+                consecutiveFailures: n,
+                lastFailureAt: Date.now(),
+                lastFailureDetail: failureDetail(err, changed)
+              }
+              ctx.log.warn(`incremental parse failed (${n}x) for ${changed}:`, err)
+            }
+          }
+
+          const kick = (changed: string): void => {
+            if (rescan) {
+              if (rescanInFlight) {
+                rescanQueued = true
+                return
+              }
+              rescanInFlight = true
+            }
+            void runIncremental(changed).finally(() => {
+              if (!rescan) return
+              rescanInFlight = false
+              if (rescanQueued) {
+                rescanQueued = false
+                kick(changed)
+              }
+            })
+          }
+
+          ctx.watcher.watch(dirs, kick, { match: watchSpec.match, debounceMs: 1000 })
           ctx.log.info(`watching ${dirs.join(', ')}`)
         }
       }

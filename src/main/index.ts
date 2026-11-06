@@ -695,24 +695,44 @@ app.whenReady().then(async () => {
     const win = createWindow(boot.host, boot.events)
     const spotlight = setupSpotlight({ win, settings: boot.settings })
     registerHostChannels(boot.host, boot.settings, boot.env, boot.db, spotlight)
-    // startup capture scan: sessions written while the app was off should show
-    // up on launch, not only after a manual 立即扫描 (best-effort, non-blocking)
-    void (async () => {
-      try {
-        const channels = new Set(boot.host.listChannels())
-        for (const p of BUILTIN_PLUGINS.filter((x) => x.manifest.id.startsWith('capture-'))) {
-          const channel = `${p.manifest.id}:scanNow`
-          if (!channels.has(channel)) continue
-          try {
-            await boot.host.invoke(channel)
-          } catch {
-            /* per-plugin failure is non-fatal */
+    // Startup capture scan: sessions written while the app was off should show
+    // up on launch, not only after a manual 立即扫描.
+    //
+    // It must not compete with the first paint: each adapter parses its whole
+    // store synchronously (measured ≈1.5 s for 5 enabled adapters), so starting
+    // it right away pushed the renderer's initial sessions:list IPC behind it
+    // and the window sat on a "no sessions" state. Wait for the renderer to
+    // finish loading, give it a beat to issue its first queries, then scan
+    // piecewise with an event-loop yield between adapters.
+    let startupScanStarted = false
+    const startStartupScan = (): void => {
+      if (startupScanStarted) return
+      startupScanStarted = true
+      void (async () => {
+        try {
+          const channels = new Set(boot.host.listChannels())
+          for (const p of BUILTIN_PLUGINS.filter((x) => x.manifest.id.startsWith('capture-'))) {
+            const channel = `${p.manifest.id}:scanNow`
+            if (!channels.has(channel)) continue
+            try {
+              await boot.host.invoke(channel)
+            } catch {
+              /* per-plugin failure is non-fatal */
+            }
+            // yield between adapters so IPC/paint can interleave with the scan
+            await new Promise<void>((resolve) => setImmediate(resolve))
           }
+        } catch {
+          /* scan is best-effort */
         }
-      } catch {
-        /* scan is best-effort */
-      }
-    })()
+      })()
+    }
+    win.webContents.once('did-finish-load', () => {
+      setTimeout(startStartupScan, 2000).unref?.()
+    })
+    // fallback: a window that never reports load (headless/hidden start) must
+    // still pick up offline sessions
+    setTimeout(startStartupScan, 15000).unref?.()
     app.once('will-quit', () => spotlight.dispose())
     if (app.isPackaged) {
       void startupUpdateCheck().catch((err) => {

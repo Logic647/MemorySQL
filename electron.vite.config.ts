@@ -15,6 +15,11 @@ export default defineConfig({
     }
   },
   renderer: {
-    plugins: [react()]
+    plugins: [react()],
+    build: {
+      // electron-vite defaults minify to false for every target; the renderer
+      // ships to disk and is parsed on every cold start, so compress it
+      minify: 'esbuild'
+    }
   }
 })
