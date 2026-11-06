@@ -9,10 +9,14 @@ on:
 
 # 取消被取代的 run —— 缺这一段的后果是排队,不是变慢。
 #
-# macos-13(Intel)是 GitHub 托管 runner 里最抢手的一个,实测**排 93 分钟仍未分配到
-# runner**(runner_name 为空)。没有 concurrency 时,每次推 main 都会新建一个排队的
-# macos-13 job,于是 N 个 run 抢同一个稀缺 runner —— 推得越多越排不上,是个正反馈。
-# 之前就有 4 个 macos-13 同时在队列里。
+# 历史:macos-13(Intel)曾是最抢手的托管 runner,实测排 93 分钟仍未分配
+# (runner_name 为空),推得越多越排不上。该镜像已于 2026 年退役,现在
+# Intel 走 macos-15-intel。concurrency 仍然必要:同一 ref 的旧 run 会让位。
+#
+# 另一条同样重要:**tag 的 run 绝不能被新 run 挤掉,也不能永远挂着**。
+# macos 镜像退役时 job 会一秒内 cancelled(见 matrix 注释),若旧 tag run
+# 因此一直停在 queued,它会**占住同名 concurrency 组**,导致后续任何
+# vX.Y.Z 的 run 都停在 pending、连 job 都不创建 —— 排查时先看这个。
 #
 # 分两种情况:
 #   main 推送   cancel-in-progress: true —— 只保留最新的那次,旧的自动让位
@@ -59,20 +63,26 @@ jobs:
       # macOS is split by architecture rather than built as universal.
       # Reason: the native modules ship as per-arch optional dependencies
       # (sqlite-vec-darwin-{arm64,x64}), and a universal build would have to
-      # merge two of those plus onnxruntime's dylib. macos-13 is the last
-      # Intel runner; macos-14 is Apple Silicon. Using a real runner of each
+      # merge two of those plus onnxruntime's dylib. Using a real runner of each
       # arch means `npm ci` installs the matching optional deps, so no
       # cross-arch install trickery is needed.
+      #
+      # ⚠ runner 标签会随 GitHub 退役镜像而失效,而且是**静默失效**:
+      # macos-14 于 2026-11-02 退役后,指向它的 job 不再排队,而是
+      # "created→started→cancelled" 一秒内结束(0 steps、runner_name 为空),
+      # 看起来像并发取消,实际是镜像没了。镜像清单见
+      # https://github.com/actions/runner-images —— 当前 Apple Silicon 是
+      # macos-15/macos-26,Intel 是 macos-15-intel/macos-26-intel。
       matrix:
         include:
           - os: windows-latest
             platform: win
           - os: ubuntu-latest
             platform: linux
-          - os: macos-14
+          - os: macos-15
             platform: mac
             arch: arm64
-          - os: macos-13
+          - os: macos-15-intel
             platform: mac
             arch: x64
     runs-on: ${{ matrix.os }}
