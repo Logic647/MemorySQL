@@ -14,6 +14,12 @@
 - **dsh ✅(白盒,开源)**:`packages/context/agent-instructions/src/config.ts` 写死 `DEFAULT_INSTRUCTION_FILE_CANDIDATES = ['AGENTS.md', 'CLAUDE.md']`,外加 `AGENTS.local.md / CLAUDE.local.md` 覆盖层;**从 cwd 逐级向上**找项目根;全局认 `~/.dsh/` 与共享 agents 根下的同名文件。结论:**项目级 AGENTS.md 对 dsh 直接有效**
 - **hermes ✅(黑盒,资源翻查)**:整个 bundled-runtime(Python 源码包)里**没有任何 AGENTS.md/CLAUDE.md 字符串** —— 它不认这套约定;它有自己的规则文件 **`<hermes-home>/SOUL.md`**(人设)。结论:对 hermes 写规则 = 追加 SOUL.md,而不是 AGENTS.md
 
+**二次跑(用户在面板重新登录后):**
+- **kimi ✅(官方文档,不必跑会话)**:`docs/en/customization/agents.md` 明确 —— 项目级认 `AGENTS.md`(以及 `.kimi-code/AGENTS.md`),内容以 `${agents_md}` 注入系统提示;全局认 `$KIMI_CODE_HOME/AGENTS.md`(默认 ~/.kimi-code)与**跨工具通用**的 `~/.agents/AGENTS.md`。探测跑不动是因为**订阅不含 Kimi Code**(403 需升级套餐),与规则无关 —— 文档已足够定论
+- **codebuddy ⏸(诊断清楚)**:面板一键登录**只写了 qoder**(`.qoder/.auth` 时间戳 = 登录时刻);~/.codebuddy 下**没有任何 auth 文件**(只有 user-state.json/projects/logs),CLI 仍报 Authentication required → 必须 SSH 上去在交互式 CLI 里 `/login`,面板管不到
+- **qwen ⏸ / gemini ⏸**:非交互模式要求先选 auth 类型(qwen:--auth-type;gemini:settings.json 或 GEMINI_API_KEY)—— NAS 上这两家本来就没配好(报告里 gemini 恒 🟠);约定(GEMINI.md/QWEN.md)继承自 gemini-cli,先按通行约定记账,金丝雀等 auth 配好顺手跑
+- **发现一个通用落点**:`~/.agents/AGENTS.md` —— kimi 明确支持「跨工具通用」的 agents 根,dsh 的 `AGENTS_GLOBAL_DIRECTORY` 也是同一个共享根。若后续更多工具采纳,一个文件能覆盖多家,台账里单独记
+
 **剩余 5/7 → NAS 首跑(2026-11-07),又定 1 家:**
 - **qoder ✅(金丝雀实测)**:沙箱种 11 个候选,回复**第一行**就是 `RULECANARY_QODER_DIR` —— **认 `.qoder/rules/*.md`(项目级规则目录)**;AGENTS.md 的暗号**没有**出现(不认);对照组 README.md 未命中、agent 无自建文件,判定干净。这就是"黑盒测定"想要的形状:不用文档、不用源码,行为直接给答案
 - **kimi ⏸ / codebuddy ⏸(NAS 登录态失效)**:kimi 报 "No model configured, Run kimi and use /login";codebuddy 报 "Authentication required"(当天早上的定时探针还是 🟢,数小时后过期)。都要在 NAS 上重新 `/login`(面板 8789 的一键登录就是干这个的)
