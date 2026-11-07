@@ -26,6 +26,16 @@
 
 ---
 
+## 2026-11-07 · v0.7.4 热修已发版(EXDEV · 20 资产 · 用户点名 0.7.3.1,改用 0.7.4 的原因记档)
+
+**已发布:** https://github.com/Logic647/MemorySQL/releases/tag/v0.7.4 —— 20 资产、三清单 200、exe size(104,354,910)与声明一致、latest-mac.yml 双架构齐。内容只有 EXDEV 一项(见上一条)。
+
+**两个新知:**
+1. **版本号不能用四段(0.7.3.1)**:electron-updater/electron-builder 走 semver,四段不是合法 semver,更新比较会抛错 —— 用户点名的 0.7.3.1 改成了 0.7.4,补丁语义不变。
+2. **artifact 下载的两个坑连踩**:①按名字过滤时 `includes('x64')` 会把 **arm64** 也匹配上(子串包含)—— 必须精确匹配 `-x64-`;②GitHub 的 artifact 下载对 `Range` 请求**时灵时不灵**(同一会话里 arm 三次 Range 全 206、x64 三次全 200 整包)—— 不确定性下别依赖,但整包下载后的文件直接本地解包即可,第一次的 Range 响应 206 也证明技术上支持,只是 CDN 行为不稳。**这次 x64 清单实际取自草稿资产**(CI 后上传的 x64 清单,API octet-stream 直读,339 字节),零下载 —— 「草稿里后传的清单」恰好就是合并所需的另一半,下次可以默认走这条:草稿 latest-mac.yml(一个架构)+ 另一架构从 artifact 取。
+
+---
+
 ## 2026-11-07 · Linux 导入归档 EXDEV 修复(用户真机踩到,v0.7.3 热修线)
 
 **症状(Linux 真机):** 导入 .msqlv 报 `EXDEV: cross-device link not permitted, rename '/tmp/memorysql-import-check-*.db' -> '/home/logic/.config/memorysql/data/.import-staging/memory.db'`。**Windows 永远踩不到**(tmp 与数据目录同盘),一上 Linux 就现形 —— /tmp 几乎总是独立 tmpfs,而 `renameSync` 跨设备就是 EXDEV。
