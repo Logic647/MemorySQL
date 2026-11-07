@@ -26,6 +26,20 @@
 
 ---
 
+## 2026-11-07 · Linux 导入归档 EXDEV 修复(用户真机踩到,v0.7.3 热修线)
+
+**症状(Linux 真机):** 导入 .msqlv 报 `EXDEV: cross-device link not permitted, rename '/tmp/memorysql-import-check-*.db' -> '/home/logic/.config/memorysql/data/.import-staging/memory.db'`。**Windows 永远踩不到**(tmp 与数据目录同盘),一上 Linux 就现形 —— /tmp 几乎总是独立 tmpfs,而 `renameSync` 跨设备就是 EXDEV。
+
+**根因:** `sync-archive` 的导入流程先把归档里的 memory.db 写进 `os.tmpdir()` 做完整性校验,再 `renameSync` 挪进 `dataDir/.import-staging` —— 那一跳跨设备。**boot 侧换装(`processPendingImport`)全在 dataDir 内,是安全的**;导出路径(VACUUM INTO /tmp → AdmZip 读 → zip 直写目标)也没有跨设备 rename,只有这一处。
+
+**修法:** staging 目录**先建**,校验库直接写进 staging(数据目录同一侧),校验通过后在**同目录内** rename 成 memory.db —— 同设备,原子性保持。校验失败时整个 staging 清掉,数据目录不留半个目录。
+
+**测试(`test/import-staging.test.ts`,2 条):** 用 vi.mock 桩掉 electron(app.exit 抛错充当「staging 成功走完」的信号),结构断言 ①校验库落 staging、tmp 里不再出现 `memorysql-import-check-*`(旧实现的直接证据)、marker 已写;②坏库 → staging 整体清掉。**注意一个测试写法的坑**:校验失败用例最初写成 `expect(...).rejects.toThrow()` 却总不过 —— 成功路径的 exit 抛错被当成了意外拒绝;rejects 断言要精确到 'exit called' 才能区分两条路径。vitest 607:607。
+
+**同类审计:** 全仓 renameSync 逐个看过 —— boot 换装/导出/更新链路均无跨设备 rename;**教训记档:凡「写进 os.tmpdir() 再 rename 进数据目录」的写法在 Linux 都是定时炸弹,中间产物必须落在目标目录同一侧。**
+
+---
+
 ## 2026-11-07 · v0.7.3 已发版(主动调用双引擎 · 20 资产 · mac 清单合并首次走 Range 取文件)
 
 **已发布:** https://github.com/Logic647/MemorySQL/releases/tag/v0.7.3 —— 20 资产、三清单公网 200、`latest.yml` 声明 exe size(104,354,854)与实体 Content-Length 一致、`latest-mac.yml` 双架构齐。CI 六 job 全绿,**这次没有踩 concurrency 组占死**(v0.7.2 的坑不复现,原因是旧 tag run 正常跑完了)。

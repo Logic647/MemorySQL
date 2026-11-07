@@ -93,10 +93,17 @@ const plugin: MemorySQLPlugin = {
         if (manifest.format !== 'msqlv') throw new Error('manifest.format 不是 msqlv')
       }
 
+      // stage next to the data dir; the boot path swaps files after relaunch.
+      // staging 必须先建:校验库要落在 dataDir 同一侧 —— 校验库若写进 os.tmpdir()
+      // (Linux 上是独立 tmpfs),之后的 renameSync 会 EXDEV(跨设备不允许 rename)。
+      const staging = path.join(ctx.env.dataDir, '.import-staging')
+      fs.rmSync(staging, { recursive: true, force: true })
+      fs.mkdirSync(staging, { recursive: true })
+
       // validate before touching anything live
-      const tmpDb = path.join(os.tmpdir(), `memorysql-import-check-${Date.now()}.db`)
-      fs.writeFileSync(tmpDb, dbEntry.getData())
-      const check = new Database(tmpDb, { readonly: true, fileMustExist: true })
+      const checkDb = path.join(staging, `.import-check-${Date.now()}.db`)
+      fs.writeFileSync(checkDb, dbEntry.getData())
+      const check = new Database(checkDb, { readonly: true, fileMustExist: true })
       try {
         const n = (
           check
@@ -106,15 +113,16 @@ const plugin: MemorySQLPlugin = {
             .get() as { n: number }
         ).n
         if (n < 3) throw new Error('不是 MemorySQL 数据库(缺核心表)')
-      } finally {
-        check.close()
+      } catch (err) {
+        // 校验失败:关库、别把半个 staging 留在数据目录里
+        try { check.close() } catch { /* 已关 */ }
+        fs.rmSync(staging, { recursive: true, force: true })
+        throw err
       }
+      check.close()
 
-      // stage next to the data dir; the boot path swaps files after relaunch
-      const staging = path.join(ctx.env.dataDir, '.import-staging')
-      fs.rmSync(staging, { recursive: true, force: true })
-      fs.mkdirSync(staging, { recursive: true })
-      fs.renameSync(tmpDb, path.join(staging, 'memory.db'))
+      // 同目录 rename:同设备,保持原子性
+      fs.renameSync(checkDb, path.join(staging, 'memory.db'))
       const settingsEntry = zip.getEntry('settings.json')
       if (settingsEntry) fs.writeFileSync(path.join(staging, 'settings.json'), settingsEntry.getData())
       for (const entry of zip.getEntries()) {
