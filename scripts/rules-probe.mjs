@@ -36,7 +36,7 @@ for (let i = 0; i < args.length; i++) {
 const out = argOf('--out', null)
 const keep = args.includes('--keep')
 const timeoutSec = Number(argOf('--timeout', '180')) || 180
-const PROMPT = 'Reply with exactly: ok'
+const PROMPT = 'hi'
 
 /** 候选规则文件 → 暗号。种错的路径无害(暗号不出现=不认);宁全勿缺。 */
 const CANDIDATES = [
