@@ -26,6 +26,18 @@
 
 ---
 
+## 2026-11-07 · v0.7.3 已发版(主动调用双引擎 · 20 资产 · mac 清单合并首次走 Range 取文件)
+
+**已发布:** https://github.com/Logic647/MemorySQL/releases/tag/v0.7.3 —— 20 资产、三清单公网 200、`latest.yml` 声明 exe size(104,354,854)与实体 Content-Length 一致、`latest-mac.yml` 双架构齐。CI 六 job 全绿,**这次没有踩 concurrency 组占死**(v0.7.2 的坑不复现,原因是旧 tag run 正常跑完了)。
+
+**发版流程的改进:mac 清单合并不再整包下载 artifact。** 两个 mac artifact 共 511MB,直连下载只有 ~200KB/s(半小时起)。改用 **Range 请求三步取一个小文件**:尾部 64KB 找 EOCD → 中央目录定位 `latest-mac.yml` → 按局部偏移取数并 inflate(脚本 `fetch-artifact-file.mjs` 在临时目录)。两个 252MB 的 zip 各只需 ~200KB 的三次 Range。**坑:undici 对重定向后的 Azure blob,后缀区间要写 `bytes=-65536`(不能带尾横杠)**;另外 undici 会吞 Authorization 头在重定向后 —— 好在签名 URL 不需要它。这个技巧 AGENTS.md 早就记过("查 CI 产物别整包下载"),这次终于落成了可复用脚本。
+
+**发布内容:** ①MCP 主动调用协议层(instructions + 【何时调用】描述);②规则层(台账 rules 13/13 + rules-writer + 向导「写入规则」);③归档语义跟随(opencode 2.2.6 --archived);④dsh title 真机修正;⑤上游监控增强(versionGap 标注 / 401 长红脸 / NAS timer 补跑 / gemini 检查修正 / 双面板规则行 / rules-probe 工具)。
+
+**发版后动作:** scoop bucket 的自动 bump workflow 会在每日 03:17 UTC 自行跟进(0.7.3 已在其 checkver 视野内);装机版自动更新静默收取;**用户侧最后一步**——升级后在向导里给常用 agent 点「写入规则」。
+
+---
+
 ## 2026-11-07 · 看板巡检 → 适配决策:0 家需立即适配;落地 1 个前瞻适配(归档语义)
 
 **巡检结论(黑盒 7🟢 / 0🔴 / 0🟣;白盒 2 high + 3 medium + versionGap 1):** 逐家核对了被标记的上游变更,结论是**没有任何一家需要立即适配**,但顺手落了 1 个前瞻适配。
