@@ -18,7 +18,12 @@
 - **kimi ✅(官方文档,不必跑会话)**:`docs/en/customization/agents.md` 明确 —— 项目级认 `AGENTS.md`(以及 `.kimi-code/AGENTS.md`),内容以 `${agents_md}` 注入系统提示;全局认 `$KIMI_CODE_HOME/AGENTS.md`(默认 ~/.kimi-code)与**跨工具通用**的 `~/.agents/AGENTS.md`。探测跑不动是因为**订阅不含 Kimi Code**(403 需升级套餐),与规则无关 —— 文档已足够定论
 - **codebuddy ⏸(诊断清楚)**:面板一键登录**只写了 qoder**(`.qoder/.auth` 时间戳 = 登录时刻);~/.codebuddy 下**没有任何 auth 文件**(只有 user-state.json/projects/logs),CLI 仍报 Authentication required → 必须 SSH 上去在交互式 CLI 里 `/login`,面板管不到
 - **qwen ⏸ / gemini ⏸**:非交互模式要求先选 auth 类型(qwen:--auth-type;gemini:settings.json 或 GEMINI_API_KEY)—— NAS 上这两家本来就没配好(报告里 gemini 恒 🟠);约定(GEMINI.md/QWEN.md)继承自 gemini-cli,先按通行约定记账,金丝雀等 auth 配好顺手跑
-- **发现一个通用落点**:`~/.agents/AGENTS.md` —— kimi 明确支持「跨工具通用」的 agents 根,dsh 的 `AGENTS_GLOBAL_DIRECTORY` 也是同一个共享根。若后续更多工具采纳,一个文件能覆盖多家,台账里单独记
+- **三次跑(codebuddy 登录后):**
+- **codebuddy ✅(金丝雀实测)**:回复第一行 = `RULECANARY_CODEBUDDY` —— **认项目级 `CODEBUDDY.md`**;AGENTS.md 暗号未出现(不认);对照组/自建文件都干净
+- **workbuddy**:用户确认与 codebuddy 同族(同厂同引擎)→ 按 `CODEBUDDY.md` 记账,证据标 family,装上后金丝雀复核
+- **13/13 齐了**:canary 实测 2(dsh 无关/qoder/codebuddy)+ 白盒 1(dsh)+ 官方文档 1(kimi)+ 资源翻查 1(hermes)+ 通行约定 8。台账 `rules` 字段据此落地
+
+**发现一个通用落点**:`~/.agents/AGENTS.md` —— kimi 明确支持「跨工具通用」的 agents 根,dsh 的 `AGENTS_GLOBAL_DIRECTORY` 也是同一个共享根。若后续更多工具采纳,一个文件能覆盖多家,台账里单独记
 
 **剩余 5/7 → NAS 首跑(2026-11-07),又定 1 家:**
 - **qoder ✅(金丝雀实测)**:沙箱种 11 个候选,回复**第一行**就是 `RULECANARY_QODER_DIR` —— **认 `.qoder/rules/*.md`(项目级规则目录)**;AGENTS.md 的暗号**没有**出现(不认);对照组 README.md 未命中、agent 无自建文件,判定干净。这就是"黑盒测定"想要的形状:不用文档、不用源码,行为直接给答案
