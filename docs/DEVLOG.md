@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-11-07 · 「使用规则」第二层开工:未知 agent 的规则文件用金丝雀黑盒测定(2/7 已定)
+
+**目标:** 让 agent 主动调用 MCP 的第二层,是往 agent 自己读的规则文件里写工作协议(规则文件每轮都进上下文,比工具描述硬)。但 13 家里 7 家(kimi/codebuddy/qoder/workbuddy/cursor/hermes/dsh)的规则文件路径没有依据 —— 猜了就会写错文件。思路(用户提出,即 session 288 的方法论):**黑盒测定**。
+
+**新增 `scripts/rules-probe.mjs`(金丝雀法,已入仓):** 沙箱里**同时**种下 11 个候选规则文件,每个文件里一条唯一暗号(`RULECANARY_<文件名>`),让 agent 在沙箱里跑一轮最小会话;输出里出现哪个暗号 = 它采纳哪个文件。**种错路径无害**(暗号不出现 = 不认),所以候选宁全勿缺(AGENTS/CLAUDE/CLAUDE.local/GEMINI/QWEN/CODEBUDDY/.cursorrules/.cursor/rules/.qoder/rules/.kimi/rules)。**对照组**:README.md 里也埋一个假暗号 —— 正常 agent 不会读它,若它出现说明判定有假阳性。引擎已自检(假 agent echo 暗号 → 正确报出 AGENTS.md;agent 自建文件靠 diff 报出,路径分隔符已归一)。
+
+**当日已测定 2/7:**
+- **dsh ✅(白盒,开源)**:`packages/context/agent-instructions/src/config.ts` 写死 `DEFAULT_INSTRUCTION_FILE_CANDIDATES = ['AGENTS.md', 'CLAUDE.md']`,外加 `AGENTS.local.md / CLAUDE.local.md` 覆盖层;**从 cwd 逐级向上**找项目根;全局认 `~/.dsh/` 与共享 agents 根下的同名文件。结论:**项目级 AGENTS.md 对 dsh 直接有效**
+- **hermes ✅(黑盒,资源翻查)**:整个 bundled-runtime(Python 源码包)里**没有任何 AGENTS.md/CLAUDE.md 字符串** —— 它不认这套约定;它有自己的规则文件 **`<hermes-home>/SOUL.md`**(人设)。结论:对 hermes 写规则 = 追加 SOUL.md,而不是 AGENTS.md
+
+**剩余 5/7:** kimi / codebuddy / qoder 三家 CLI 已装在 NAS,金丝雀命令已备好(`ssh nas "cd ~/MemorySQL && git pull && node scripts/rules-probe.mjs --spec 'qoder:qoder -p {P}' --spec 'codebuddy:codebuddy -p {P}' --spec 'kimi:kimi -p {P}' --out /tmp/rules.json"`),**SSH 又被路由器限流**(两条路都 Connection closed,老问题,等恢复);workbuddy / cursor 未装,装上后同一条命令即可。
+
+---
+
+## 2026-11-07 · MCP 主动调用协议层:initialize 带 instructions + 工具描述写明触发时机
+
+**问题:** MCP 工具默认被动 —— `initialize` 只回 protocolVersion/capabilities/serverInfo,8 个工具描述全是「这是什么」没有一个字说「什么时候该调」。数据佐证(session 288):891 条消息 538 次工具调用里 `memory_*` 只有 5 次,且全部由用户开场那句话(「阅读本项目以及 nas-setup 的项目总结」)触发;全库排序后,主动调用多的会话**首条用户消息清一色是「继续 X / 阅读会话 N / 根据计划」** —— 现在的"主动"其实是用户在用固定句式喂。
+
+**改动(协议层,覆盖 13/13,零配置):**
+- `initialize` 返回 **`instructions`**(MCP 规范可选字段;`mcp-protocol.ts` 加可选参数,客户端**可以**把它放进系统提示):写清四个调用时机(get_context 开工一次 / search 先搜再答 / write 当场记 / log_progress 收工报)+ **预算约束**(每会话最多一次、只写确信的结论、不复述给外部服务)
+- 8 个 `memory_*` 工具描述统一改为以 **「【何时调用】」开头**,把触发条件写成人话("用户问上次怎么做的——先搜再答,不要凭印象")
+
+**测试(`test/mcp-instructions.test.ts`,4 条):** init 带 instructions 且四个工具名 + 预算字样齐全;不传时字段不出现(向后兼容);每个 memory_* 描述以【何时调用】开头;**按源码计数**防止新增工具漏写。**E2E**:demo 实例 curl `initialize` → instructions 511 字;`tools/list` → 7/7 全带前缀(digest 工具由静态测试覆盖)。
+
+**边界(说清楚):** 没有哪一档能保证 100% 主动;`instructions` 有的客户端会忽略 —— 所以触发说明要同时写在**描述**里(每个客户端必须拉 tools/list,模型一定看得到)。第二层(规则文件)见上一条。
+
+---
+
 ## 2026-11-06 · dsh 首次真机校准(改掉一个 title 缺陷)+ hermes v0.23.0 捕获验证通过
 
 **背景:** 用户把 the agent harness(桌面版)装到本机并发了一轮对话、把 Hermes 升到 0.23 也发了对话。两件事同时解掉了两个悬了很久的验证缺口(dsh 此前双机 absent、hermes 的"单 gateway"改造被 LLM 判为捕获可能受影响)。
