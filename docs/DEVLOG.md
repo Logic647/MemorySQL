@@ -14,7 +14,11 @@
 - **dsh ✅(白盒,开源)**:`packages/context/agent-instructions/src/config.ts` 写死 `DEFAULT_INSTRUCTION_FILE_CANDIDATES = ['AGENTS.md', 'CLAUDE.md']`,外加 `AGENTS.local.md / CLAUDE.local.md` 覆盖层;**从 cwd 逐级向上**找项目根;全局认 `~/.dsh/` 与共享 agents 根下的同名文件。结论:**项目级 AGENTS.md 对 dsh 直接有效**
 - **hermes ✅(黑盒,资源翻查)**:整个 bundled-runtime(Python 源码包)里**没有任何 AGENTS.md/CLAUDE.md 字符串** —— 它不认这套约定;它有自己的规则文件 **`<hermes-home>/SOUL.md`**(人设)。结论:对 hermes 写规则 = 追加 SOUL.md,而不是 AGENTS.md
 
-**剩余 5/7:** kimi / codebuddy / qoder 三家 CLI 已装在 NAS,金丝雀命令已备好(`ssh nas "cd ~/MemorySQL && git pull && node scripts/rules-probe.mjs --spec 'qoder:qoder -p {P}' --spec 'codebuddy:codebuddy -p {P}' --spec 'kimi:kimi -p {P}' --out /tmp/rules.json"`),**SSH 又被路由器限流**(两条路都 Connection closed,老问题,等恢复);workbuddy / cursor 未装,装上后同一条命令即可。
+**剩余 5/7 → NAS 首跑(2026-11-07),又定 1 家:**
+- **qoder ✅(金丝雀实测)**:沙箱种 11 个候选,回复**第一行**就是 `RULECANARY_QODER_DIR` —— **认 `.qoder/rules/*.md`(项目级规则目录)**;AGENTS.md 的暗号**没有**出现(不认);对照组 README.md 未命中、agent 无自建文件,判定干净。这就是"黑盒测定"想要的形状:不用文档、不用源码,行为直接给答案
+- **kimi ⏸ / codebuddy ⏸(NAS 登录态失效)**:kimi 报 "No model configured, Run kimi and use /login";codebuddy 报 "Authentication required"(当天早上的定时探针还是 🟢,数小时后过期)。都要在 NAS 上重新 `/login`(面板 8789 的一键登录就是干这个的)
+- **workbuddy / cursor**:未装,装上后同一条命令即可
+- 探针脚本两个修复:spec 按**引号**切参(否则 kimi 把提示词第二个词当子命令)、默认提示词改 "hi"(去空格,免引号依赖)
 
 ---
 
