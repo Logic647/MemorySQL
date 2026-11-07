@@ -27,3 +27,6 @@ tools/upstream-watch/state.json.tmp
 
 # 探针凭据(勿提交)
 scripts/upstream-probe.env
+
+# 连接向导/规则写入器的原文件备份
+*.bak-memorysql

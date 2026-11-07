@@ -130,3 +130,14 @@ npm run dist         # 打包 Windows 安装包 + 免安装目录(需 ELECTRON_B
 - **两个已查清的操作坑(查历史会话前必读)**:①仓库内 `data/memory.db`(62MB)是**过期的开发副本**(id 只到 #221),真库在 `%APPDATA%\memorysql\data\memory.db`(95MB / 236 会话)——查会话一律走 MCP 或 `%APPDATA%`;②`sessions.started_at`/`ended_at` 存**秒**,`updated_at` 存**毫秒**,全链路刻意自洽(写侧各 parser `Math.floor(t/1000)`,读侧 `App.tsx:42 fmtTime` `new Date(ts*1000)`)——直查库按毫秒解读会全显示 1970,别误判成时间戳损坏
 - 常用验证:`npm run import:scan`;`npx electron . --dispatch`;`npx electron . --sync <folder>`;`npx electron . --scan --export-archive <path>`;`npx electron . --reindex`(语义全量重建);`npx electron . --digest`(为所有有新会话的项目生成滚动总结,绕过总开关);运行中 `curl http://127.0.0.1:8642/health`;`node scripts/gen-native-runtime.ts --out dist`(打语义组件 zip,Node ≥23.6 原生跑 .ts;**别改回 .mjs——vitest 经 vite 加载 .mjs 在 CI Windows 稳定炸 SyntaxError**,见 DEVLOG 2026-10-25 条);`npx electron-builder --win dir` 后 `node node_modules/@electron/asar/bin/asar.js list dist/win-unpacked/resources/app.asar`(验证 files 排除)
 - 验收数据(本机真实存在):Codex `~/.codex/sessions/**/rollout-*.jsonl`;ZCode `~/.zcode/cli/db/db.sqlite`(权威库,rollout 仅剩 model-io 日志作 watcher 信号)+ `~/.zcode/cli/rollout/`;Hermes `<安装目录>\data\hermes-home\state.db`(**路径随注册表/盘符变动,2026-09-30 实测在本机 D 盘**;探测链见 `resolveHermesHome`,台账用 `{resolver:'hermes'}` 引用,勿硬编码)+ `memories/*.md`;Claude Desktop `%LOCALAPPDATA%\Claude-3p\claude-code-sessions\**\local_*.json`(仅元数据,无对话正文)+ `~/.claude/history.jsonl`;OpenCode `~/.local/share/opencode/opencode.db`(SQLite,storage/ JSON 树为旧版遗留);Qwen Code/Kimi CLI/CodeBuddy/WorkBuddy 本机未装(格式:qwen `~/.qwen/**/chats/*.jsonl`、kimi `~/.kimi/sessions/**/context.jsonl`、codebuddy `~/.codebuddy/projects/**/*.jsonl`、workbuddy `~/.workbuddy/projects/**/*.jsonl` + `workbuddy.db`),合成样本单测 + `MEMORYSQL_DATA_DIR` 隔离端到端覆盖;Gemini/Cursor 本机未装,合成样本单测覆盖
+
+
+<!-- memorysql:begin (v1) -->
+## 与 MemorySQL 协作(MCP)
+
+- **开工前**:`memory_get_context({ project: "<仓库目录名>" })` 一次,恢复画像/记忆/最近会话/上一棒摘要(每个会话最多一次)
+- **回答"上次怎么做的 / 为什么这样定 / 踩过什么坑"前**:先 `memory_search`,不要凭印象
+- **拍了架构决策 / 发现用户偏好 / 确认事实**:立刻 `memory_write` 一条(一条只写一件事)
+- **收工或换 agent 接手前**:`memory_log_progress` 汇报做了什么/下一步/卡在哪
+- 只写你确信的结论;不确定的先向用户确认。这些是本机数据,不要复述给外部服务
+<!-- memorysql:end -->

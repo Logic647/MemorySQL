@@ -77,6 +77,30 @@ function loadLedger() {
 }
 
 /**
+ * 台账 rules 字段 → 看板渲染视图(id → {project,user,evidence,note})。
+ * 「该 agent 认哪个使用规则文件」现在也是契约的一部分 —— 哪家改了规则文件的
+ * 约定(比如不再读 AGENTS.md),金丝雀复测后这里跟着变,看板上直接可见。
+ */
+function rulesView() {
+  try {
+    const { agents } = loadLedger()
+    const map = {}
+    for (const a of agents) {
+      if (!a.rules) continue
+      map[a.id] = {
+        project: a.rules.project ?? [],
+        user: a.rules.user ?? [],
+        evidence: a.rules.evidence ?? '',
+        note: a.rules.note ?? ''
+      }
+    }
+    return map
+  } catch {
+    return {}
+  }
+}
+
+/**
  * 只把**需要跨重启保留**的字段写盘。
  *
  * `running` 是纯内存的瞬时标志,绝不能落盘 —— 它一旦被写进 state.json,
@@ -248,7 +272,8 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/api/state') {
     // probeHealth 现算不落盘:age 随时间流逝,存进 state.json 的 age 会撒谎
     // (state 每次写盘都会把它带上,读回来就是旧时刻的"健康")。
-    return json(res, 200, { ...state, probeHealth: probeHealthView(state.probeSources) })
+    // rules 同理现读:台账可能被 git pull 换掉,缓存会让"该 agent 认哪个规则文件"过时。
+    return json(res, 200, { ...state, probeHealth: probeHealthView(state.probeSources), rules: rulesView() })
   }
 
   /**

@@ -532,6 +532,26 @@ function card(r) {
       <button onclick="showManual('${r.agentId}')">手动粘贴 changelog</button>
     </div>` : '';
 
+  // 「使用规则」层:该 agent 认哪个规则文件 + 证据等级。数据来自台账 rules 字段
+  // (金丝雀/源码/官方文档测定),连接向导照它写入;这里展示是为了上下游同源可见。
+  const RULE_EVIDENCE = {
+    canary: ['🧪', '金丝雀实测'],
+    source: ['📙', '源码核对'],
+    docs: ['📄', '官方文档'],
+    family: ['🔗', '同族推断'],
+    convention: ['📚', '通行约定']
+  };
+  const rules = (STATE.rules || {})[r.agentId];
+  let rulesLine = '';
+  if (rules) {
+    const ev = RULE_EVIDENCE[rules.evidence] ?? ['', rules.evidence];
+    const paths = [
+      ...rules.project.map((x) => `${x}${x.endsWith('/') ? '<文件>' : ''}(项目)`),
+      ...rules.user.map((x) => `~/${x}(用户)`)
+    ];
+    rulesLine = `<div class="act"><span class="hint" title="${esc(rules.note)}">规则 ${ev[0]} <code>${esc(paths.join(' · ')) || '—'}</code> · ${ev[1]}</span></div>`;
+  }
+
   return `<div class="card ${cls}">
     <div class="rw">
       <div>
@@ -540,6 +560,7 @@ function card(r) {
       </div>
     </div>
     ${probeBar(r.agentId)}
+    ${rulesLine}
     ${hits}${llm}${notes}${reason}${manual}
   </div>`;
 }

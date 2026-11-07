@@ -105,7 +105,31 @@ export function loadPanelState() {
   } catch {
     /* env 文件不存在 */
   }
-  return { lastRun, reports, endpoint }
+  return { lastRun, reports, endpoint, rules: loadLedgerRules() }
+}
+
+/**
+ * 台账 rules 字段 → { id → {project,user,evidence,note} }。
+ * 「该 agent 认哪个使用规则文件」现在也是契约的一部分:连接向导照它写入,
+ * 这里展示让 NAS 侧与云端看板同源可见。每次现读 —— 仓库可能刚 git pull 过。
+ */
+function loadLedgerRules() {
+  try {
+    const ledger = JSON.parse(fs.readFileSync(path.join(REPO, 'upstream', 'ledger.json'), 'utf-8'))
+    const map = {}
+    for (const a of ledger.agents ?? []) {
+      if (!a.rules) continue
+      map[a.id] = {
+        project: a.rules.project ?? [],
+        user: a.rules.user ?? [],
+        evidence: a.rules.evidence ?? '',
+        note: a.rules.note ?? ''
+      }
+    }
+    return map
+  } catch {
+    return {}
+  }
 }
 
 // ── 子进程管理(登录/探针共用) ─────────────────────────────────────────────
@@ -339,6 +363,19 @@ function sessionDot(ok) {
   return '<span class="dot unknown" title="本轮版本未变没跑会话,无新信号"></span>未测';
 }
 
+const RULE_EV = { canary: '🧪 实测', source: '📙 源码', docs: '📄 文档', family: '🔗 同族', convention: '📚 约定' };
+
+function rulesRow(st, id) {
+  const ru = (st.rules || {})[id];
+  if (!ru) return '';
+  const paths = [
+    ...ru.project.map((x) => (x.endsWith('/') ? x + '<文件>' : x + '(项目)')),
+    ...ru.user.map((x) => '~/' + x + '(用户)')
+  ];
+  return '<div class="row"><span class="k">规则</span><span class="v" title="' + esc(ru.note) + '">' +
+    esc(paths.join(' · ') || '—') + ' · ' + (RULE_EV[ru.evidence] || esc(ru.evidence)) + '</span></div>';
+}
+
 function renderAgents(st) {
   const last = st.lastRun;
   $('#agents').innerHTML = st.targets.map(t => {
@@ -349,6 +386,7 @@ function renderAgents(st) {
       '<div class="row"><span class="k">版本</span><span class="v">' + esc(a.version ?? '—') + '</span></div>' +
       '<div class="row"><span class="k">登录</span><span class="v">' + sessionDot(a.sessionOk) + (a.sessionAt ? ' · ' + esc(String(a.sessionAt).slice(5, 10)) : '') + '</span></div>' +
       '<div class="row"><span class="k">数据</span><span class="v">' + (a.dataAt ? esc(String(a.dataAt).slice(0, 10)) : '—') + '</span></div>' +
+      rulesRow(st, t.id),
       '<div class="actions"><button onclick="startLogin(\\'' + t.id + '\\')">发起登录</button>' +
       '<span class="hint">不行就 SSH:' + esc(t.sshFallback) + '</span></div>' +
       '<pre class="term" id="out-' + t.id + '" style="display:none"></pre>' +
