@@ -74,6 +74,28 @@ function listFiles(dir, base = dir, acc = []) {
   return acc
 }
 
+/** 按空格切参但尊重引号 —— 提示词里有空格,kimi 会把第 2 个词当成子命令 */
+function splitArgs(s) {
+  const out = []
+  let cur = ''
+  let quote = null
+  for (const ch of s) {
+    if (quote) {
+      if (ch === quote) quote = null
+      else cur += ch
+    } else if (ch === '"' || ch === "'") {
+      quote = ch
+    } else if (/\s/.test(ch)) {
+      if (cur) out.push(cur)
+      cur = ''
+    } else {
+      cur += ch
+    }
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
 function runAgent(spec) {
   const idx = spec.indexOf(':')
   const id = spec.slice(0, idx)
@@ -88,7 +110,7 @@ function runAgent(spec) {
     fs.writeFileSync(p, canaryBody(token), 'utf-8')
   }
 
-  const cmd = cmdTemplate.replaceAll('{P}', PROMPT).split(/\s+/)
+  const cmd = splitArgs(cmdTemplate.replaceAll('{P}', PROMPT))
   let res
   try {
     res = spawnSync(cmd[0], cmd.slice(1), {
