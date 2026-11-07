@@ -32,6 +32,8 @@ interface SessionRow {
   parent_id?: string | null
   task_type?: string | null
   agent?: string | null
+  /** 归档标记(opencode 系表里有;不存在时不导入归档语义) */
+  time_archived?: number | null
 }
 interface MessageRow {
   id: string
@@ -143,12 +145,13 @@ function sessionColumns(
   }
 }
 
-/** 一次 SELECT 的列清单:基础列 + 探测到的子会话线索列 */
+/** 一次 SELECT 的列清单:基础列 + 探测到的子会话线索列 + 归档列 */
 function sessionSelectList(columns: Set<string>): string {
   const extra: string[] = []
   if (columns.has('parent_id')) extra.push('parent_id')
   if (columns.has('task_type')) extra.push('task_type')
   if (columns.has('agent')) extra.push('agent')
+  if (columns.has('time_archived')) extra.push('time_archived')
   return ['id', 'directory', 'title', 'time_created', 'time_updated', ...extra].join(', ')
 }
 
@@ -157,6 +160,11 @@ function subagentOf(row: SessionRow): boolean {
   if (typeof row.parent_id === 'string' && row.parent_id.trim() !== '') return true
   const taskType = typeof row.task_type === 'string' ? row.task_type.trim() : ''
   return taskType !== '' && taskType !== 'interactive'
+}
+
+/** 源库归档标记(opencode 2.2.6 起 --archived 会把脚本化/CI 会话直接建成归档态) */
+function archivedOf(row: SessionRow): boolean {
+  return row.time_archived != null
 }
 
 /**
@@ -235,7 +243,8 @@ export function parseAgentSqliteSessions(
         rawPath: dbPath,
         ...(isSubagent
           ? { isSubagent: true, parentExternalId: typeof s.parent_id === 'string' ? s.parent_id : undefined }
-          : {})
+          : {}),
+        ...(archivedOf(s) ? { archived: true } : {})
       })
     }
     return out

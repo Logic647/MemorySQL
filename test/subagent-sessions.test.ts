@@ -211,3 +211,75 @@ describe('MCP: 子代理会话不占列表位置', () => {
     db.close()
   })
 })
+
+describe('ingest: 归档语义(跟随源库,单调)', () => {
+  const mkDb = (): Database.Database => {
+    const db = new Database(':memory:')
+    for (const m of CORE_MIGRATIONS) db.exec(m.up)
+    return db
+  }
+  const raw = (externalId: string, over: Partial<RawSession> = {}): RawSession => ({
+    agentType: 'opencode',
+    externalId,
+    title: externalId,
+    messages: [{ role: 'user', content: `hello ${externalId}` }],
+    ...over
+  })
+
+  it('源标记归档 → 入库即 archived=1(列表默认不显示,数据可搜)', async () => {
+    const db = mkDb()
+    const ingest = createIngestService({ sqlite: db, getSummarizer: () => null, onIngest: () => {} })
+    await ingest.ingestSessions([raw('arch1', { archived: true })])
+    expect(
+      (db.prepare('SELECT archived FROM sessions WHERE external_id = ?').get('arch1') as { archived: number })
+        .archived
+    ).toBe(1)
+    db.close()
+  })
+
+  it('单调:源取消归档( false)不会把用户在 MemorySQL 里的归档翻回去', async () => {
+    const db = mkDb()
+    const ingest = createIngestService({ sqlite: db, getSummarizer: () => null, onIngest: () => {} })
+    await ingest.ingestSessions([raw('keep', { archived: true })])
+    // 用户在 MemorySQL 里取消了归档
+    db.prepare('UPDATE sessions SET archived = 0 WHERE external_id = ?').run('keep')
+    // 源现在说没归档 → 本地保持 0
+    await ingest.ingestSessions([raw('keep')])
+    expect(
+      (db.prepare('SELECT archived FROM sessions WHERE external_id = ?').get('keep') as { archived: number })
+        .archived
+    ).toBe(0)
+    // 但源再次归档 → 又会被置 1(跟随源)
+    await ingest.ingestSessions([raw('keep', { archived: true })])
+    expect(
+      (db.prepare('SELECT archived FROM sessions WHERE external_id = ?').get('keep') as { archived: number })
+        .archived
+    ).toBe(1)
+    db.close()
+  })
+})
+
+describe('capture: 归档标记解析(仅探测到的列才生效)', () => {
+  it('time_archived 非空 → archived:true;列不存在时不产生归档语义', () => {
+    const file = path.join(os.tmpdir(), `archived-${Math.random().toString(36).slice(2)}.db`)
+    const db = new Database(file)
+    db.exec(`CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT,
+      time_created INTEGER, time_updated INTEGER, parent_id TEXT, task_type TEXT, time_archived INTEGER);
+      CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT);
+      CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT);`)
+    const sess = db.prepare('INSERT INTO session VALUES (?,?,?,?,?,?,?,?)')
+    sess.run('live', '/p', '未归档', 1790000000000, 1790000500000, null, 'interactive', null)
+    sess.run('arch', '/p', '已归档', 1790000100000, 1790000200000, null, 'interactive', 1790000300000)
+    const msg = db.prepare('INSERT INTO message VALUES (?,?,?)')
+    const part = db.prepare('INSERT INTO part VALUES (?,?,?,?)')
+    for (const id of ['live', 'arch']) {
+      msg.run(`m-${id}`, id, JSON.stringify({ role: 'user', time: { created: 1790000000000 } }))
+      part.run(`p-${id}`, `m-${id}`, id, JSON.stringify({ type: 'text', text: `${id} turn` }))
+    }
+    db.close()
+    tmpFiles.push(file)
+    const sessions = parseAgentSqliteSessions(file, 'opencode')
+    expect(sessions.find((s) => s.externalId === 'live')?.archived).toBeUndefined()
+    expect(sessions.find((s) => s.externalId === 'arch')?.archived).toBe(true)
+  })
+})

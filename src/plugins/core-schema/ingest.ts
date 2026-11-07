@@ -106,25 +106,26 @@ export function createIngestService(deps: IngestDeps): IngestService {
   )
   const stmtSessionFind = sqlite.prepare(
     `SELECT id, content_hash, title_locked, title, cwd, project_id, summary, last_message_at,
-            is_subagent, parent_external_id, parent_session_id
+            is_subagent, parent_external_id, parent_session_id, archived
      FROM sessions WHERE agent_type = ? AND external_id = ?`
   )
   const stmtSessionIns = sqlite.prepare(`
     INSERT INTO sessions (agent_type, external_id, project_id, cwd, started_at, ended_at,
                           last_message_at, title, summary, raw_path, content_hash,
                           message_count, tool_call_count, updated_at, device_id,
-                          is_subagent, parent_external_id)
+                          is_subagent, parent_external_id, archived)
     VALUES (@agent_type, @external_id, @project_id, @cwd, @started_at, @ended_at,
             @last_message_at, @title, @summary, @raw_path, @content_hash,
             @message_count, @tool_call_count, @updated_at, @device_id,
-            @is_subagent, @parent_external_id)
+            @is_subagent, @parent_external_id, @archived)
   `)
   const stmtSessionUpdate = sqlite.prepare(`
     UPDATE sessions SET project_id = @project_id, cwd = @cwd, started_at = @started_at,
       ended_at = @ended_at, last_message_at = @last_message_at, title = @title, summary = @summary,
       content_hash = @content_hash, message_count = @message_count, tool_call_count = @tool_call_count,
       updated_at = @updated_at, raw_path = COALESCE(@raw_path, raw_path),
-      is_subagent = @is_subagent, parent_external_id = @parent_external_id
+      is_subagent = @is_subagent, parent_external_id = @parent_external_id,
+      archived = MAX(archived, @archived)
     WHERE id = @id
   `)
   // 父会话可能比子会话晚入库(首次全量导入、或父会话先被删再恢复),
@@ -142,7 +143,8 @@ export function createIngestService(deps: IngestDeps): IngestService {
   const stmtSessionMeta = sqlite.prepare(`
     UPDATE sessions SET project_id = @project_id, cwd = @cwd, title = @title,
       last_message_at = @last_message_at, updated_at = @updated_at,
-      is_subagent = @is_subagent, parent_external_id = @parent_external_id
+      is_subagent = @is_subagent, parent_external_id = @parent_external_id,
+      archived = @archived
     WHERE id = @id
   `)
   // message-level diff: compare the stored prefix against the freshly parsed
@@ -259,6 +261,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
           is_subagent: number
           parent_external_id: string | null
           parent_session_id: number | null
+          archived: number
         }
       | undefined
 
@@ -266,6 +269,9 @@ export function createIngestService(deps: IngestDeps): IngestService {
     // 所以下面「哈希相同」的早退里也要比对它,否则历史子会话永远不会被标上。
     const isSubagent = s.isSubagent ? 1 : 0
     const parentExternalId = s.isSubagent ? (s.parentExternalId ?? null) : null
+    // 归档语义是**单调**的:源只能把它置 1(源库里用户归档了它);
+    // 取消归档只能由用户在 MemorySQL 里做 —— 不然每次重扫都会翻回去。
+    const archived = s.archived ? 1 : 0
 
     // a user-renamed title survives re-ingest (auto summaries never clobber it)
     const lockedTitle =
@@ -294,7 +300,11 @@ export function createIngestService(deps: IngestDeps): IngestService {
       const needLast = lastMessageAt != null && lastMessageAt > (existing.last_message_at ?? 0)
       const needSub =
         isSubagent !== existing.is_subagent || parentExternalId !== (existing.parent_external_id ?? null)
-      if (!needTitle && !needCwd && !needProject && !needLast && !needSub) return { outcome: 'skipped' }
+      // 归档只升不降(MAX),所以仅当源标记了归档且本地还是 0 时才算"需要动"
+      const needArch = archived === 1 && existing.archived === 0
+      if (!needTitle && !needCwd && !needProject && !needLast && !needSub && !needArch) {
+        return { outcome: 'skipped' }
+      }
       stmtSessionMeta.run({
         id: existing.id,
         project_id: nextProjectId,
@@ -303,7 +313,8 @@ export function createIngestService(deps: IngestDeps): IngestService {
         last_message_at: needLast ? lastMessageAt : existing.last_message_at,
         updated_at: now(),
         is_subagent: isSubagent,
-        parent_external_id: parentExternalId
+        parent_external_id: parentExternalId,
+        archived: needArch ? 1 : existing.archived
       })
       if (needTitle) {
         stmtFtsSessionDel.run(existing.id)
@@ -340,6 +351,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
           raw_path: s.rawPath ?? null,
           is_subagent: isSubagent,
           parent_external_id: parentExternalId,
+          archived,
           ...counts,
           updated_at: now()
         })
@@ -371,7 +383,8 @@ export function createIngestService(deps: IngestDeps): IngestService {
           updated_at: now(),
           device_id: 'local',
           is_subagent: isSubagent,
-          parent_external_id: parentExternalId
+          parent_external_id: parentExternalId,
+          archived
         }) as { lastInsertRowid: number | bigint }).lastInsertRowid
       )
       insertMessages(newId, s)

@@ -26,6 +26,22 @@
 
 ---
 
+## 2026-11-07 · 看板巡检 → 适配决策:0 家需立即适配;落地 1 个前瞻适配(归档语义)
+
+**巡检结论(黑盒 7🟢 / 0🔴 / 0🟣;白盒 2 high + 3 medium + versionGap 1):** 逐家核对了被标记的上游变更,结论是**没有任何一家需要立即适配**,但顺手落了 1 个前瞻适配。
+
+**whitebox high ×2 的甄别:**
+- **hermes v0.23.0 = 已证伪的误报**:昨天真机验证过(38 张表、必需列匹配、2 个新会话入库),LLM 只看 changelog 文本("单 gateway 改造"听起来吓人)所以仍标 high。看板会继续挂这条直到 LLM 重新评估 —— 处理方式:DEVLOG 留痕,不当警报。
+- **dsh v0.2.2-rc.1 = 逐条核对后无需适配**:①变更里最扎眼的「存储支持读兼容旧版本、以新版本格式写入」指的是**整单元 JSON/SQLite 存储**,不是我们解析的 JSONL 会话日志;②迁移链 `packages/session/session-format-v0-to-v1 … v3-to-v4` **没有 v4-to-v5 包** —— 当前写入格式仍是 v4(源码定论);③「全局与项目 AGENTS.md 分别用 maxBytes 预算」反而**证实了规则层结论**(仍读 AGENTS.md 链);④tools.mode 迁移是插件内部配置,不碰会话格式。
+
+**medium ×3 核对:** claudecode v2.1.319(gateway 日志格式/权限/云会话 UI,无 projects JSONL 格式变更)、qwencode v0.26.9(managed-agent 存储内部重构,非 chats/*.jsonl)、gemini v0.68.0(终端渲染/vscode/hooks)—— 全部不触及我们的解析面。
+
+**落地的前瞻适配:opencode 2.2.6 的 `--archived`。** 新版允许 `opencode run --archived` 把脚本化/CI 会话**直接建成归档态**,而 zcode/opencode 的 session 表里都有 `time_archived` 列(本机现状 0 条,但语义已经来了)。适配:解析器探测 `time_archived` 列并标记 `archived:true`;ingest 归档语义**单调**(源只能置 1,取消归档只能由用户在 MemorySQL 做,否则重扫会翻回去;源再归档会再次生效)。归档会话照常入库可搜,列表默认不显示(现有「显示已归档」开关可见)。**测试还抓出我自己的 bug**:stmtSessionMeta 的 run 参数给了 archived 但 SQL 里忘加 SET 列 —— 单调测试当场红了。13 条测试覆盖(vitest 605:605)。
+
+**留给用户的动作:** 升级 codex 到 rust-v0.169.0-alpha.2 并跑一轮会话(versionGap 消除;黑盒 🟢 目前基于 09-22 数据)。**探针改进候选:** 白盒「无信号 ×4」是关键词没覆盖,不是上游无变更 —— 可扩充关键词或对开源家直接 diff 源码。
+
+---
+
 ## 2026-11-07 · 「使用规则」第二层开工:未知 agent 的规则文件用金丝雀黑盒测定(2/7 已定)
 
 **目标:** 让 agent 主动调用 MCP 的第二层,是往 agent 自己读的规则文件里写工作协议(规则文件每轮都进上下文,比工具描述硬)。但 13 家里 7 家(kimi/codebuddy/qoder/workbuddy/cursor/hermes/dsh)的规则文件路径没有依据 —— 猜了就会写错文件。思路(用户提出,即 session 288 的方法论):**黑盒测定**。

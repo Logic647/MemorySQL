@@ -49,6 +49,13 @@ export interface RawSession {
   isSubagent?: boolean
   /** 父会话的 agent 原生 id(同 agentType 内解析成 parent_session_id) */
   parentExternalId?: string
+  /**
+   * 源库里的归档标记(zcode/opencode 的 time_archived)。opencode 2.2.6 起
+   * `--archived` 会把脚本化/CI 会话直接建成归档态 —— 跟随源的语义:照常入库
+   * (可搜),但列表默认不显示。单调:源只能把它置 1,取消归档只能由用户在
+   * MemorySQL 里做,否则每次重扫都会把用户的选择翻回去。
+   */
+  archived?: boolean
 }
 
 export interface SessionSummaryRow {
