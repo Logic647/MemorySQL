@@ -358,6 +358,11 @@ export default function SettingsView() {
                 应用运行中时,点「一键连接」把 MemorySQL 的 MCP 服务写入对应 agent 的配置文件(自动备份原配置),
                 重启该 agent 后即可使用 memory_get_context / memory_search 等工具。「复制配置」给出可手工粘贴的片段。
               </p>
+              <p className="hint">
+                「写入规则」往该 agent 认的规则文件里追加一段带标记的工作协议,让 agent 在你没开口时就主动查记忆、记决策、做收工汇报。
+                写哪个文件由台账决定(金丝雀实测/源码/官方文档测定,不许猜);幂等、可逆。只认项目级规则的 agent(qoder/codebuddy 等)需要下面的目录;
+                认用户级规则的(codex/claudecode/kimi/dsh 等)留空即可对所有项目生效。
+              </p>
               <AgentConnectSection onMsg={setMsg} />
             </section>
 
@@ -1458,6 +1463,9 @@ function AgentConnectSection({ onMsg }: { onMsg: (s: string) => void }) {
   const [rows, setRows] = useState<
     Record<string, { label: string; detected: boolean; snippet: string }>
   >({})
+  // 「写入使用规则」:项目级 agent 需要一个项目根目录;写哪个文件由台账 rules 字段决定
+  const [rulesDir, setRulesDir] = useState('')
+  const [rulesBusy, setRulesBusy] = useState<string | null>(null)
 
   useEffect(() => {
     for (const a of CONNECT_AGENTS) {
@@ -1490,8 +1498,34 @@ function AgentConnectSection({ onMsg }: { onMsg: (s: string) => void }) {
       .catch((e) => onMsg(`连接失败: ${String(e)}`))
   }
 
+  const writeRulesFor = (id: string, label: string): void => {
+    setRulesBusy(id)
+    void api
+      .rulesWrite(id, rulesDir.trim() || undefined)
+      .then((r) => {
+        if (!r.ok) {
+          onMsg(`${label} 规则写入失败 → ${r.error ?? '未知原因'}`)
+          return
+        }
+        const where = [...r.written, ...r.skipped].join('、')
+        onMsg(
+          `${label} 使用规则已写入 → ${where}${r.skipped.length ? '(已存在,内容未变)' : ''}`
+        )
+      })
+      .catch((e) => onMsg(`规则写入失败: ${String(e)}`))
+      .finally(() => setRulesBusy(null))
+  }
+
   return (
     <div className="agent-capture">
+      <label className="field">
+        <span>项目根目录(仅项目级规则的 agent 需要,如 H:\桌面\MemorySQL;用户级规则的留空即可)</span>
+        <input
+          value={rulesDir}
+          onChange={(e) => setRulesDir(e.target.value)}
+          placeholder="H:\桌面\MemorySQL"
+        />
+      </label>
       {CONNECT_AGENTS.map(({ id, label }) => {
         const row = rows[id]
         return (
@@ -1509,6 +1543,14 @@ function AgentConnectSection({ onMsg }: { onMsg: (s: string) => void }) {
             <div className="field-row" style={{ margin: 0 }}>
               <button className="btn btn-small" onClick={() => connect(id)}>
                 一键连接
+              </button>
+              <button
+                className="btn btn-small"
+                disabled={rulesBusy === id}
+                title="往该 agent 认的规则文件里追加一段带标记的工作协议(开工查上下文/答历史先搜索/决策即记录/收工汇报)。幂等、可逆。"
+                onClick={() => writeRulesFor(id, label)}
+              >
+                {rulesBusy === id ? '写入中…' : '写入规则'}
               </button>
               <button
                 className="btn btn-small"

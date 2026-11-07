@@ -78,6 +78,16 @@
         },
         "note": "v2 起 type 必填;缺失会被 opencode 静默丢弃(日志: omitted enabled-only legacy MCP entry),仅 WARN 无报错。已修 agent-connect.ts"
       },
+      "rules": {
+        "project": [
+          "AGENTS.md"
+        ],
+        "user": [
+          ".config/opencode/AGENTS.md"
+        ],
+        "evidence": "convention",
+        "note": "opencode 系通行约定"
+      },
       "riskKeywords": [
         "schema",
         "migration",
@@ -134,6 +144,15 @@
         },
         "note": "现走 HTTP 直连(type=http);Antigravity 一路仍限 stdio,需 resources/mcp-bridge.mjs 桥"
       },
+      "rules": {
+        "project": [
+          "CLAUDE.md"
+        ],
+        "user": [
+          ".claude/CLAUDE.md"
+        ],
+        "evidence": "convention"
+      },
       "riskKeywords": [
         "schema",
         "migration",
@@ -187,6 +206,16 @@
         ],
         "note": "TOML 格式,非 JSON —— 黑盒校验需 TOML 解析"
       },
+      "rules": {
+        "project": [
+          "AGENTS.md"
+        ],
+        "user": [
+          ".codex/AGENTS.md"
+        ],
+        "evidence": "convention",
+        "note": "本机 ~/.codex/AGENTS.md 实际存在"
+      },
       "riskKeywords": [
         "schema",
         "migration",
@@ -237,6 +266,13 @@
         ],
         "note": "Claude 兼容配置形态"
       },
+      "rules": {
+        "project": [
+          "QWEN.md"
+        ],
+        "evidence": "convention",
+        "note": "继承 gemini-cli 的上下文文件约定;NAS auth 配好后可金丝雀复核"
+      },
       "riskKeywords": [
         "schema",
         "migration",
@@ -284,6 +320,13 @@
           "args"
         ],
         "note": "Antigravity MCP 走 ~/.gemini/config/mcp_config.json,仅支持 stdio(serverUrl 标 SSE,与本项目 Streamable HTTP 不兼容),推荐 stdio 桥"
+      },
+      "rules": {
+        "project": [
+          "GEMINI.md"
+        ],
+        "evidence": "convention",
+        "note": "gemini-cli 通行约定;NAS 未配 auth,金丝雀待跑"
       },
       "riskKeywords": [
         "schema",
@@ -357,6 +400,12 @@
         "valueHints": {},
         "note": "YAML 格式,非 JSON;改完需执行 /reload-mcp。连接器仍会写 protocol/trust 两键仅为兼容老版本(上游忽略它们,mcp_security.validate_mcp_server_entry 不拒绝未知键,故无害);认证走 auth: oauth 或 headers"
       },
+      "rules": {
+        "project": [],
+        "user": [],
+        "evidence": "source",
+        "note": "不认 AGENTS.md/CLAUDE.md(bundled-runtime 全文无此字符串);规则=hermes-home/SOUL.md,路径随安装位置变动,由 hermes resolver 解析后拼接"
+      },
       "riskKeywords": [
         "schema",
         "migration",
@@ -405,6 +454,18 @@
         "requiredKeys": [
           "url"
         ]
+      },
+      "rules": {
+        "project": [
+          "AGENTS.md",
+          ".kimi-code/AGENTS.md"
+        ],
+        "user": [
+          ".kimi-code/AGENTS.md",
+          ".agents/AGENTS.md"
+        ],
+        "evidence": "docs",
+        "note": "官方文档 docs/en/customization/agents.md:项目 AGENTS.md 注入系统提示;~/.agents/AGENTS.md 是跨工具通用位置"
       },
       "riskKeywords": [
         "schema",
@@ -463,6 +524,14 @@
           "type": "http"
         }
       },
+      "rules": {
+        "project": [
+          ".cursor/rules/memorysql.md",
+          ".cursorrules"
+        ],
+        "evidence": "convention",
+        "note": "公开文档;装上后应金丝雀复核"
+      },
       "riskKeywords": [
         "schema",
         "migration",
@@ -516,6 +585,13 @@
           "type": "http"
         }
       },
+      "rules": {
+        "project": [
+          ".qoder/rules/"
+        ],
+        "evidence": "canary",
+        "note": "金丝雀实测(2026-11-07):11 候选里只有 .qoder/rules/canary.md 的暗号出现在回复首行;AGENTS.md 不认"
+      },
       "riskKeywords": [
         "schema",
         "migration",
@@ -568,6 +644,13 @@
           "type": "http"
         }
       },
+      "rules": {
+        "project": [
+          "CODEBUDDY.md"
+        ],
+        "evidence": "canary",
+        "note": "金丝雀实测(2026-11-07):回复首行即暗号,AGENTS.md 不认,对照组干净"
+      },
       "riskKeywords": [
         "schema",
         "migration",
@@ -615,6 +698,13 @@
         "requiredKeys": [
           "url"
         ]
+      },
+      "rules": {
+        "project": [
+          "CODEBUDDY.md"
+        ],
+        "evidence": "family",
+        "note": "用户确认与 codebuddy 同族(同厂同引擎);装上后应金丝雀复核"
       },
       "riskKeywords": [
         "schema",
@@ -682,6 +772,13 @@
           "type": "http"
         }
       },
+      "rules": {
+        "project": [
+          "AGENTS.md"
+        ],
+        "evidence": "convention",
+        "note": "本会话即在读项目级 AGENTS.md"
+      },
       "riskKeywords": [
         "schema",
         "migration",
@@ -741,6 +838,18 @@
           "transport": "streamable-http"
         },
         "note": "YAML 格式,非 JSON —— 连接器做文本手术(见 agent-connect.ts upsertDshPatch)。dsh 的 MCP 配置是 `~/.dsh/cordis.patch.yml` 里的一个 insert 条目:`- id: memorysql / name: @deepseek-ai/dsh-mcp-client / config:{serverName,transport,url}`,transport 取 `streamable-http`(连本机 HTTP MCP;stdio 走 mcp-bridge 亦可,但 HTTP 更简)。台账号/文件形如 YAML,不做 JSONPath 回读校验,故 jsonpath 用占位说明"
+      },
+      "rules": {
+        "project": [
+          "AGENTS.md",
+          "CLAUDE.md"
+        ],
+        "user": [
+          ".dsh/AGENTS.md",
+          ".dsh/CLAUDE.md"
+        ],
+        "evidence": "source",
+        "note": "packages/context/agent-instructions: 候选写死为 AGENTS.md/CLAUDE.md(+.local 覆盖层),从 cwd 逐级向上"
       },
       "riskKeywords": [
         "schema",

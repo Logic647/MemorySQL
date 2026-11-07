@@ -331,6 +331,37 @@ export const api = {
       snippet: string
       detected: boolean
     }>,
+  // 「写入使用规则」:目标路径由台账 rules 字段决定;projectDir 给项目级 agent 用
+  rulesTargets: (
+    agent: string,
+    projectDir?: string
+  ): Promise<{
+    agentId: string
+    project: { file: string; existed: boolean } | null
+    user: { file: string; existed: boolean } | null
+    evidence: string
+    note?: string
+    error?: string
+  }> =>
+    window.memorysql.invoke('memorysql:host:rulesTargets', { agent, projectDir }) as Promise<{
+      agentId: string
+      project: { file: string; existed: boolean } | null
+      user: { file: string; existed: boolean } | null
+      evidence: string
+      note?: string
+      error?: string
+    }>,
+  rulesWrite: (
+    agent: string,
+    projectDir?: string
+  ): Promise<{ ok: boolean; written: string[]; skipped: string[]; backups: string[]; error?: string }> =>
+    window.memorysql.invoke('memorysql:host:rulesWrite', { agent, projectDir }) as Promise<{
+      ok: boolean
+      written: string[]
+      skipped: string[]
+      backups: string[]
+      error?: string
+    }>,
   // sync-folder
   syncStatus: (): Promise<{ deviceId: string; folder: string; lastSyncAt: number; plaintextAck: boolean }> =>
     window.memorysql.invoke('sync-folder:status') as Promise<{

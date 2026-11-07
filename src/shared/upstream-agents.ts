@@ -101,11 +101,38 @@ export interface AgentContract {
   localRoots: Array<string | { resolver: string }>
   source: SourceSpec
   mcp: McpExpect | null
+  /**
+   * 该 agent 认哪个「使用规则」文件(连接向导按它写工作协议)。
+   * null = 未知/没有机制,**不许猜** —— 每一行的证据(rules-probe 金丝雀 /
+   * 开源源码 / 官方文档 / 资源翻查 / 同族推断)见 DEVLOG 2026-11-07。
+   */
+  rules: RuleFileExpect | null
   /** changelog 命中这些词 → 白盒粗筛标为「需重点看」 */
   riskKeywords: string[]
   /** 本机是否装了该 agent(由黑盒脚本实测,不要手填) */
   installedOnThisMachine?: boolean
   notes?: string
+}
+
+/** 一次「写入使用规则」要碰的文件清单 + 证据等级 */
+export interface RuleFileExpect {
+  /**
+   * 项目级候选(相对项目根,按序取第一个存在的;都不存在时新建第一个)。
+   * qoder 这类「规则目录」用目录路径表示:写入 <目录>/memorysql.md。
+   */
+  project: string[]
+  /** 用户级(相对 home 展开,对所有项目生效);按序取第一个存在的,都不存在时新建第一个 */
+  user?: string[]
+  /**
+   * 证据等级:
+   *  - canary     rules-probe.mjs 金丝雀实测(行为直接给出)
+   *  - source     开源仓库源码核对
+   *  - docs       官方文档明确写了
+   *  - family     用户确认与某家同族(推断,装上后应金丝雀复核)
+   *  - convention 跨工具通行约定(未被金丝雀复核过)
+   */
+  evidence: 'canary' | 'source' | 'docs' | 'family' | 'convention'
+  note?: string
 }
 
 /** 高危信号词 —— 命中即需人工确认是否打到我们依赖的结构 */
@@ -164,6 +191,7 @@ export const AGENTS: AgentContract[] = [
         'v2 起 type 必填;缺失会被 opencode 静默丢弃(日志: omitted enabled-only legacy MCP entry),' +
         '仅 WARN 无报错。已修 agent-connect.ts'
     },
+    rules: { project: ['AGENTS.md'], user: ['.config/opencode/AGENTS.md'], evidence: 'convention', note: 'opencode 系通行约定' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
   {
@@ -195,6 +223,7 @@ export const AGENTS: AgentContract[] = [
       valueHints: { type: 'http' },
       note: '现走 HTTP 直连(type=http);Antigravity 一路仍限 stdio,需 resources/mcp-bridge.mjs 桥'
     },
+    rules: { project: ['CLAUDE.md'], user: ['.claude/CLAUDE.md'], evidence: 'convention' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
   {
@@ -223,6 +252,7 @@ export const AGENTS: AgentContract[] = [
       requiredKeys: ['command', 'args'],
       note: 'TOML 格式,非 JSON —— 黑盒校验需 TOML 解析'
     },
+    rules: { project: ['AGENTS.md'], user: ['.codex/AGENTS.md'], evidence: 'convention', note: '本机 ~/.codex/AGENTS.md 实际存在' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
   {
@@ -247,6 +277,7 @@ export const AGENTS: AgentContract[] = [
       requiredKeys: ['command', 'args'],
       note: 'Claude 兼容配置形态'
     },
+    rules: { project: ['QWEN.md'], evidence: 'convention', note: '继承 gemini-cli 的上下文文件约定;NAS auth 配好后可金丝雀复核' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
   {
@@ -274,6 +305,7 @@ export const AGENTS: AgentContract[] = [
       note:
         'Antigravity MCP 走 ~/.gemini/config/mcp_config.json,仅支持 stdio(serverUrl 标 SSE,与本项目 Streamable HTTP 不兼容),推荐 stdio 桥'
     },
+    rules: { project: ['GEMINI.md'], evidence: 'convention', note: 'gemini-cli 通行约定;NAS 未配 auth,金丝雀待跑' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
   {
@@ -342,6 +374,7 @@ export const AGENTS: AgentContract[] = [
         'mcp_security.validate_mcp_server_entry 不拒绝未知键,故无害);' +
         '认证走 auth: oauth 或 headers'
     },
+    rules: { project: [], user: [], evidence: 'source', note: '不认 AGENTS.md/CLAUDE.md(bundled-runtime 全文无此字符串);规则=hermes-home/SOUL.md,路径随安装位置变动,由 hermes resolver 解析后拼接' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
   {
@@ -369,6 +402,7 @@ export const AGENTS: AgentContract[] = [
       jsonpath: '$.mcpServers.memorysql',
       requiredKeys: ['url']
     },
+    rules: { project: ['AGENTS.md', '.kimi-code/AGENTS.md'], user: ['.kimi-code/AGENTS.md', '.agents/AGENTS.md'], evidence: 'docs', note: '官方文档 docs/en/customization/agents.md:项目 AGENTS.md 注入系统提示;~/.agents/AGENTS.md 是跨工具通用位置' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
   {
@@ -396,6 +430,7 @@ export const AGENTS: AgentContract[] = [
       requiredKeys: ['type', 'url'],
       valueHints: { type: 'http' }
     },
+    rules: { project: ['.cursor/rules/memorysql.md', '.cursorrules'], evidence: 'convention', note: '公开文档;装上后应金丝雀复核' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
 
@@ -423,6 +458,7 @@ export const AGENTS: AgentContract[] = [
       requiredKeys: ['type', 'url'],
       valueHints: { type: 'http' }
     },
+    rules: { project: ['.qoder/rules/'], evidence: 'canary', note: '金丝雀实测(2026-11-07):11 候选里只有 .qoder/rules/canary.md 的暗号出现在回复首行;AGENTS.md 不认' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
   {
@@ -450,6 +486,7 @@ export const AGENTS: AgentContract[] = [
       requiredKeys: ['type', 'url'],
       valueHints: { type: 'http' }
     },
+    rules: { project: ['CODEBUDDY.md'], evidence: 'canary', note: '金丝雀实测(2026-11-07):回复首行即暗号,AGENTS.md 不认,对照组干净' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
   {
@@ -473,6 +510,7 @@ export const AGENTS: AgentContract[] = [
       jsonpath: '$.mcpServers.memorysql',
       requiredKeys: ['url']
     },
+    rules: { project: ['CODEBUDDY.md'], evidence: 'family', note: '用户确认与 codebuddy 同族(同厂同引擎);装上后应金丝雀复核' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
   {
@@ -510,6 +548,7 @@ export const AGENTS: AgentContract[] = [
       requiredKeys: ['type', 'url'],
       valueHints: { type: 'http' }
     },
+    rules: { project: ['AGENTS.md'], evidence: 'convention', note: '本会话即在读项目级 AGENTS.md' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
   {
@@ -554,6 +593,7 @@ export const AGENTS: AgentContract[] = [
         'transport 取 `streamable-http`(连本机 HTTP MCP;stdio 走 mcp-bridge 亦可,但 HTTP 更简)。' +
         '台账号/文件形如 YAML,不做 JSONPath 回读校验,故 jsonpath 用占位说明'
     },
+    rules: { project: ['AGENTS.md', 'CLAUDE.md'], user: ['.dsh/AGENTS.md', '.dsh/CLAUDE.md'], evidence: 'source', note: 'packages/context/agent-instructions: 候选写死为 AGENTS.md/CLAUDE.md(+.local 覆盖层),从 cwd 逐级向上' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   }
 ]

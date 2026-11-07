@@ -15,6 +15,8 @@ import {
   SYNC_FOLDER
 } from './core/cli-args'
 import { connectAgent, agentSnippet } from './core/agent-connect'
+import { resolveRulesTargets, writeRules } from './core/rules-writer'
+import { AGENT_BY_ID } from '../shared/upstream-agents'
 import {
   THEME_KEY,
   normalizeThemeSetting,
@@ -498,9 +500,22 @@ function registerHostChannels(
     settings.set(`${id}:${key}`, value)
     return { ok: true, restartNeeded: true }
   })
+  // 「写入使用规则」:往 agent 认的规则文件里追加带标记的工作协议(幂等,可逆)。
+  // 目标路径由台账 rules 字段决定(金丝雀/源码/官方文档测定过,不许猜)。
+  hostChannels.set('memorysql:host:rulesTargets', (payload) => {
+    const { agent, projectDir } = (payload ?? {}) as { agent?: string; projectDir?: string }
+    const entry = agent ? AGENT_BY_ID.get(String(agent)) : undefined
+    if (!entry?.rules) throw new Error(`agent 不支持或未登记规则文件: ${agent}`)
+    return resolveRulesTargets(entry.id, entry.rules, { projectDir })
+  })
+  hostChannels.set('memorysql:host:rulesWrite', (payload) => {
+    const { agent, projectDir } = (payload ?? {}) as { agent?: string; projectDir?: string }
+    const entry = agent ? AGENT_BY_ID.get(String(agent)) : undefined
+    if (!entry?.rules) throw new Error(`agent 不支持或未登记规则文件: ${agent}`)
+    return writeRules(entry.id, entry.rules, { projectDir })
+  })
   // 连接向导:一键为检测到的 agent 写入 MCP 配置(幂等,写入前备份)
-  hostChannels.set('memorysql:host:agentConnect', (payload) => {
-    const { agent } = (payload ?? {}) as { agent?: string }
+  hostChannels.set('memorysql:host:agentConnect', (payload) => {    const { agent } = (payload ?? {}) as { agent?: string }
     const port = Number(settings.get('mcp-server:port', 8642)) || 8642
     return connectAgent(String(agent ?? ''), port, process.env.APPDATA, process.env.LOCALAPPDATA)
   })

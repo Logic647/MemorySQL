@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-11-07 · 第二层落地:台账 rules 字段 + 连接向导「写入使用规则」
+
+**前置(同日两条)齐了:** 13/13 家的规则文件路径全部有依据 —— 金丝雀实测 2(qoder/codebuddy)+ 白盒 1(dsh)+ 官方文档 1(kimi)+ 资源翻查 1(hermes)+ 同族推断 1(workbuddy,用户确认与 codebuddy 同族)+ 通行约定 7。**台账从此不许猜**:`upstream-agents.ts` 每家新增 `rules` 字段(`RuleFileExpect`:`project[] / user[] / evidence`),证据五级 canary/source/docs/family/convention;e2e 合同测试同步(`ledger.json` 已重导出)。
+
+**新增 `src/main/core/rules-writer.ts`(执行端):**
+- 幂等:`memorysql:begin/end` 标记块,重复写=原位更新,绝不产生重复块
+- 可逆:整块删除即还原;已有文件写前留 `.bak-memorysql`
+- 防腐:标记不配对(有头无尾)时**拒绝写入**,不碰坏用户文件
+- 不覆盖:qoder 是规则**目录**(`.qoder/rules/`),写 `.qoder/rules/memorysql.md`,用户已有的规则文件原样保留(有测试锁住)
+- 解析语义:project/user 两级独立;codex 这类两级都有的,不给项目目录时**只写用户级**而不是报错;qoder 这类只有项目级的,不给目录才报错
+- hermes 暂不支持一键写入(SOUL.md 路径随安装位置变动,需走 resolver)—— 测试里显式断言这一点,不做静默降级
+
+**IPC + UI:** `memorysql:host:rulesTargets / rulesWrite` 两个 host 通道;连接向导每行加「写入规则」按钮 + 一个共享的「项目根目录」输入(项目级规则的 agent 需要,用户级的留空=全局生效)。
+
+**测试(`test/rules-writer.test.ts`,12 条):** 台账 13/13 显式登记 + 证据白名单 + hermes 例外说明;写入器 新建/幂等/保留原内容+备份/坏标记拒写/qoder 目录语义/codex 用户级解析/qoder 缺目录报错/workbuddy family 不冒充实测。typecheck 0,vitest 602:602。
+
+**边界:** family(workbuddy)与 convention(7 家)还没被金丝雀复核过 —— 证据等级写在台账里,装上后跑 `scripts/rules-probe.mjs` 即可升级。hermes 一键写入待 resolver 接入。
+
+---
+
 ## 2026-11-07 · 「使用规则」第二层开工:未知 agent 的规则文件用金丝雀黑盒测定(2/7 已定)
 
 **目标:** 让 agent 主动调用 MCP 的第二层,是往 agent 自己读的规则文件里写工作协议(规则文件每轮都进上下文,比工具描述硬)。但 13 家里 7 家(kimi/codebuddy/qoder/workbuddy/cursor/hermes/dsh)的规则文件路径没有依据 —— 猜了就会写错文件。思路(用户提出,即 session 288 的方法论):**黑盒测定**。
