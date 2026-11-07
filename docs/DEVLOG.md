@@ -16,6 +16,8 @@
 - 解析语义:project/user 两级独立;codex 这类两级都有的,不给项目目录时**只写用户级**而不是报错;qoder 这类只有项目级的,不给目录才报错
 - hermes 暂不支持一键写入(SOUL.md 路径随安装位置变动,需走 resolver)—— 测试里显式断言这一点,不做静默降级
 
+**部署闭环(2026-11-07):** 云看板已由用户 git pull + pm2 restart —— 实测 `/api/state` 返回 rules 13 家(qoder=canary/kimi=docs/hermes=source)、前端含新渲染代码、**台账指纹 match**(server 与 probe 同源,044bfcbd);NAS 面板同日已重启验证。本项目 AGENTS.md 也已写入协议块(第一个真实案例,备份 .bak-memorysql 已 gitignore)。
+
 **IPC + UI:** `memorysql:host:rulesTargets / rulesWrite` 两个 host 通道;连接向导每行加「写入规则」按钮 + 一个共享的「项目根目录」输入(项目级规则的 agent 需要,用户级的留空=全局生效)。
 
 **测试(`test/rules-writer.test.ts`,12 条):** 台账 13/13 显式登记 + 证据白名单 + hermes 例外说明;写入器 新建/幂等/保留原内容+备份/坏标记拒写/qoder 目录语义/codex 用户级解析/qoder 缺目录报错/workbuddy family 不冒充实测。typecheck 0,vitest 602:602。
