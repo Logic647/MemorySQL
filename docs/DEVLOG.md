@@ -4,6 +4,85 @@
 
 ---
 
+## 2026-11-10 · Magpie 名单补全:捕获矩阵 13 → 23 家 + 黑盒队列
+
+用户要求对照 [magpie](https://usemagpie.ai/zh/)(AI coding agent 网关,60+ 家接线)的支持名单补全适配,
+闭源统一走黑盒。**情报底座是 magpie 自己**:它开源(yetone/magpie),`internal/sessions/` 为了画
+用量视图把每家 agent 的会话存储位置与格式用真实文件实证过 —— 调研主来源 + 三路并行网络调研,
+底稿见 [docs/magpie-agents-survey.md](magpie-agents-survey.md)(含黑盒队列与不可行名单)。
+
+**新增 10 家捕获**(capture-goose / droid / cline / pi / omp / omo / grok / minimax / deveco / mimocode):
+
+- **开源 source 证据**:Goose(SQLite sessions.db,sessions+messages 两表,session_type='subagent'/
+  archived_at;源码逐列核对)、Cline CLI(manifest+messages.json+子代理文件)、Pi(~/.pi/agent/sessions
+  的 jsonl)、omp(Pi fork,artifacts 子代理目录)、OmO(senpi=pi fork)、Grok Build(**xAI 2026-07 已开源**,
+  summary.json+updates.jsonl ACP 流式 chunk)、MiniMax Code(**CLI 开源 MIT**,vendor 了 pi-mono)、
+  DevEco Code(华为,BitFun+OpenCode 构建)。
+- **闭源 magpie 实证**:Droid(Factory,~/.factory/sessions 的 JSONL,callingSessionId 标子代理)。
+- **MiMo Code 真机校准(意外收获)**:本机就装着(`~/.local/share/mimocode/mimocode.db`,133MB/222 会话),
+  **opencode legacy 三表布局**(session 带 parent_id 73/222 + time_archived),agent-db-parser 原样适用,
+  副本验证 222/222、import:scan 实测 149 会话/8945 消息入库。**Windows 上 opencode 系数据在
+  `~/.local/share/<name>` 而非 %LOCALAPPDATA%**(本机实测,mimocode 佐证 opencode 同路径约定)。
+
+**工程要点**:①共用解析器 `_lib/pi-jsonl.ts`(pi/omp/omo 三家同形状,artifacts 子代理一次实现);
+②`goose-patch.ts` 是第二个 YAML 文本手术模块(extensions: 映射的缩进界定 upsert,**子键层缩进只能取
+extensions: 后第一个非空行** —— 孙层缩进会污染判断,测试抓的);③台账 +10 家(monitor: goose/cline/pi/omp/
+omo/grok/minimax/deveco/mimocode tracked、droid blackbox_only),check.ts 注册 droid/pi/grok/minimax
+四个 parser,连接器 +6(goose/cline/pi/omp/omo/deveco/mimocode —— droid/grok/minimax 的 MCP 格式未核实,
+**刻意不写连接器**,台账 mcp=null 注明"黑盒确认后补");④nas-probe 候选 +minimax(npm @minimax-ai/code)。
+
+**测试**:新增 `test/magpie-agents.test.ts` 15 条(9 家解析器 fixture + goose-patch YAML 手术);
+全量 vitest **622:622**、typecheck 0、import:scan 无回归。两个调试教训:①fixture 时间戳常数 1762682400
+其实是 2025-11-09,和 ISO 字符串里的 2026-11-09 差一年,fork 过滤测试全红 —— **夹具时间戳要么全用
+Date.parse 推导、要么全用同一纪元**;②droid fork 拷贝段标志原实现"messages.length===0 就重新 arm",
+拷贝段结束后第一条真消息又被吞 —— 一次性 arm 语义必须显式。
+
+**黑盒队列**(下一轮,装好后跑一轮探针即校准):Copilot CLI(session-state+session-store.db)/ Devin
+(cli/sessions.db)/ Command Code / Snow CLI / fx / AtomCode(存储已定位)+ Muse/QwenPaw/OpenHanako/
+Empryo/Mister Morph(待定位);Crush 特殊(按项目散落 .crush/crush.db,需项目发现策略)暂缓;
+Antigravity 桌面版正文加密不可捕获。完整清单与安装命令见 survey 文档第三节。
+
+---
+
+## 2026-11-10 · 官网三轮意见落地:/dl 服务器镜像下载 + 浅色截图流水线
+
+用户过目后给了六条意见,全部落地:**①删 hero 徽章 ②删终端截图(hero 变纯文字型)** ③界面图改浅色主题重截、单列通栏(原两联并排挤) ④「GitHub 源码」→「GitHub」 ⑤删「国内加速」开关 ⑥**所有下载走本站服务器镜像** + 下载区布局参考 magpie:Windows 优先,主按钮点击直接发起下载,macOS/Linux 用小字放按钮下方、点击跳到下载区对应平台卡(`#dl-mac`/`#dl-linux` 锚点 + `scroll-margin-top`)。
+
+**新增 `/dl` 流式代理(tools/website/server.mjs)**:页面链接全部改 `/dl?file=<资产名>` —— 服务端校验文件名(字符白名单 + **必须在当前 release 资产清单里命中**,不是开放代理)后从上游拉取流式转发;支持 Range 透传(上游 gh-proxy 实测返回 accept-ranges,206 断点可用);客户端断开即 abort 上游流。上游 `DL_UPSTREAM` 默认 `https://gh-proxy.com/`(ECS→github.com 资产链路间歇抽风),设空走直连。**流量走 ECS 带宽,大资产注意档位**。实测:HEAD 200 + Content-Length 与 GitHub 一致;Range 64KB 206 + MZ 头合法。
+
+**截图流水线(scripts/take-screenshots.mjs,新增)**:CDP 驱动 dev Electron 自动截 会话库/会话详情 两张(1360×860)。链路:`npm run build` → `seed-demo.ts <dir> --theme=light`(seed-demo 新增 --theme 参数)→ 脚本自起 electron(--remote-debugging-port)+ 全局 WebSocket(Node ≥22 免依赖)→ Emulation 尺寸 → 等 `.session` 渲染 → **各选一条会话再截**(02 选「全文检索」、03 换「限流」会话,详情栏都有内容且两图不同)→ 存 design/screenshots。**三个坑**:①spawn 忘传 `--remote-debugging-port` 时 electron 照常起、端口从未监听,30s 只能干等 —— 已加 child.exit/spawn error 监听;②GUI 单实例锁按 userData,dev 与装机同 userData,**截图前必须退出装机版**(截完用 Start-Process 拉回,本轮实测应用已恢复);③浏览器缓存 assets(max-age=86400)会让换图后仍显示旧图 —— 截图 URL 加 `?v=` 查询参数(静态服务忽略 query,天然 cache-buster)。
+
+**旧截图归档**:01(终端图,hero 不再用)从 website/assets 移除(design/screenshots 留源);02/03 浅色版覆盖。screenshots.md 状态同步。
+
+---
+
+
+## 2026-11-09 · 官网立项落地:website/ 单页 + 零依赖服务(memorysql.top 备案中,过渡走 site.logic-yjb.top)
+
+用户要给项目建官网(介绍 + 下载),阿里云服务器,域名 `memorysql.top`,**还在备案**。当轮已全部做完并本地验收,待用户在服务器执行部署(`tools/website/DEPLOY.md` 照抄即可)。**同日第二轮:按用户反馈整体重设计** —— 参考 usemagpie.ai/zh/ 的亮白设计语言,弃暗色、删中文名「续接桥」(只删站名展示,「续接」作为产品动词全站保留),加载 design-taste-frontend skill 重写了全部文案与布局。
+
+**最终形态(亮色版)**:白底 + indigo 单强调色(品牌色,取自应用图标),系统字体栈零外部依赖。结构:导航(哨兵 IO 加投影)→ Hero(H1 断言式「换个 agent,上下文不断线」+ 主截图)→ 13 家 agent 药丸墙(逐个 stagger 渐现)→ 截图两联 → **Bento 特性**(4+2 / 3+3 / 3+3 非等宽格:MCP 续接包带 chips→MemorySQL→上下文就位 示意流;语义检索卡带真实 `memory_search` 调用示意)→ MCP 工具 2 栏 → 三步接入(竖排数字轨)→ 下载区 → 隐私 callout + 四列明细条。动效:IntersectionObserver 渐现(无 scroll 监听)、hover 上浮、active 按压,全部 `prefers-reduced-motion` 退化静态;`html.no-js` 下内容默认可见。图标 = GitHub 官方 mark + MIT 的 Tabler 路径内联 `<symbol>`,无 emoji。
+
+**文案纪律(design skill 的硬规则,值得复用)**:全站**零破折号(——)**、零 emoji、眉标(eyebrow)只留 hero 一处、标题全是断言句;动效只 transform/opacity;截图全部真图(01/02/03,虚构演示数据)。
+
+**结构**:`website/index.html`(单页)+ `website/assets/`(图标 + 截图拷贝,源在 `design/screenshots`)+ `tools/website/server.mjs`(零依赖 Node ≥18,只绑 127.0.0.1:8790)+ `tools/website/releases.mjs`(资产筛选口径,两处共用)+ `scripts/gen-releases-json.mjs`(快照生成)。
+
+**下载区设计(核心决策)**:
+- 下载链接永远指向 GitHub Releases 官方地址;页面「国内加速」开关给 URL 前缀加社区镜像 `gh-proxy.com`(release 资产实测大小一致;ghfast.top 时好时坏不用)。中文浏览器默认勾选,localStorage 可覆盖
+- `/api/download` 由**服务端**拉 GitHub(服务器到 api.github.com 稳定 0.36s,用户浏览器直连不稳),内存缓存 10 分钟;拉失败回落 `website/releases.json` 静态快照并标 `source:'fallback'`,页面显示「快照」提示 —— **宁标旧不假实时**
+- 发新版例行维护就一条:`node scripts/gen-releases-json.mjs` 更新快照提交;服务器无需重启(实时路径自动带新版)
+- 快照只含 6 个面向用户的资产(exe/2×dmg/AppImage/deb/tar.gz);blockmap/latest*.yml/native-runtime(应用自动下载)不上页面 —— 口径在 `releases.mjs` 单点维护
+
+**页面安全模型(与 upstream-watch 相反)**:纯静态公开内容、无可写端点,所以**无鉴权、nginx 不注入任何 header**;服务自身的守卫是 目录穿越(`normalize` 后必须在 root 内 + 点文件拒答) + 无目录列表 + 写请求 405。本地实测:穿越(含 `%2e%2e` 编码)、404、POST 405 全过。
+
+**踩了一个自己埋的坑(当场抓出)**:镜像开关「UI 勾了、链接没改写」—— 初始化只把默认值写进 checkbox,`mirrorOn()` 却读 localStorage,两个事实源不一致。修复 = checkbox 为唯一事实源,`mirrorOn()` 直接读它。教训:**任何"UI 状态 vs 持久化状态"都要指定唯一事实源**。
+
+**备案过渡方案**:memorysql.top 备案期间走 `site.logic-yjb.top`(logic-yjb.top 已备案,子域名共用):DNS 加 A 记录 → nginx vhost(纯反代 8790)→ certbot → 验收四条(含 `../package.json` 必须 404/403)。备案通过后切主域名 + 填 `index.html` 的 `<span id="icp">`。全部步骤在 `tools/website/DEPLOY.md`。
+
+**本地验收记录**:8790 起服务,`/` 200 / `/health` ok / `/api/download` **live v0.7.4** / 截图 assets 200;浏览器真开截图目检桌面 5 区块 + 移动端 390px(修了三处:hero pill 与 logo inline 同行、检索示例行与命令行横向滚动条露出、ver-chip 初始占位闪现);镜像开关双向复验(勾→gh-proxy 前缀,取消→直连,持久化)。主 CTA 按访问者 UA 自动选平台下载。
+
+---
+
 ## 2026-11-07 · 第二层落地:台账 rules 字段 + 连接向导「写入使用规则」
 
 **前置(同日两条)齐了:** 13/13 家的规则文件路径全部有依据 —— 金丝雀实测 2(qoder/codebuddy)+ 白盒 1(dsh)+ 官方文档 1(kimi)+ 资源翻查 1(hermes)+ 同族推断 1(workbuddy,用户确认与 codebuddy 同族)+ 通行约定 7。**台账从此不许猜**:`upstream-agents.ts` 每家新增 `rules` 字段(`RuleFileExpect`:`project[] / user[] / evidence`),证据五级 canary/source/docs/family/convention;e2e 合同测试同步(`ledger.json` 已重导出)。

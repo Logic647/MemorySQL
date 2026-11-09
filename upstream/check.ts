@@ -295,6 +295,22 @@ async function checkJsonl(c: AgentContract, root: string): Promise<CheckResult> 
       const m = await import('../src/plugins/capture-qoder/index.ts')
       return m.parseQoderSession(fp)
     },
+    droid: async (fp) => {
+      const m = await import('../src/plugins/capture-droid/droid-parser.ts')
+      return m.parseDroidSession(fp)
+    },
+    pi: async (fp) => {
+      const m = await import('../src/plugins/_lib/pi-jsonl.ts')
+      return m.parsePiSessionFile(fp, 'pi')
+    },
+    grok: async (fp) => {
+      const m = await import('../src/plugins/capture-grok/grok-parser.ts')
+      return m.parseGrokSessionDir(path.dirname(fp))
+    },
+    minimax: async (fp) => {
+      const m = await import('../src/plugins/capture-minimax/minimax-parser.ts')
+      return m.parseMinimaxSessionDir(path.dirname(fp))
+    },
     dsh: async (fp) => {
       const m = await import('../src/plugins/capture-dsh/dsh-parser.ts')
       const text = m.decodeDshFile(fp)

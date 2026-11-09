@@ -4,6 +4,7 @@ import path from 'node:path'
 import { AGENT_BY_ID } from '../../shared/upstream-agents'
 import { app } from 'electron'
 import { upsertDshPatch } from './dsh-patch'
+import { upsertGooseConfig } from './goose-patch'
 
 /**
  * 连接向导:为检测到的 agent 一键写入 MemorySQL 的 MCP 配置。
@@ -398,6 +399,103 @@ startup_timeout_sec = 30`,
     apply: (configPath, url) => upsertDshPatch(configPath, url),
     snippet: (url) =>
       `# ~/.dsh/cordis.patch.yml 追加(DeepSeek Harness 的 MCP 是 cordis 补丁条目):\n- insert:\n    - id: memorysql\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: memorysql\n        transport: streamable-http\n        url: "${url}"\n\n# 改完重启 dsh 生效;工具以 mcp__memorysql__<tool> 形式暴露`
+  },
+
+  // ───────── 2026-11-10 批(Magpie 名单补全,证据级见台账)─────────
+  {
+    id: 'goose',
+    label: 'Goose',
+    detect: (home) =>
+      fs.existsSync(path.join(home, '.local', 'share', 'goose')) ||
+      fs.existsSync(path.join(home, 'AppData', 'Roaming', 'Block', 'goose')),
+    configPath: (home) =>
+      process.platform === 'win32'
+        ? path.join(home, 'AppData', 'Roaming', 'Block', 'goose', 'config', 'config.yaml')
+        : path.join(home, '.config', 'goose', 'config.yaml'),
+    apply: (configPath, url) => upsertGooseConfig(configPath, url),
+    snippet: (url) =>
+      `# ~/.config/goose/config.yaml(Windows %APPDATA%\\Block\\goose\\config\\config.yaml)的 extensions 段:\nextensions:\n  memorysql:\n    enabled: true\n    type: streamable_http\n    name: memorysql\n    uri: "${url}"\n\n# 注意键是 uri 不是 url;改完重启 goose 生效`
+  },
+
+  {
+    id: 'cline',
+    label: 'Cline CLI',
+    detect: (home) => fs.existsSync(path.join(home, '.cline')),
+    configPath: (home) => path.join(home, '.cline', 'data', 'cline_mcp_settings.json'),
+    apply: (configPath, url) =>
+      mergeJson(configPath, (root) => {
+        setNested(root, ['mcpServers', 'memorysql'], { type: 'streamableHttp', url })
+      }),
+    snippet: (url) =>
+      `// ~/.cline/data/cline_mcp_settings.json:\n{\n  "mcpServers": {\n    "memorysql": { "type": "streamableHttp", "url": "${url}" }\n  }\n}`,
+    verify: ledgerVerify('cline')
+  },
+  {
+    id: 'pi',
+    label: 'Pi',
+    detect: (home) => fs.existsSync(path.join(home, '.pi', 'agent')),
+    configPath: (home) => path.join(home, '.pi', 'agent', 'mcp.json'),
+    apply: (configPath, url) =>
+      mergeJson(configPath, (root) => {
+        setNested(root, ['mcpServers', 'memorysql'], { url })
+      }),
+    snippet: (url) =>
+      `// ~/.pi/agent/mcp.json:\n{\n  "mcpServers": {\n    "memorysql": { "url": "${url}" }\n  }\n}`,
+    verify: ledgerVerify('pi')
+  },
+  {
+    id: 'omp',
+    label: 'omp (oh-my-pi)',
+    detect: (home) => fs.existsSync(path.join(home, '.omp')),
+    configPath: (home) => path.join(home, '.omp', 'agent', 'mcp.json'),
+    apply: (configPath, url) =>
+      mergeJson(configPath, (root) => {
+        setNested(root, ['mcpServers', 'memorysql'], { url })
+      }),
+    snippet: (url) =>
+      `// ~/.omp/agent/mcp.json(Pi 系形状,family 证据,装好后复核):\n{\n  "mcpServers": {\n    "memorysql": { "url": "${url}" }\n  }\n}`
+  },
+  {
+    id: 'omo',
+    label: 'OmO',
+    detect: (home) => fs.existsSync(path.join(home, '.omo')),
+    configPath: (home) => path.join(home, '.omo', 'agent', 'mcp.json'),
+    apply: (configPath, url) =>
+      mergeJson(configPath, (root) => {
+        setNested(root, ['mcpServers', 'memorysql'], { url })
+      }),
+    snippet: (url) =>
+      `// ~/.omo/agent/mcp.json(上游 setup 文档;形状按 Pi 系推断,装好后复核):\n{\n  "mcpServers": {\n    "memorysql": { "url": "${url}" }\n  }\n}`
+  },
+  {
+    id: 'deveco',
+    label: 'DevEco Code',
+    detect: (home) =>
+      fs.existsSync(path.join(home, '.local', 'share', 'deveco')) ||
+      fs.existsSync(path.join(home, 'AppData', 'Local', 'deveco')),
+    configPath: (home) => path.join(home, '.config', 'deveco', 'deveco.jsonc'),
+    apply: (configPath, url) =>
+      mergeJson(configPath, (root) => {
+        setNested(root, ['mcp', 'memorysql'], { type: 'remote', url, enabled: true })
+      }),
+    snippet: (url) =>
+      `// ~/.config/deveco/deveco.json(opencode 形状,v2 起 type 必填):\n{\n  "mcp": {\n    "memorysql": { "type": "remote", "url": "${url}", "enabled": true }\n  }\n}`,
+    verify: ledgerVerify('deveco')
+  },
+  {
+    id: 'mimocode',
+    label: 'MiMo Code',
+    detect: (home) =>
+      fs.existsSync(path.join(home, '.local', 'share', 'mimocode')) ||
+      fs.existsSync(path.join(home, 'AppData', 'Local', 'mimocode')),
+    configPath: (home) => path.join(home, '.config', 'mimocode', 'mimocode.jsonc'),
+    apply: (configPath, url) =>
+      mergeJson(configPath, (root) => {
+        setNested(root, ['mcp', 'memorysql'], { type: 'remote', url, enabled: true })
+      }),
+    snippet: (url) =>
+      `// ~/.config/mimocode/mimocode.json(opencode 形状,type 必填):\n{\n  "mcp": {\n    "memorysql": { "type": "remote", "url": "${url}", "enabled": true }\n  }\n}`,
+    verify: ledgerVerify('mimocode')
   }
 ]
 

@@ -110,6 +110,15 @@ const NAS_AGENTS = [
     updateCmd: ['npm', 'install', '-g', '@moonshot-ai/kimi-code@latest'],
     versionCmd: ['kimi', '--version'],
     sessionCmd: ['kimi', '-p', 'Reply with exactly: ok']
+  },
+  {
+    // 2026-11-10 批(Magpie 补全):MiniMax Code CLI 开源(bin mcode)。
+    // 会话 ~/.minimax/v2/sessions 由台账 localRoots 驱动;非交互参数按 Claude 系
+    // 惯例先写 -p,失败看报告「会话失败」节再校准(与其他家同一流程)。
+    id: 'minimax',
+    updateCmd: ['npm', 'install', '-g', '@minimax-ai/code@latest'],
+    versionCmd: ['mcode', '--version'],
+    sessionCmd: ['mcode', '-p', 'Reply with exactly: ok']
   }
 ]
 

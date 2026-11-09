@@ -46,6 +46,16 @@ import captureGemini from '../plugins/capture-gemini'
 import captureCursor from '../plugins/capture-cursor'
 import captureOpencode from '../plugins/capture-opencode'
 import captureDsh from '../plugins/capture-dsh'
+import captureGoose from '../plugins/capture-goose'
+import captureDroid from '../plugins/capture-droid'
+import captureCline from '../plugins/capture-cline'
+import capturePi from '../plugins/capture-pi'
+import captureOmp from '../plugins/capture-omp'
+import captureOmo from '../plugins/capture-omo'
+import captureGrok from '../plugins/capture-grok'
+import captureMinimax from '../plugins/capture-minimax'
+import captureDeveco from '../plugins/capture-deveco'
+import captureMimocode from '../plugins/capture-mimocode'
 import mcpServer from '../plugins/mcp-server'
 import privacyExport from '../plugins/privacy-export'
 import syncArchive from '../plugins/sync-archive'
@@ -92,6 +102,16 @@ const BUILTIN_PLUGINS = [
   captureCursor,
   captureOpencode,
   captureDsh,
+  captureGoose,
+  captureDroid,
+  captureCline,
+  capturePi,
+  captureOmp,
+  captureOmo,
+  captureGrok,
+  captureMinimax,
+  captureDeveco,
+  captureMimocode,
   captureWatcher,
   importChat,
   mcpServer,

@@ -595,6 +595,330 @@ export const AGENTS: AgentContract[] = [
     },
     rules: { project: ['AGENTS.md', 'CLAUDE.md'], user: ['.dsh/AGENTS.md', '.dsh/CLAUDE.md'], evidence: 'source', note: 'packages/context/agent-instructions: 候选写死为 AGENTS.md/CLAUDE.md(+.local 覆盖层),从 cwd 逐级向上' },
     riskKeywords: DEFAULT_RISK_KEYWORDS
+  },
+
+  // ───────────── 2026-11-10 批:Magpie(60+ agent 网关)名单补全 ─────────────
+  // 调研底稿:docs/magpie-agents-survey.md(magpie 源码 internal/sessions 逐家实证 +
+  // 各上游仓库源码核对)。开源走 source 证据;闭源为 magpie 实证格式 + 黑盒待校准。
+  {
+    id: 'goose',
+    name: 'Goose',
+    agentType: 'goose',
+    upstream: {
+      kind: 'github',
+      repo: 'aaif-goose/goose',
+      note: '原 block/goose 已迁移重定向到 aaif-goose/goose(2026-11 实测,Apache-2.0)'
+    },
+    monitor: 'tracked',
+    localRoots: [
+      'AppData/Roaming/Block/goose/sessions', // Windows(etcetera AppStrategy: %APPDATA%\Block\goose)
+      '.local/share/goose/sessions', // Linux(XDG data)
+      'Library/Application Support/Block/goose/sessions' // macOS
+    ],
+    source: {
+      kind: 'sqlite',
+      sqlite: {
+        tablesAnyOf: [['sessions', 'messages']],
+        requiredColumns: {
+          sessions: ['id', 'name', 'working_dir', 'created_at', 'updated_at'],
+          messages: ['session_id', 'role', 'content_json', 'created_timestamp']
+        },
+        note:
+          'sessions.db(schema_version 迁移链,≥10)。sessions.session_type ' +
+          "'user'|'scheduled'|'subagent'|'hidden'|'terminal'|'gateway'|'acp'(snake_case);" +
+          'messages.created_timestamp 为秒;content_json 是 MessageContentBlock camelCase 块数组' +
+          "(tag=type:text/toolRequest/toolResponse/thinking…)。2026-11 按源码核对(session_manager.rs)"
+      }
+    },
+    mcp: {
+      file: '.config/goose/config.yaml',
+      jsonpath: 'extensions.memorysql',
+      // yaml,不做 JSONPath 回读校验 —— 形状:extensions.<id>:{enabled,type:streamable_http,name,uri}
+      requiredKeys: ['type', 'name', 'uri'],
+      valueHints: { type: 'streamable_http' },
+      note:
+        'YAML 格式;键是 uri 不是 url(ExtensionConfig::StreamableHttp 的 serde 字段),' +
+        'Windows 在 %APPDATA%\\Block\\goose\\config\\config.yaml。台账 file 只作展示'
+    },
+    rules: { project: ['.goosehints', 'AGENTS.md'], evidence: 'source', note: 'hints/load_hints.rs: 默认上下文文件 = .goosehints + AGENTS.md(CONTEXT_FILE_NAMES 参数可改);都不存在时新建 .goosehints' },
+    riskKeywords: DEFAULT_RISK_KEYWORDS
+  },
+  {
+    id: 'droid',
+    name: 'Droid(Factory)',
+    agentType: 'droid',
+    upstream: { kind: 'none', note: 'Factory 闭源(curl 脚本安装),无公开更新日志 —— 黑盒守' },
+    monitor: 'blackbox_only',
+    localRoots: ['.factory/sessions'],
+    source: {
+      kind: 'jsonl',
+      jsonl: {
+        fileMatch: '**/*.jsonl',
+        requiredPaths: [],
+        parser: 'droid',
+        note:
+          '根级 <id>.jsonl(老)/ <cwd-slug>/<id>.jsonl(新)两代并存;首行 session_start' +
+          '{id,title,cwd,lastCwd,parent,forkedAtMessageId,callingSessionId},之后 message 事件' +
+          '(content 为字符串或 Anthropic 块)。格式按 magpie 实证解析还原,装好后黑盒校准'
+      }
+    },
+    mcp: null,
+    rules: { project: ['AGENTS.md'], evidence: 'docs', note: 'Factory 官方文档写明 droid 读项目 AGENTS.md;装好后可金丝雀复核' },
+    riskKeywords: DEFAULT_RISK_KEYWORDS
+  },
+  {
+    id: 'cline',
+    name: 'Cline CLI',
+    agentType: 'cline',
+    upstream: { kind: 'github', repo: 'cline/cline' },
+    monitor: 'tracked',
+    localRoots: ['.cline/data/sessions'],
+    source: {
+      kind: 'json',
+      json: {
+        entry: 'messages',
+        note:
+          '~/.cline/data/sessions/<id>/<id>.json(manifest)+ <id>.messages.json(消息;' +
+          '同目录 <agentId>.messages.json 为子代理)。CLINE_SESSION_DATA_DIR/CLINE_DATA_DIR/' +
+          'CLINE_DIR 可逐级覆盖根。格式按 magpie 实证解析还原 + 上游类型定义核对'
+      }
+    },
+    mcp: {
+      file: '.cline/data/cline_mcp_settings.json',
+      jsonpath: '$.mcpServers.memorysql',
+      requiredKeys: ['type', 'url'],
+      valueHints: { type: 'streamableHttp' },
+      note: 'McpTransport 联合类型:stdio|sse|streamableHttp,remote 用 {type:"streamableHttp", url}'
+    },
+    rules: { project: ['.clinerules', 'AGENTS.md'], evidence: 'source', note: 'storage 常量表 clineRules=".clinerules";AGENTS.md 为通用约定兜底' },
+    riskKeywords: DEFAULT_RISK_KEYWORDS
+  },
+  {
+    id: 'pi',
+    name: 'Pi',
+    agentType: 'pi',
+    upstream: {
+      kind: 'github',
+      repo: 'earendil-works/pi',
+      note: '原 badlogic/pi-mono 已迁移(MIT);121k stars'
+    },
+    monitor: 'tracked',
+    localRoots: ['.pi/agent/sessions'],
+    source: {
+      kind: 'jsonl',
+      jsonl: {
+        fileMatch: '**/*.jsonl',
+        requiredPaths: [],
+        parser: 'pi',
+        note:
+          'sessions/<cwd-slug>/<time>_<id>.jsonl,一行一个 entry:session 头(id/cwd/parentSession)/' +
+          'session_info/title_change/model_change/usage/message(role+content 块,text|toolCall)。' +
+          'fork 的拷贝段按「早于 header 时间戳」跳过。格式按 magpie 实证解析还原'
+      }
+    },
+    mcp: {
+      file: '.pi/agent/mcp.json',
+      jsonpath: '$.mcpServers.memorysql',
+      requiredKeys: ['url'],
+      note: 'extensions/mcp/config.ts:mcp.json 的 mcpServers 形状,remote 即 {url};项目级 <project>/.pi/mcp.json 只做 enabled 覆盖'
+    },
+    rules: { project: ['AGENTS.md'], evidence: 'source', note: '上游仓库自带 AGENTS.md 且按其约定加载' },
+    riskKeywords: DEFAULT_RISK_KEYWORDS
+  },
+  {
+    id: 'omp',
+    name: 'omp(oh-my-pi)',
+    agentType: 'omp',
+    upstream: { kind: 'github', repo: 'canopicjars/omp', note: 'Pi 的 fork;仓库地址待黑盒复核(magpie 接线记录 alias oh-my-pi)' },
+    monitor: 'tracked',
+    localRoots: ['.omp/agent/sessions'],
+    source: {
+      kind: 'jsonl',
+      jsonl: {
+        fileMatch: '**/*.jsonl',
+        requiredPaths: [],
+        parser: 'pi',
+        note:
+          '~/.omp/agent/sessions 形状同 Pi(title 行/title_change/model_usage 是增量差异);' +
+          '子代理在与文件同名的 artifacts 目录 <time>_<id>/<agentId>.jsonl。' +
+          'profiles:<~/.omp>/profiles/<name>/agent;$XDG_DATA_HOME/omp/sessions 也扫'
+      }
+    },
+    mcp: {
+      file: '.omp/agent/mcp.json',
+      jsonpath: '$.mcpServers.memorysql',
+      requiredKeys: ['url'],
+      note: 'omp 是 Pi fork,按 Pi 系 mcp.json 形状(family 证据);装好后黑盒复核'
+    },
+    rules: { project: ['AGENTS.md'], evidence: 'family', note: 'Pi fork,沿用 Pi 的 AGENTS.md 约定;装好后金丝雀复核' },
+    riskKeywords: DEFAULT_RISK_KEYWORDS
+  },
+  {
+    id: 'omo',
+    name: 'OmO',
+    agentType: 'omo',
+    upstream: { kind: 'github', repo: 'code-yeongyu/oh-my-openagent', note: '引擎 senpi 是 pi 的 fork' },
+    monitor: 'tracked',
+    localRoots: ['.omo/agent/sessions', '.senpi/agent/sessions'],
+    source: {
+      kind: 'jsonl',
+      jsonl: {
+        fileMatch: '**/*.jsonl',
+        requiredPaths: [],
+        parser: 'pi',
+        note:
+          '~/.omo/agent(OMO_CODING_AGENT_DIR/.senpi fallback)下按 pi 系惯例 sessions/*.jsonl;' +
+          '格式按 pi 形状解析(family 证据,装好后黑盒复核)'
+      }
+    },
+    mcp: {
+      file: '.omo/agent/mcp.json',
+      jsonpath: '$.mcpServers.memorysql',
+      requiredKeys: ['url'],
+      note: '上游 setup 文档确认 ~/.omo/agent/mcp.json;形状按 Pi 系推断,装好后复核'
+    },
+    rules: { project: ['AGENTS.md'], evidence: 'family', note: 'pi 系引擎沿用 AGENTS.md 约定;装好后金丝雀复核' },
+    riskKeywords: DEFAULT_RISK_KEYWORDS
+  },
+  {
+    id: 'grok',
+    name: 'Grok Build',
+    agentType: 'grok',
+    upstream: {
+      kind: 'github',
+      repo: 'xai-org/grok-build',
+      note: '开源 Apache-2.0(2026-07 开源,约 84.5 万行 Rust);官方 changelog 三处独立确认 ~/.grok/sessions'
+    },
+    monitor: 'tracked',
+    localRoots: ['.grok/sessions'],
+    source: {
+      kind: 'jsonl',
+      jsonl: {
+        fileMatch: '**/updates.jsonl',
+        requiredPaths: [],
+        parser: 'grok',
+        note:
+          'sessions/<urlencode(cwd)>/<id>/:summary.json(info.id/cwd,created_at,generated_title,' +
+          'parent_session_id,session_kind)+ updates.jsonl(timestamp 秒;user_message/' +
+          'agent_message/tool_call 事件)。GROK_HOME 可覆盖根。格式按 magpie 实证解析还原'
+      }
+    },
+    mcp: null, // MCP 在 ~/.grok/config.toml(changelog v0.2.113 佐证);TOML 表名黑盒确认后补连接器
+    rules: { project: ['AGENTS.md'], evidence: 'docs', note: 'xAI 文档写明读 AGENTS.md;装好后可金丝雀复核' },
+    riskKeywords: DEFAULT_RISK_KEYWORDS
+  },
+  {
+    id: 'minimax',
+    name: 'MiniMax Code',
+    agentType: 'minimax',
+    upstream: {
+      kind: 'github',
+      repo: 'MiniMax-AI/minimax-code',
+      note: 'CLI 开源 MIT(bin mcode,npm @minimax-ai/code);桌面 app 闭源不管。npm @minimax-ai/code'
+    },
+    monitor: 'tracked',
+    localRoots: ['.minimax/v2/sessions'],
+    source: {
+      kind: 'jsonl',
+      jsonl: {
+        fileMatch: '**/messages.jsonl',
+        requiredPaths: [],
+        parser: 'minimax',
+        note:
+          'v2/sessions/<yyyy>/<mm>/<dd>/<hh-mm-ss-ms>-session_<base64(id)>/messages.jsonl,' +
+          '一行一条 {message_id, message:{role,model,usage,timestamp(毫秒),content}};' +
+          '会话 id = -session_ 后的 base64。格式按 magpie 对 @minimax-ai/code 0.6.8 的实证解析还原'
+      }
+    },
+    mcp: null, // ~/.minimax/mcp.json 的形态只有第三方工具背书,黑盒确认后补连接器
+    rules: {
+      project: ['AGENTS.md'],
+      evidence: 'source',
+      note: 'CLI 运行时 vendor 了 pi-mono(仓库 third_party/),规则机制随 pi;' +
+        '仓库自身就用 AGENTS.md + .agents/skills。装好后金丝雀复核'
+    },
+    riskKeywords: DEFAULT_RISK_KEYWORDS
+  },
+  {
+    id: 'deveco',
+    name: 'DevEco Code',
+    agentType: 'deveco',
+    upstream: {
+      kind: 'commit',
+      repo: 'CarSmallGuo/deveco-code',
+      note:
+        '华为 HarmonyOS 开发 agent,**基于华为 BitFun + OpenCode 构建**(HDC 2026 发布;' +
+        'npm 分发 @deveco/deveco-code,repo 为社区镜像)—— 盯 opencode 上游的 schema 变更即可覆盖它;' +
+        '会话存储官方文档未写,需黑盒探测'
+    },
+    monitor: 'tracked',
+    localRoots: ['.local/share/deveco', 'AppData/Local/deveco'],
+    source: {
+      kind: 'sqlite',
+      sqlite: {
+        tablesAnyOf: [
+          ['session_v2', 'session_message'],
+          ['session', 'message', 'part']
+        ],
+        requiredColumns: {
+          session_v2: ['id', 'directory', 'title', 'time_created', 'time_updated'],
+          session: ['id', 'directory', 'title', 'time_created', 'time_updated']
+        },
+        note:
+          'opencode 系 fork,库文件名未黑盒确认(deveco.db?)—— 适配器在数据根下逐 *.db ' +
+          '探测布局,对不上返回 []。证据级 family;装好后黑盒校准库名'
+      }
+    },
+    mcp: {
+      file: '.config/deveco/deveco.jsonc',
+      jsonpath: '$.mcp.memorysql',
+      requiredKeys: ['type', 'url'],
+      valueHints: { type: 'remote' },
+      note: 'opencode 形状(v2 起 type 必填);华为官方文档写明 .deveco/deveco.jsonc(项目级)/~/.config/deveco/deveco.jsonc,JSONC 含注释时连接器会拒写并提示手工'
+    },
+    rules: { project: ['AGENTS.md'], evidence: 'family', note: 'opencode 系 fork 沿用 AGENTS.md 约定;装好后金丝雀复核' },
+    riskKeywords: DEFAULT_RISK_KEYWORDS
+  },
+  {
+    id: 'mimocode',
+    name: 'MiMo Code',
+    agentType: 'mimocode',
+    upstream: {
+      kind: 'github',
+      repo: 'XiaomiMiMo/MiMo-Code',
+      note: '开源 MIT,OpenCode 的 fork(2026-11-10 核实);Windows 数据全落 %LOCALAPPDATA%\mimocode'
+    },
+    monitor: 'tracked',
+    // 2026-11-10 真机校准(本机实装):库在 ~/.local/share/mimocode/mimocode.db,
+    // 133MB / 222 会话 / 73 个 parent_id 子代理 / time_archived 列在 —— opencode
+    // legacy 三表布局,agent-db-parser 原样适用(副本上 222/222 解析通过)
+    localRoots: ['.local/share/mimocode/mimocode.db', 'AppData/Local/mimocode/mimocode.db'],
+    source: {
+      kind: 'sqlite',
+      sqlite: {
+        tablesAnyOf: [
+          ['session_v2', 'session_message'],
+          ['session', 'message', 'part']
+        ],
+        requiredColumns: {
+          session_v2: ['id', 'directory', 'title', 'time_created', 'time_updated'],
+          session: ['id', 'directory', 'title', 'time_created', 'time_updated']
+        },
+        note:
+          'opencode legacy 三表布局(2026-11-10 真机副本校准):session 带 parent_id' +
+          '(73/222 是子代理)与 time_archived,和 opencode 同语义;message.data ' +
+          '{role,agent,time.created,model},part.data {type:text|tool,...}'
+      }
+    },
+    mcp: {
+      file: '.config/mimocode/mimocode.jsonc',
+      jsonpath: '$.mcp.memorysql',
+      requiredKeys: ['type', 'url'],
+      valueHints: { type: 'remote' },
+      note: 'opencode 形状;上游 README 写明 .mimocode/mimocode.jsonc(项目级)/全局 ~/.config/mimocode/mimocode.jsonc,JSONC 含注释时连接器会拒写并提示手工'
+    },
+    rules: { project: ['AGENTS.md'], evidence: 'source', note: 'OpenCode fork 沿用 AGENTS.md 约定(上游开源可查);装好后金丝雀复核' },
+    riskKeywords: DEFAULT_RISK_KEYWORDS
   }
 ]
 

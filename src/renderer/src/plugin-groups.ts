@@ -30,6 +30,16 @@ export const PLUGIN_GROUPS: PluginGroup[] = [
       'capture-cursor',
       'capture-opencode',
       'capture-dsh',
+      'capture-goose',
+      'capture-droid',
+      'capture-cline',
+      'capture-pi',
+      'capture-omp',
+      'capture-omo',
+      'capture-grok',
+      'capture-minimax',
+      'capture-deveco',
+      'capture-mimocode',
       'capture-watcher',
       'import-chat'
     ]

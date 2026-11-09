@@ -16,6 +16,16 @@ export type AgentType =
   | 'workbuddy'
   | 'qoder'
   | 'dsh'
+  | 'goose'
+  | 'droid'
+  | 'cline'
+  | 'pi'
+  | 'omp'
+  | 'omo'
+  | 'grok'
+  | 'minimax'
+  | 'deveco'
+  | 'mimocode'
   | (string & {})
 export type MessageRole = 'user' | 'assistant' | 'tool' | 'system'
 

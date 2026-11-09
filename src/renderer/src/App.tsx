@@ -33,7 +33,17 @@ const CAPTURE_PLUGINS: Array<{ id: string; label: string }> = [
   { id: 'capture-gemini', label: 'Gemini CLI' },
   { id: 'capture-cursor', label: 'Cursor' },
   { id: 'capture-opencode', label: 'OpenCode' },
-  { id: 'capture-dsh', label: 'DeepSeek Harness' }
+  { id: 'capture-dsh', label: 'DeepSeek Harness' },
+  { id: 'capture-goose', label: 'Goose' },
+  { id: 'capture-droid', label: 'Droid' },
+  { id: 'capture-cline', label: 'Cline CLI' },
+  { id: 'capture-pi', label: 'Pi' },
+  { id: 'capture-omp', label: 'omp' },
+  { id: 'capture-omo', label: 'OmO' },
+  { id: 'capture-grok', label: 'Grok Build' },
+  { id: 'capture-minimax', label: 'MiniMax Code' },
+  { id: 'capture-deveco', label: 'DevEco Code' },
+  { id: 'capture-mimocode', label: 'MiMo Code' }
 ]
 
 function fmtTime(ts: number | null | undefined): string {

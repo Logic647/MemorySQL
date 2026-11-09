@@ -1456,7 +1456,14 @@ const CONNECT_AGENTS = [
   { id: 'cursor', label: 'Cursor' },
   { id: 'opencode', label: 'OpenCode / Copilot CLI' },
   { id: 'dsh', label: 'DeepSeek Harness' },
-  { id: 'hermes', label: 'Hermes Agent (CN Desktop)' }
+  { id: 'hermes', label: 'Hermes Agent (CN Desktop)' },
+  { id: 'goose', label: 'Goose' },
+  { id: 'cline', label: 'Cline CLI' },
+  { id: 'pi', label: 'Pi' },
+  { id: 'omp', label: 'omp (oh-my-pi)' },
+  { id: 'omo', label: 'OmO' },
+  { id: 'deveco', label: 'DevEco Code' },
+  { id: 'mimocode', label: 'MiMo Code' }
 ]
 
 function AgentConnectSection({ onMsg }: { onMsg: (s: string) => void }) {

@@ -23,17 +23,20 @@ afterEach(() => {
 const rulesOf = (id: string) => AGENT_BY_ID.get(id)!.rules!
 
 describe('台账 rules 覆盖(不许猜)', () => {
-  it('13 家每一家都有显式登记(null 也不许)', () => {
-    const missing = AGENTS.filter((a) => !a.rules).map((a) => a.id)
+  it('每一家都有登记;null 只许闭源黑盒守的(机制未探明,不许猜)', () => {
+    const missing = AGENTS.filter(
+      (a) => !a.rules && !(a.upstream.kind === 'none' && a.monitor === 'blackbox_only')
+    ).map((a) => a.id)
     expect(missing, `这些 agent 没登记 rules: ${missing.join(', ')}`).toEqual([])
-    expect(AGENTS.length).toBe(13)
+    expect(AGENTS.length).toBe(23) // 2026-11-10 批(Magpie 补全)+10
   })
 
   it('证据等级必须是白名单内的一个;canary/source/docs 的 project 或 user 至少有一个落点', () => {
     const legal = ['canary', 'source', 'docs', 'family', 'convention']
     for (const a of AGENTS) {
-      expect(legal, `${a.id} 证据等级非法`).toContain(a.rules!.evidence)
-      if (a.rules!.evidence !== 'family') {
+      if (!a.rules) continue // 闭源黑盒守(上一条已限定只许 upstream.kind==='none')
+      expect(legal, `${a.id} 证据等级非法`).toContain(a.rules.evidence)
+      if (a.rules.evidence !== 'family') {
         // family(workbuddy)是推断,允许只有 note;其余必须有实际落点或说明
         expect(
           a.rules!.project.length + (a.rules!.user?.length ?? 0) > 0 || a.id === 'hermes',
