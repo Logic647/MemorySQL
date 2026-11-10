@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url'
 import { ledgerFingerprint } from '../tools/upstream-watch/fingerprint.mjs'
 import { shouldRetryUpload, uploadBackoffMs } from '../tools/upstream-watch/retry.mjs'
 import { applyFreshness, scanLatestMtime } from '../tools/upstream-watch/nas-freshness.mjs'
+import { NAS_AGENTS } from './nas-targets.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.join(HERE, '..')
@@ -62,73 +63,8 @@ function log(...a) {
   }
 }
 
-/**
- * NAS 侧看守的 agent 配置。
- *
- * dataRoots 不在这里维护 —— 从台账(ledger.json)的 localRoots 读,单一真相源,
- * 台账改了路径这里自动跟上。本表只管「怎么升级、怎么问版本、怎么逼一个会话」。
- *
- * npm 包名/bin 名已按 2026-10-25 npm registry 实查校准:
- *   qoder   = @qoder-ai/qodercli(bin qoder;CN 变体 @qodercn-ai/qoderclicn/bin qodercn)
- *   codebuddy = @tencent-ai/codebuddy-code(bin codebuddy/cbc)
- *   qwen    = @qwen-code/qwen-code(bin qwen)
- *   gemini  = @google/gemini-cli(bin gemini)
- *   kimicli = @moonshot-ai/kimi-code(bin kimi;⚠ npm 上无 scope 的 `kimi-code` 是
- *             第三方抢注的 Groq 代理工具,别装错 —— 台账 upstream.repo 记的
- *             MoonshotAI/kimi-code 是 GitHub 仓库,npm 包名带 @moonshot-ai scope)
- * 各家 -p 非交互参数与数据落盘位置在**部署时实测校准**:会话失败看报告的
- * 「会话失败」节,先用 `--version` / `--help` 核对 CLI 参数再改本表。
- */
-const NAS_AGENTS = [
-  {
-    id: 'qoder',
-    updateCmd: ['npm', 'install', '-g', '@qoder-ai/qodercli@latest'],
-    versionCmd: ['qoder', '--version'],
-    // -p = print 模式(Claude 系 CLI 惯例):跑一轮真会话写 JSONL,成功即退出
-    sessionCmd: ['qoder', '-p', 'Reply with exactly: ok']
-  },
-  {
-    id: 'codebuddy',
-    updateCmd: ['npm', 'install', '-g', '@tencent-ai/codebuddy-code@latest'],
-    versionCmd: ['codebuddy', '--version'],
-    sessionCmd: ['codebuddy', '-p', 'Reply with exactly: ok']
-  },
-  {
-    id: 'qwencode',
-    updateCmd: ['npm', 'install', '-g', '@qwen-code/qwen-code@latest'],
-    versionCmd: ['qwen', '--version'],
-    sessionCmd: ['qwen', '-p', 'Reply with exactly: ok']
-  },
-  {
-    id: 'gemini',
-    updateCmd: ['npm', 'install', '-g', '@google/gemini-cli@latest'],
-    versionCmd: ['gemini', '--version'],
-    sessionCmd: ['gemini', '-p', 'Reply with exactly: ok']
-  },
-  {
-    id: 'kimicli',
-    updateCmd: ['npm', 'install', '-g', '@moonshot-ai/kimi-code@latest'],
-    versionCmd: ['kimi', '--version'],
-    sessionCmd: ['kimi', '-p', 'Reply with exactly: ok']
-  },
-  {
-    // 闭源(NAS 已登录,2026-11-10 实测两轮会话)。只有版本变化才跑会话 —— 会消耗少量 AI credits。
-    id: 'copilot',
-    updateCmd: ['npm', 'install', '-g', '@github/copilot@latest'],
-    versionCmd: ['copilot', '--version'],
-    sessionCmd: ['copilot', '-p', 'Reply with exactly: ok']
-  },
-  {
-    // 闭源(Factory)。NAS 已装未登录:版本看守有效,会话会失败(报告里可见)
-    id: 'droid',
-    // 安装脚本要过 sh(execFile 不能跑管道),用 sh -c 包一层
-    updateCmd: ['sh', '-c', 'curl -fsSL https://app.factory.ai/cli | sh'],
-    versionCmd: ['droid', '--version'],
-    sessionCmd: ['droid', 'exec', 'Reply with exactly: ok']
-  }
-  // 注意:MiniMax Code 的 CLI 是**开源**的(MiniMax-AI/minimax-code),按约定它归
-  // 上游监控 + 源码适配那一侧,不进 NAS 看守表。闭源 agent 走 scripts/nas-discover.mjs。
-]
+// 看守表在 scripts/nas-targets.mjs(与面板共用一份,避免两边漂移)。
+
 
 function runStep(cmd, timeoutMs) {
   try {

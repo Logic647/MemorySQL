@@ -12,7 +12,7 @@ import { parseEnvFile, findLoginTarget } from '../scripts/nas-panel.mjs'
  * 面板能从浏览器触发命令执行,所以最重要的断言是**边界**而不是功能:
  *   1. 登录只可能命中白名单表(POST id → LOGIN_TARGETS),不存在任意命令路径
  *   2. /api/proc 的 key 只允许 login:<id> | probe 两种形态(防把面板当文件读器)
- *   3. /api/report 的 file 只允许 日期.md 基名(防路径穿越)
+ *   3. /api/report 的 file 只允许 <日期>.md / discover-<stamp>.md 基名(防路径穿越)
  *   4. 内联页面脚本可编译(HTML 无 typecheck 把关,语法错=整页空白)
  * 凭据只经内存注入子进程,面板任何接口都不回显 token。
  */
@@ -43,13 +43,22 @@ describe('登录白名单', () => {
     expect(findLoginTarget('')).toBeNull()
     expect(findLoginTarget('$(whoami)')).toBeNull()
   })
-  it('五家都在表里,命令都是数组形态(不经 shell)', () => {
-    for (const t of ['qoder', 'codebuddy', 'qwencode', 'gemini', 'kimicli']) {
+  /**
+   * 看守表在 scripts/nas-targets.mjs 是单一真相源。2026-11-10 踩过:
+   * 探针表加了 copilot/droid,面板的登录表还停在 5 家 —— 新装的两家点不到。
+   * 这条用例从面板 API 侧断言"面板能看到全部看守家"。
+   */
+  it('面板覆盖看守表全部家:copilot 可一键登录,droid 只能 SSH(TUI 认证)', () => {
+    for (const t of ['qoder', 'codebuddy', 'copilot', 'qwencode', 'gemini', 'kimicli']) {
       const hit = findLoginTarget(t)!
-      expect(Array.isArray(hit.loginCmd)).toBe(true)
-      expect(hit.loginCmd.length).toBeGreaterThan(1)
+      expect(Array.isArray(hit.loginCmd), `${t} 应有非交互登录命令`).toBe(true)
+      expect(hit.loginCmd!.length).toBeGreaterThan(1)
       expect(hit.sshFallback.length).toBeGreaterThan(0)
     }
+    // droid 没有 login 子命令(--help 只有 resume/exec/daemon/search/update/mcp/...)
+    const droid = findLoginTarget('droid')!
+    expect(droid.loginCmd, 'droid 不该被硬塞一个不存在的 login 命令').toBeNull()
+    expect(droid.sshFallback).toContain('TUI')
   })
 })
 
@@ -90,7 +99,7 @@ describe('冒烟:面板服务起来后,边界与页面', () => {
         reports: unknown[]
       }
       expect(st.lastRun).toBeNull()
-      expect(st.targets).toHaveLength(5)
+      expect(st.targets).toHaveLength(7) // 看守表 7 家(targets 与探针同源)
       expect(st.reports).toEqual([])
 
       // 白名单外/注入形态的 login id → 400,绝不 spawn
@@ -103,15 +112,26 @@ describe('冒烟:面板服务起来后,边界与页面', () => {
         expect(r.status, `id=${bad} 应被拒`).toBe(400)
       }
 
+      // 交互式登录的家(droid)必须明确拒绝并给出 SSH 指引,不能硬 spawn 一个卡住的 TUI
+      const droidRes = await fetch(base + '/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 'droid' })
+      })
+      expect(droidRes.status).toBe(400)
+      expect(((await droidRes.json()) as { error: string; hint?: string }).error).toBe('interactive-only')
+
       // /api/proc 只认两种 key 形态
       for (const bad of ['', 'login:', 'probe;rm', 'login:qoder extra', 'cat:/etc/passwd']) {
         const r = await fetch(base + '/api/proc?key=' + encodeURIComponent(bad))
         expect(r.status, `key=${bad} 应被拒`).toBe(400)
       }
 
-      // /api/report 文件名白名单(防穿越)
+      // /api/report 文件名白名单(防穿越);发现器报告 discover-<stamp>.md 也要能开
       expect((await fetch(base + '/api/report?file=' + encodeURIComponent('../../probe.env'))).status).toBe(400)
       expect((await fetch(base + '/api/report?file=2026-10-25.md')).status).toBe(404) // 不存在但形态合法
+      expect((await fetch(base + '/api/report?file=discover-2026-11-10-05-12-51.md')).status).toBe(404) // 形态合法
+      expect((await fetch(base + '/api/report?file=discover-../x.md')).status).toBe(400) // 仍不许穿越
 
       // 页面 200 + 内联脚本可编译(子进程 node --check,只解析不执行)
       const html = await fetch(base + '/').then((r) => r.text())

@@ -25,6 +25,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { LOGIN_TARGETS as NAS_LOGIN_TARGETS } from './nas-targets.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.join(HERE, '..')
@@ -42,18 +43,13 @@ const NODE_BIN = process.execPath
 const BUF_CAP = 256 * 1024
 
 /**
- * 登录命令表 —— 与 nas-probe.mjs 的 NAS_AGENTS 同族:表驱动、部署时实测校准。
- * qoder 的 login 子命令经官方文档确认;codebuddy 免登录但保留入口;kimi/qwen/gemini
- * 的非交互登录形态待首次使用时看输出校准(跑了不对,改这张表即可)。
- * sshFallback:CLI 坚持要 TUI 时给用户的手动命令。
+ * 登录目标 —— **从 scripts/nas-targets.mjs 派生**,不在这里另写一张表。
+ * 2026-11-10 踩过:看守表加了 copilot/droid,面板还停在 5 家,界面上根本点不到
+ * 新装的两家。现在两张表同源,漏不了。
+ * `loginCmd === null` = 该 CLI 没有非交互登录子命令(如 droid 只能在 TUI 里认证),
+ * 界面只给 SSH 指引,API 直接拒。
  */
-const LOGIN_TARGETS = [
-  { id: 'qoder', label: 'Qoder', loginCmd: ['qoder', 'login'], sshFallback: 'qoder login' },
-  { id: 'codebuddy', label: 'CodeBuddy', loginCmd: ['codebuddy', 'login'], sshFallback: 'codebuddy login(当前免登录可用)' },
-  { id: 'qwencode', label: 'Qwen Code', loginCmd: ['qwen', 'login'], sshFallback: 'ssh nas 后运行 qwen 按引导认证' },
-  { id: 'gemini', label: 'Gemini CLI', loginCmd: ['gemini', 'login'], sshFallback: 'ssh nas 后运行 gemini 按引导认证' },
-  { id: 'kimicli', label: 'Kimi Code', loginCmd: ['kimi', 'login'], sshFallback: 'ssh nas 后运行 kimi 按引导认证' }
-]
+const LOGIN_TARGETS = NAS_LOGIN_TARGETS
 
 /**
  * 解析 probe.env 形式的 KEY=VALUE 文件(忽略注释/空行;值不剥引号——探针 env
@@ -227,6 +223,11 @@ const server = http.createServer(async (req, res) => {
     }
     const t = findLoginTarget(id)
     if (!t) return json(res, 400, { error: 'unknown target' })
+    // 没有非交互登录子命令(如 droid:只能在 TUI 里认证)—— 明确拒绝并给出 SSH 指引,
+    // 不要硬 spawn 一个会卡住的交互式 TUI。
+    if (!t.loginCmd) {
+      return json(res, 400, { error: 'interactive-only', hint: t.sshFallback })
+    }
     const r = startProc(`login:${t.id}`, t.loginCmd, {}, HOME)
     return json(res, r.started ? 202 : 409, r.started ? { started: true, key: `login:${t.id}` } : { error: r.why })
   }
@@ -254,7 +255,9 @@ const server = http.createServer(async (req, res) => {
   // 报告正文(文件名白名单:必须是 REPORTS 下的 .md 基名,防路径穿越)
   if (url.pathname === '/api/report' && req.method === 'GET') {
     const f = url.searchParams.get('file') ?? ''
-    if (!/^\d{4}-\d{2}-\d{2}\.md$/.test(f)) return json(res, 400, { error: 'bad file' })
+    // 两种报告:每日探针 `YYYY-MM-DD.md` 与发现器 `discover-<stamp>.md`。
+    // 仍只接受**基名**(无路径分隔符)防穿越。
+    if (!/^(?:\d{4}-\d{2}-\d{2}|discover-[\w.-]+)\.md$/.test(f)) return json(res, 400, { error: 'bad file' })
     const p = path.join(REPORTS, f)
     if (!fs.existsSync(p)) return json(res, 404, { error: 'not found' })
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' })
@@ -381,13 +384,22 @@ function renderAgents(st) {
   $('#agents').innerHTML = st.targets.map(t => {
     const a = last?.agents?.[t.id] ?? {};
     const [cls, label] = VERDICT[a.verdict] ?? ['b-none', a.verdict ?? '未上报'];
+    /**
+     * 没有非交互登录子命令的(loginCmd:null,如 droid)只给 SSH 指引 ——
+     * 按钮禁用而不是隐藏:保留位置,让人知道"这家要靠 SSH 上 TUI"。
+     */
+    const loginBtn = t.loginCmd
+      ? '<button onclick="startLogin(\\'' + t.id + '\\')">发起登录</button>'
+      : '<button disabled title="该 CLI 没有非交互登录子命令,需 SSH 进 TUI">仅 SSH 登录</button>';
+    // 注意:这里是**字符串拼接**,不是数组 —— 中途漏掉 `+` 会变成逗号表达式,
+    // 整个 return 只保留最后一段(曾因此丢掉整张卡片的头部与 rulesRow)。
     return '<div class="card">' +
       '<div class="nm">' + esc(t.label) + ' <span class="badge ' + cls + '">' + label + '</span></div>' +
       '<div class="row"><span class="k">版本</span><span class="v">' + esc(a.version ?? '—') + '</span></div>' +
       '<div class="row"><span class="k">登录</span><span class="v">' + sessionDot(a.sessionOk) + (a.sessionAt ? ' · ' + esc(String(a.sessionAt).slice(5, 10)) : '') + '</span></div>' +
       '<div class="row"><span class="k">数据</span><span class="v">' + (a.dataAt ? esc(String(a.dataAt).slice(0, 10)) : '—') + '</span></div>' +
-      rulesRow(st, t.id),
-      '<div class="actions"><button onclick="startLogin(\\'' + t.id + '\\')">发起登录</button>' +
+      rulesRow(st, t.id) +
+      '<div class="actions">' + loginBtn +
       '<span class="hint">不行就 SSH:' + esc(t.sshFallback) + '</span></div>' +
       '<pre class="term" id="out-' + t.id + '" style="display:none"></pre>' +
       '</div>';
@@ -448,7 +460,14 @@ window.startLogin = async (id) => {
     // 「点了没反应」,而他要的链接其实一直在服务端躺着
     if (r.status !== 202 && r.status !== 409) {
       const el = document.getElementById(elId);
-      if (el) { el.style.display = 'block'; el.textContent = '发起失败 HTTP ' + r.status; }
+      // 交互式登录(droid 这类没有 login 子命令的)由服务端回 400 interactive-only
+      // + SSH 指引,直接显示在输出框里,别让人对着 HTTP 400 猜
+      let hint = ''
+      try {
+        const body = await r.json();
+        if (body?.hint) hint = '\\n' + body.hint;
+      } catch { /* 非 JSON,忽略 */ }
+      if (el) { el.style.display = 'block'; el.textContent = '发起失败 HTTP ' + r.status + hint; }
       return;
     }
   } catch (e) {

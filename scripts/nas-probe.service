@@ -25,6 +25,12 @@ Type=oneshot
 User=logic
 # 凭据从 env 文件注入,不在 unit 里明文写 token(文件本身 600)
 EnvironmentFile=/home/logic/.memorysql-nas/probe.env
+# ⚠ PATH 必须显式带这两个目录(2026-11-10 实测):
+#   ~/local/node-v22.22.1-linux-x64/bin  npm -g 的包全装在这里(copilot/qoder/…)
+#   ~/.local/bin                         droid/muse/devin 官方安装器落这里
+# 它们不在 systemd 默认 PATH 里 → `copilot --version` 报 command not found,
+# 探针的版本探测直接失败(于是被降级成"数据过期"),面板的一键登录也起不来。
+Environment=PATH=/home/logic/local/node-v22.22.1-linux-x64/bin:/home/logic/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/logic/local/node-v22.22.1-linux-x64/bin/node /home/logic/apps/MemorySQL/scripts/nas-probe.mjs
 # 五家 CLI 的 npm 升级 + 最小会话可能跑几分钟,给足超时
 TimeoutStartSec=1800

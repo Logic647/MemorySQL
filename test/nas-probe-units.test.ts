@@ -14,6 +14,7 @@ import path from 'node:path'
 const dir = path.join(process.cwd(), 'scripts')
 const timer = fs.readFileSync(path.join(dir, 'nas-probe.timer'), 'utf8')
 const service = fs.readFileSync(path.join(dir, 'nas-probe.service'), 'utf8')
+const panel = fs.readFileSync(path.join(dir, 'nas-panel.service'), 'utf8')
 
 const code = (s: string): string =>
   s.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n')
@@ -48,5 +49,22 @@ describe('nas-probe.service', () => {
 
   it('等网络就绪再跑(否则开机补跑会白白上报失败)', () => {
     expect(code(service)).toMatch(/After=network-online\.target/)
+  })
+
+  /**
+   * PATH 必须显式带两个非标准 bin 目录(2026-11-10 实测):
+   * npm -g 装的 copilot/qoder 在 ~/local/node.../bin,droid/muse/devin 在
+   * ~/.local/bin,两者都不在 systemd 默认 PATH 里 → `copilot --version`
+   * 报 command not found,版本探测失败、面板一键登录也起不来。
+   */
+  it('unit 的 PATH 覆盖 npm -g 与 ~/.local/bin(否则新装的 CLI 全部不可见)', () => {
+    for (const [name, txt] of [
+      ['nas-probe.service', service],
+      ['nas-panel.service', panel]
+    ] as const) {
+      const pathLine = code(txt).match(/^Environment=PATH=(.+)$/m)?.[1] ?? ''
+      expect(pathLine, `${name} 应显式设 PATH`).toContain('/home/logic/local/node-v22.22.1-linux-x64/bin')
+      expect(pathLine, `${name} 应包含 ~/.local/bin`).toContain('/home/logic/.local/bin')
+    }
   })
 })

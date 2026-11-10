@@ -22,6 +22,9 @@ Restart=always
 RestartSec=5
 # 面板本身无状态(状态都在 ~/.memorysql-nas),重启无损
 Environment=PANEL_PORT=8789
+# 面板会 spawn 各家的 login 命令,与探针同一套 PATH(见 nas-probe.service 注释):
+# npm -g 的包在 ~/local/node.../bin,droid 等在 ~/.local/bin,都不在默认 PATH 里。
+Environment=PATH=/home/logic/local/node-v22.22.1-linux-x64/bin:/home/logic/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=multi-user.target
