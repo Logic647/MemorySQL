@@ -923,7 +923,7 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
           onClick={() =>
             void api
               .updateNow()
-              .then(() => onMsg('更新包开始下载,完成后会询问是否立即重启安装'))
+              .then((r) => onMsg(r.ok ? '更新包开始下载,完成后会询问是否立即重启安装' : r.reason ?? '下载失败'))
               .catch((e) => onMsg(`下载失败: ${String(e)}`))
           }
         >

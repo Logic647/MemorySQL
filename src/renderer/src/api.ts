@@ -481,8 +481,12 @@ export const api = {
       imported: number
       skipped: number
     }>,
-  updateNow: (): Promise<{ ok: boolean; downloading?: boolean }> =>
-    window.memorysql.invoke('memorysql:host:updateNow') as Promise<{ ok: boolean; downloading?: boolean }>,
+  updateNow: (): Promise<{ ok: boolean; downloading?: boolean; reason?: string }> =>
+    window.memorysql.invoke('memorysql:host:updateNow') as Promise<{
+      ok: boolean
+      downloading?: boolean
+      reason?: string
+    }>,
   /** quit the app and run the downloaded installer (asks first in the UI) */
   updateInstallNow: (): Promise<{ ok: boolean; installing?: boolean }> =>
     window.memorysql.invoke('memorysql:host:updateInstallNow') as Promise<{

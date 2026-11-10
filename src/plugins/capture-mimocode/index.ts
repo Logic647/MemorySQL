@@ -20,22 +20,28 @@ export function mimocodeRoots(): string[] {
   ]
 }
 
+/** 直接在给定目录里找库文件(用户自定义数据路径时优先用它) */
+function dbInDir(dir: string, hint: string): string | null {
+  let files: string[] = []
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith('.db') && !f.endsWith('-wal') && !f.endsWith('-shm'))
+  } catch {
+    return null
+  }
+  const db = files.find((f) => f.toLowerCase().includes(hint)) ?? files[0]
+  return db ? path.join(dir, db) : null
+}
+
 export function findMimocodeDb(): string | null {
   for (const root of mimocodeRoots()) {
-    let files: string[] = []
-    try {
-      files = fs.readdirSync(root).filter((f) => f.endsWith('.db') && !f.endsWith('-wal') && !f.endsWith('-shm'))
-    } catch {
-      continue
-    }
-    const db = files.find((f) => f.toLowerCase().includes('mimo')) ?? files[0]
-    if (db) return path.join(root, db)
+    const db = dbInDir(root, 'mimo')
+    if (db) return db
   }
   return null
 }
 
-export function collectMimocode(since?: number) {
-  const db = findMimocodeDb()
+export function collectMimocode(root?: string, since?: number) {
+  const db = (root ? dbInDir(root, 'mimo') : null) ?? findMimocodeDb()
   if (!db) return []
   return parseAgentSqliteSessions(db, 'mimocode', undefined, since && since > 0 ? { since } : undefined)
 }
@@ -45,14 +51,14 @@ export default createCapturePlugin({
   name: 'Capture: MiMo Code',
   agentType: 'mimocode',
   defaultRoot: mimocodeRoots()[0],
-  collect: () => collectMimocode(),
-  collectSince: (_root, sinceMs) => {
-    const sessions = collectMimocode(sinceMs)
+  collect: (root) => collectMimocode(root),
+  collectSince: (root, sinceMs) => {
+    const sessions = collectMimocode(root, sinceMs)
     let maxEnded = 0
     for (const s of sessions) if ((s.endedAt ?? 0) > maxEnded) maxEnded = s.endedAt ?? 0
     return { sessions, watermark: maxEnded > 0 ? maxEnded * 1000 : null }
   },
-  sourceExists: () => findMimocodeDb() !== null,
+  sourceExists: (root) => dbInDir(root, 'mimo') !== null || findMimocodeDb() !== null,
   watch: {
     match: /\.db(-wal)?$/i,
     rescan: true

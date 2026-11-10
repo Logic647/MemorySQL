@@ -20,6 +20,41 @@
 
 ---
 
+## 2026-11-10 · 发布前审查:P1 服务崩溃 + 4 个 P2 修复
+
+对照 v0.7.4..HEAD 做完整审查(含另一会话的 NAS 面板提交),修掉:
+
+**P1(实测复现)** `/updates/*` 的畸形百分号编码会让 watch 服务整进程退出:
+`decodeURIComponent('%E0%A4%A')` 抛 URIError 在请求回调里没人接;`void serveUpdateAsset(...)`
+的 rejection 也会在 Node 22 直接终止进程。修法:decode 包 try/catch 回 400、
+显式 `.catch()` 兜底、写头前判 `headersSent`、`res.on('error')` 静默。
+本地验证:畸形编码 400、随后正常请求 200、进程存活。
+
+**P2 grok fork 重复导入父会话内容**:`summary.parent_session_id` 非空时以 `created_at`
+为界跳过拷贝段(与 magpie 同口径)。真实样本 `…00c` 由 `"Port the parserTry another way"`
+修正为 `"Try another way"`,startedAt 归位到 created_at。
+
+**P2 checkJson 写死 gemini 解析器**:Cline 台账声明 `json.entry:'messages'` 却被 gemini
+解析,could 判出假 🔴。改为按 entry 分派(cline → parseClineSessionDir;默认 gemini)。
+用临时 HOME 造 Cline 会话目录实测:`verdict: ok`(此前为 drift)。
+
+**P2 omo/deveco/mimocode 忽略自定义数据路径**:`collect/sourceExists/collectSince` 都没用
+`sourceRoot`,设置里改路径提示成功但无效。三个插件都改成"先看用户给的根,再回落默认根"
+(omo 还补了 `omoRoots` 与 omp 同构)。
+
+**P2 Pi 系 fork 的 header 无时间戳时整条会话被丢弃**:旧实现把 headerTs 回落到文件 mtime,
+mtime 晚于所有消息 → 全被当成拷贝段。改为只有 header **显式**带 timestamp 才启用 fork
+过滤(与 magpie 的"取不到就不过滤"一致),补回归用例。
+
+**P3 四个**:omp artifacts 文件不在 watcher 正则内(且被事件触发时会当顶层会话入库)→
+match 放宽 + `ompArtifactParent()` 判归属;droid watcher 写死 `.factory/sessions` 白名单 →
+去掉;goose 的空格格式时间戳按本地时区解析 → 显式补 T/Z 按 UTC;`updateNow` 无
+`isUpdateAvailable` 判断/无并发保护 → 源未同步时回「稍后再试」、downloading 时短路。
+
+测试 **631:631**(+4 回归)/ typecheck 0 / build 通过。
+
+---
+
 ## 2026-11-10 · v0.7.5:更新先问后下 + 阿里云更新镜像 + 外观默认跟随系统
 
 用户报了三处体验问题,一并处理:

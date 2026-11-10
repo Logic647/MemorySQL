@@ -62,7 +62,11 @@ function secondsOf(v: unknown): number | undefined {
     return Math.floor(v > 1e11 ? v / 1000 : v)
   }
   if (typeof v !== 'string' || !v.trim()) return undefined
-  const ms = Date.parse(v)
+  const s = v.trim()
+  // SQLite 的 CURRENT_TIMESTAMP 是 "YYYY-MM-DD HH:MM:SS"(UTC,但无时区标记)。
+  // 直接 Date.parse 会按**本地时区**解释(东八区整体早 8 小时),显式补 T/Z。
+  const naive = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/.exec(s)
+  const ms = naive ? Date.parse(`${naive[1]}T${naive[2]}Z`) : Date.parse(s)
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined
 }
 

@@ -648,14 +648,27 @@ function registerHostChannels(
   })
   hostChannels.set('memorysql:host:updateNow', async () => {
     if (!app.isPackaged) throw new Error('开发模式不支持')
+    // 连点两次会并发触发两轮 check+download(electron-updater 会报 download 进行中)
+    if (updaterState.downloading) return { ok: true, downloading: true }
     try {
       const autoUpdater = await loadUpdater()
       wireAutoUpdater(autoUpdater)
       // autoDownload=false → 先 check 拿 updateInfo,再显式 downloadUpdate。
       // 进度/完成继续走 push:update-status;完成后再由用户确认安装。
       const r = (await checkWithFeed(autoUpdater, updaterFeedUrl())) as
-        | { updateInfo?: unknown; downloadPromise?: Promise<unknown> | null }
+        | {
+            updateInfo?: unknown
+            isUpdateAvailable?: boolean
+            downloadPromise?: Promise<unknown> | null
+          }
         | undefined
+      // 探测(api.github.com)可能早于更新源的 latest.yml 同步。此时 check 的结果是
+      // «没有可用更新»,硬调 downloadUpdate 会抛 "Please check update first"。
+      if (r && r.isUpdateAvailable === false) {
+        const message = '更新源尚未同步到该版本,请稍后再试(或稍后重启应用)'
+        setUpdater({ type: 'error', message })
+        return { ok: false, reason: message }
+      }
       setUpdater({ type: 'download-start' })
       if (r?.downloadPromise) {
         void r.downloadPromise.catch(() => {})

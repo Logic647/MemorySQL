@@ -20,23 +20,28 @@ export function devecoRoots(): string[] {
   ]
 }
 
+/** 直接在给定目录里找库文件(用户自定义数据路径时优先用它) */
+function dbInDir(dir: string, hint: string): string | null {
+  let files: string[] = []
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith('.db') && !f.endsWith('-wal') && !f.endsWith('-shm'))
+  } catch {
+    return null
+  }
+  const db = files.find((f) => f.toLowerCase().includes(hint)) ?? files[0]
+  return db ? path.join(dir, db) : null
+}
+
 export function findDevecoDb(): string | null {
   for (const root of devecoRoots()) {
-    let files: string[] = []
-    try {
-      files = fs.readdirSync(root).filter((f) => f.endsWith('.db') && !f.endsWith('-wal') && !f.endsWith('-shm'))
-    } catch {
-      continue
-    }
-    // 首选名字带 deveco 的;否则第一个 .db
-    const db = files.find((f) => f.toLowerCase().includes('deveco')) ?? files[0]
-    if (db) return path.join(root, db)
+    const db = dbInDir(root, 'deveco')
+    if (db) return db
   }
   return null
 }
 
-export function collectDeveco(since?: number) {
-  const db = findDevecoDb()
+export function collectDeveco(root?: string, since?: number) {
+  const db = (root ? dbInDir(root, 'deveco') : null) ?? findDevecoDb()
   if (!db) return []
   return parseAgentSqliteSessions(db, 'deveco', undefined, since && since > 0 ? { since } : undefined)
 }
@@ -46,14 +51,14 @@ export default createCapturePlugin({
   name: 'Capture: DevEco Code',
   agentType: 'deveco',
   defaultRoot: devecoRoots()[0],
-  collect: () => collectDeveco(),
-  collectSince: (_root, sinceMs) => {
-    const sessions = collectDeveco(sinceMs)
+  collect: (root) => collectDeveco(root),
+  collectSince: (root, sinceMs) => {
+    const sessions = collectDeveco(root, sinceMs)
     let maxEnded = 0
     for (const s of sessions) if ((s.endedAt ?? 0) > maxEnded) maxEnded = s.endedAt ?? 0
     return { sessions, watermark: maxEnded > 0 ? maxEnded * 1000 : null }
   },
-  sourceExists: () => findDevecoDb() !== null,
+  sourceExists: (root) => dbInDir(root, 'deveco') !== null || findDevecoDb() !== null,
   watch: {
     match: /\.db(-wal)?$/i,
     rescan: true

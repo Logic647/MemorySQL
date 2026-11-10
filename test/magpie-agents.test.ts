@@ -108,6 +108,23 @@ describe('capture-goose(goose-db)', () => {
     expect(out).toHaveLength(1)
     expect(out[0].isSubagent).toBeUndefined()
   })
+
+  it('SQLite CURRENT_TIMESTAMP 的空格格式按 UTC 解析(不本地时区偏 8 小时)', async () => {
+    const root = tmpdir('goose-ts')
+    fs.mkdirSync(root, { recursive: true })
+    const db = new Database(path.join(root, 'sessions.db'))
+    db.exec(`
+      CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT, working_dir TEXT, created_at TIMESTAMP, updated_at TIMESTAMP);
+      CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content_json TEXT, created_timestamp INTEGER);
+    `)
+    db.prepare("INSERT INTO sessions (id, name, working_dir, created_at, updated_at) VALUES ('a','x','/p','2026-11-09 10:00:00','2026-11-09 10:30:00')").run()
+    db.prepare("INSERT INTO messages (session_id, role, content_json, created_timestamp) VALUES ('a','user','[{\"type\":\"text\",\"text\":\"hi\"}]',1794218400)").run()
+    db.close()
+    const { parseGooseSessions } = await import('../src/plugins/capture-goose/goose-db.ts')
+    const s = parseGooseSessions(path.join(root, 'sessions.db'))[0]
+    expect(s.startedAt).toBe(Math.floor(Date.parse('2026-11-09T10:00:00Z') / 1000))
+    expect(s.endedAt).toBe(Math.floor(Date.parse('2026-11-09T10:30:00Z') / 1000))
+  })
 })
 
 // ───────────────────────────── droid(JSONL)─────────────────────────────
@@ -386,6 +403,42 @@ describe('capture-pi / omp(pi-jsonl)', () => {
     const { parsePiSessionFile } = await import('../src/plugins/_lib/pi-jsonl.ts')
     expect(parsePiSessionFile(file, 'pi')).toBeNull()
   })
+
+  it('fork 会话的 header 没有显式时间戳时,不能把消息全过滤掉', async () => {
+    // 旧实现把 headerTs 回落到文件 mtime(mtime 晚于所有消息 → 全被当成拷贝段),
+    // 整条 fork 会话就此消失。只有 header 显式带 timestamp 才允许做拷贝段过滤。
+    const root = tmpdir('pi-fork-nots')
+    const file = writePi(root, 'sessions', 'p', '1794218400000_f2.jsonl', [
+      '{"type":"session","id":"f2","cwd":"/p","parentSession":"/p/orig.jsonl"}',
+      JSON.stringify({ type: 'message', timestamp: '2026-11-09T09:00:00Z', message: { role: 'user', content: '第一句' } }),
+      JSON.stringify({ type: 'message', timestamp: '2026-11-09T10:00:00Z', message: { role: 'assistant', content: '回答' } })
+    ])
+    const { parsePiSessionFile } = await import('../src/plugins/_lib/pi-jsonl.ts')
+    const s = parsePiSessionFile(file, 'pi')!
+    expect(s.messages.map((m) => m.content)).toEqual(['第一句', '回答'])
+  })
+
+  it('omp artifacts 里的文件按子代理归属父会话(不会当成顶层会话)', async () => {
+    const root = tmpdir('omp-artifact')
+    const main = writePi(root, 'sessions', 'p', '1794218400000_m2.jsonl', [
+      JSON.stringify({ type: 'session', id: 'm2', cwd: '/p' })
+    ])
+    const artDir = path.join(path.dirname(main), '1794218400000_m2')
+    fs.mkdirSync(artDir, { recursive: true })
+    const artFile = path.join(artDir, '0-Explore.jsonl')
+    fs.writeFileSync(
+      artFile,
+      [
+        JSON.stringify({ type: 'session', id: 'a1', cwd: '/p' }),
+        JSON.stringify({ type: 'message', timestamp: '2026-11-09T10:00:00Z', message: { role: 'user', content: '子任务' } })
+      ].join('\n')
+    )
+    const { ompArtifactParent } = await import('../src/plugins/_lib/pi-jsonl.ts')
+    const p = ompArtifactParent(artFile)!
+    expect(p.parentId).toBe('m2')
+    // 同名主文件不存在时不能误判(普通目录不是 artifacts)
+    expect(ompArtifactParent(path.join(root, 'sessions', 'p', 'nope', 'x.jsonl'))).toBeNull()
+  })
 })
 
 // ───────────────────────────── grok(JSONL+summary)─────────────────────────────
@@ -447,6 +500,33 @@ describe('capture-grok(grok-parser)', () => {
     )
     const { parseGrokSessionDir } = await import('../src/plugins/capture-grok/grok-parser.ts')
     expect(parseGrokSessionDir(dir)?.title).toBe('回退标题')
+  })
+
+  it('fork/restore 会话:created_at 之前的 update 是源会话拷贝,不算自己的', async () => {
+    // 真实样本(0190aaaa…00c)暴露过:父会话的 chunk 被并进 fork 会话,
+    // 解析出 "Port the parserTry another way" 这种拼接内容。
+    const root = tmpdir('grok-fork')
+    const dir = path.join(root, 'p', 'g10')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(
+      path.join(dir, 'summary.json'),
+      JSON.stringify({
+        info: { id: 'g10', cwd: '/p' },
+        created_at: '2026-11-09T10:00:00Z',
+        parent_session_id: 'g1',
+        session_summary: 'fork'
+      })
+    )
+    const chunk = (ts: number, text: string): string =>
+      JSON.stringify({ timestamp: ts, params: { update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } } } })
+    fs.writeFileSync(
+      path.join(dir, 'updates.jsonl'),
+      [chunk(1794218340, '源会话的拷贝'), chunk(1794218410, '自己的新话')].join('\n')
+    )
+    const { parseGrokSessionDir } = await import('../src/plugins/capture-grok/grok-parser.ts')
+    const s = parseGrokSessionDir(dir)!
+    expect(s.messages.map((m) => m.content)).toEqual(['自己的新话'])
+    expect(s.startedAt).toBe(1794218400)
   })
 })
 

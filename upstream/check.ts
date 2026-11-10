@@ -405,19 +405,37 @@ async function checkJson(c: AgentContract, root: string): Promise<CheckResult> {
   const b = base(c, root)
   if (c.source.kind !== 'json') return b
 
-  let findFiles: (root: string) => string[]
-  let parse: (rel: string, parsed: unknown) => { messages?: unknown[] } | null
+  // 按台账的 `json.entry` 选解析器 —— 以前这里写死 gemini,cline 的
+  // <id>.messages.json(顶层也有 messages 数组、条目形状不同)会被判成漂移假红。
+  const entry = c.source.json.entry
+  let files: string[]
+  let parse: (file: string) => { messages?: unknown[] } | null
   try {
-    // 动态载入生产实现(与 jsonl 分支同款):检查器不二次实现解析
-    const m = await import('../src/plugins/capture-gemini/gemini-parser.ts')
-    findFiles = m.findGeminiFiles
-    parse = m.parseGeminiHistory
+    if (entry === 'messages') {
+      // Cline:<sessions>/<id>/<id>.messages.json,目录级解析后取主会话
+      const m = await import('../src/plugins/capture-cline/cline-parser.ts')
+      files = findMany(root, ['.messages.json'], 8)
+      parse = (file) =>
+        m.parseClineSessionDir(path.dirname(file)).find((s) => !s.isSubagent) ?? null
+    } else {
+      // Gemini(默认):history 形状,文件级解析
+      const m = await import('../src/plugins/capture-gemini/gemini-parser.ts')
+      files = m.findGeminiFiles(root)
+      parse = (file) => {
+        let json: unknown
+        try {
+          json = JSON.parse(fs.readFileSync(file, 'utf-8'))
+        } catch {
+          return null
+        }
+        return m.parseGeminiHistory(path.basename(file), json)
+      }
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return { ...b, verdict: 'checker_error', detail: `检查器自身故障(非上游问题):${msg.slice(0, 140)}` }
   }
 
-  const files = findFiles(root)
   if (files.length === 0) {
     return { ...b, verdict: 'absent', detail: '源目录存在但没有 JSON 文件(尚未产生会话)' }
   }
@@ -429,20 +447,28 @@ async function checkJson(c: AgentContract, root: string): Promise<CheckResult> {
   let readError: string | null = null
 
   for (const f of sample) {
-    let json: unknown
+    let got: { messages?: unknown[] } | null
     try {
-      json = JSON.parse(fs.readFileSync(f, 'utf-8'))
+      got = parse(f)
     } catch (e) {
       readError = `${path.basename(f)}: ${(e as Error).message.slice(0, 80)}`
       continue
     }
-    const n = parse(path.basename(f), json)?.messages?.length ?? 0
+    const n = got?.messages?.length ?? 0
     if (n > 0) {
       parsedOk = { file: path.basename(f), n }
       break
     }
-    const obj = json as Record<string, unknown> | null
-    if (obj && (Array.isArray(obj.messages) || Array.isArray(obj.history))) suspicious.push(path.basename(f))
+    // 「有 messages/history 却解析出 0 条」只在 gemini 形状下才可疑;
+    // cline 的空会话/只有 manifest 是正常状态。
+    if (entry !== 'messages') {
+      try {
+        const obj = JSON.parse(fs.readFileSync(f, 'utf-8')) as Record<string, unknown> | null
+        if (obj && (Array.isArray(obj.messages) || Array.isArray(obj.history))) suspicious.push(path.basename(f))
+      } catch {
+        /* 读不出就不算可疑 */
+      }
+    }
   }
 
   if (parsedOk) {
@@ -455,7 +481,7 @@ async function checkJson(c: AgentContract, root: string): Promise<CheckResult> {
       detail: `${suspicious.length} 个会话文件有 messages/history 却解析出 0 条 —— 消息形状可能已变(样本:${suspicious[0]})`
     }
   }
-  // 有 JSON 但都不是会话(oauth_creds/settings 等):未验证,不是故障
+  // 有 JSON 但都不是会话(oauth_creds/settings/空会话等):未验证,不是故障
   return {
     ...b,
     verdict: 'absent',

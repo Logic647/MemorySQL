@@ -858,7 +858,12 @@ export default function App() {
               className="btn btn-accent btn-small"
               style={{ marginLeft: 10 }}
               onClick={() =>
-                void api.updateNow().catch((e) => setUpBanner((b) => (b ? { ...b, error: String(e) } : b)))
+                void api
+                .updateNow()
+                .then((r) => {
+                  if (!r.ok) setUpBanner((b) => (b ? { ...b, error: r.reason ?? '下载失败' } : b))
+                })
+                .catch((e) => setUpBanner((b) => (b ? { ...b, error: String(e) } : b)))
               }
             >
               {upBanner.error ? '重试下载' : '下载更新'}

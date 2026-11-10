@@ -81,7 +81,11 @@ export function parseGrokSessionDir(dir: string): RawSession | null {
     return null
   }
   const messages: RawMessage[] = []
-  let startedAt: number | undefined
+  // fork / restore 出来的会话,开头是源会话更新的拷贝 —— 早于 created_at 的
+  // update 不算它自己的(与 magpie 同口径;否则父会话内容会被重复导入)。
+  const createdSec = secondsOf(summary.created_at)
+  const copyCutoff = summary.parent_session_id?.trim() && createdSec != null ? createdSec : null
+  let startedAt: number | undefined = copyCutoff ?? undefined
   let endedAt: number | undefined
   for (const line of raw.split('\n')) {
     const t = line.trim()
@@ -93,6 +97,7 @@ export function parseGrokSessionDir(dir: string): RawSession | null {
       continue
     }
     const ts = secondsOf(ev.timestamp) ?? (mtimeMs > 0 ? Math.floor(mtimeMs / 1000) : undefined)
+    if (copyCutoff != null && ts != null && ts < copyCutoff) continue // 源会话的拷贝段
     if (ts != null) {
       if (startedAt == null || ts < startedAt) startedAt = ts
       if (endedAt == null || ts > endedAt) endedAt = ts

@@ -3,7 +3,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import type { RawSession } from '../../shared/types'
 import { createCapturePlugin } from '../_lib/capture-factory.ts'
-import { listPiSessionFiles, parseOmpArtifacts, parsePiSessionFile } from '../_lib/pi-jsonl.ts'
+import { listPiSessionFiles, ompArtifactParent, parseOmpArtifacts, parsePiSessionFile } from '../_lib/pi-jsonl.ts'
 
 /**
  * omp(oh-my-pi,Pi 的 fork)—— ~/.omp/agent/sessions/<cwd>/<time>_<id>.jsonl,
@@ -75,9 +75,17 @@ export default createCapturePlugin({
     return dirs.length > 0 ? dirs : []
   },
   watch: {
-    match: /(^|[/\\])[^/\\]+_[^/\\]+\.jsonl$/i,
+    // 任意 .jsonl 都可能是事件源:artifacts 子代理的文件名(<agent>.jsonl)不带
+    // 下划线,用「主会话文件」的正则会漏掉它们;具体归属交给 parseFile 判定。
+    match: /\.jsonl$/i,
     parseFile: (file) => {
       try {
+        // artifacts 目录里的文件:只可能是子代理,绝不能当顶层会话入库
+        const art = ompArtifactParent(file)
+        if (art) {
+          const s = parsePiSessionFile(file, 'omp')
+          return s ? [{ ...s, isSubagent: true, parentExternalId: art.parentId }] : []
+        }
         const out = []
         const s = parsePiSessionFile(file, 'omp')
         if (s) out.push(s)

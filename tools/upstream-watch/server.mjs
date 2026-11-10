@@ -307,6 +307,8 @@ async function serveUpdateAsset(req, res, name) {
   }
   const asset = (rel.assets ?? []).find((a) => a.name === name)
   if (!asset) return json(res, 404, { error: `latest release 里没有 ${name}` })
+  // 头之后任何异常都不能冒泡成 unhandled rejection(见路由处的说明)
+  res.on('error', () => {})
 
   const ac = new AbortController()
   res.on('close', () => {
@@ -341,9 +343,10 @@ async function serveUpdateAsset(req, res, name) {
     return
   }
   const { Readable } = await import('node:stream')
+  if (!res.headersSent) res.writeHead(upstream.status, out)
   Readable.fromWeb(upstream.body)
     .on('error', () => res.destroy())
-    .pipe(res.writeHead(upstream.status, out))
+    .pipe(res)
 }
 
 const server = http.createServer((req, res) => {
@@ -352,8 +355,20 @@ const server = http.createServer((req, res) => {
 
   if (url.pathname.startsWith('/updates/')) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'GET only' })
-    const name = decodeURIComponent(url.pathname.slice('/updates/'.length))
-    void serveUpdateAsset(req, res, name)
+    // decodeURIComponent 对畸形百分号编码(如 %E0%A4%A)抛 URIError —— 这段在
+    // 请求回调里同步执行,不接住就是 uncaughtException,**整个服务进程退出**。
+    let name
+    try {
+      name = decodeURIComponent(url.pathname.slice('/updates/'.length))
+    } catch {
+      return json(res, 400, { error: 'bad asset name' })
+    }
+    // 客户端断流时 res.writeHead 可能抛错 → 异步函数 rejection;Node 15+ 默认
+    // 未处理 rejection 会终止进程,所以必须显式兜住。
+    serveUpdateAsset(req, res, name).catch((e) => {
+      if (!res.headersSent) json(res, 500, { error: String(e?.message ?? e) })
+      else res.destroy()
+    })
     return
   }
 

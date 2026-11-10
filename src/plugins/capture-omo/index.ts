@@ -18,10 +18,17 @@ export function omoAgentDirs(home = os.homedir(), env = process.env): string[] {
   return dirs
 }
 
-export function collectOmo(): RawSession[] {
+/** 扫描根集:用户显式指定的根只扫它自己;默认根时连带 senpi fallback */
+export function omoRoots(primary: string): string[] {
+  const defaults = omoAgentDirs()
+  if (primary && !defaults.includes(primary)) return [primary]
+  return defaults
+}
+
+export function collectOmo(root: string): RawSession[] {
   const sessions: RawSession[] = []
   const seen = new Set<string>()
-  for (const r of omoAgentDirs()) {
+  for (const r of omoRoots(root)) {
     for (const file of listPiSessionFiles([r])) {
       try {
         const s = parsePiSessionFile(file, 'omo')
@@ -42,10 +49,10 @@ export default createCapturePlugin({
   name: 'Capture: OmO',
   agentType: 'omo',
   defaultRoot: omoAgentDirs()[0],
-  collect: () => collectOmo(),
-  sourceExists: () => omoAgentDirs().some((d) => fs.existsSync(path.join(d, 'sessions'))),
-  watchPaths: () => {
-    const dirs = omoAgentDirs()
+  collect: (root) => collectOmo(root),
+  sourceExists: (root) => omoRoots(root).some((d) => fs.existsSync(path.join(d, 'sessions'))),
+  watchPaths: (root) => {
+    const dirs = omoRoots(root)
       .map((d) => path.join(d, 'sessions'))
       .filter((d) => fs.existsSync(d))
     return dirs.length > 0 ? dirs : []

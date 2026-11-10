@@ -50,18 +50,20 @@ interface PiPart {
   arguments?: unknown
 }
 
+/** 只认行内显式 "timestamp":"…"(用于 header:fallback 到 mtime 会误判 fork) */
+function explicitTsSec(line: string): number | undefined {
+  const i = line.indexOf('"timestamp":"')
+  if (i < 0) return undefined
+  const rest = line.slice(i + 13)
+  const j = rest.indexOf('"')
+  if (j < 0 || j > 40) return undefined
+  const ms = Date.parse(rest.slice(0, j))
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined
+}
+
 /** 从一行 JSON 提取 ISO timestamp(与 magpie tsAt 同口径:只认 "timestamp":"…") */
 function lineTsSec(line: string, mtimeMs: number): number | undefined {
-  const i = line.indexOf('"timestamp":"')
-  if (i >= 0) {
-    const rest = line.slice(i + 13)
-    const j = rest.indexOf('"')
-    if (j >= 0 && j <= 40) {
-      const ms = Date.parse(rest.slice(0, j))
-      if (Number.isFinite(ms)) return Math.floor(ms / 1000)
-    }
-  }
-  return mtimeMs > 0 ? Math.floor(mtimeMs / 1000) : undefined
+  return explicitTsSec(line) ?? (mtimeMs > 0 ? Math.floor(mtimeMs / 1000) : undefined)
 }
 
 function contentToRaw(content: unknown, ts: number | undefined, role: 'user' | 'assistant'): RawMessage[] {
@@ -118,6 +120,9 @@ export function parsePiSessionFile(file: string, agentType: string): RawSession 
   const lines = raw.split('\n')
   let header: PiLine | null = null
   let headerTs: number | undefined
+  /** header 行是否**显式**带时间戳。只认显式的:回落到 mtime 会晚于所有消息,
+   * 拿它当 fork 分界会把整条 fork 会话的消息全部跳过(会话凭空消失)。 */
+  let headerHasExplicitTs = false
   const messages: RawMessage[] = []
   let startedAt: number | undefined
   let endedAt: number | undefined
@@ -135,11 +140,12 @@ export function parsePiSessionFile(file: string, agentType: string): RawSession 
     if (!header && entry.type === 'session') {
       header = entry
       headerTs = ts
+      headerHasExplicitTs = explicitTsSec(t) != null
       if (entry.title?.trim()) title = entry.title.trim()
       continue
     }
     // fork 的拷贝段:header 之后、早于 header 落笔时间的 entry 都是源会话的
-    if (header?.parentSession && headerTs != null && ts != null && ts < headerTs) continue
+    if (header?.parentSession && headerHasExplicitTs && headerTs != null && ts != null && ts < headerTs) continue
     if (entry.type === 'session_info' && entry.name?.trim()) {
       title = entry.name.trim()
       continue
@@ -224,4 +230,18 @@ export function parseOmpArtifacts(file: string, agentType: string): RawSession[]
     }
   }
   return out
+}
+
+/**
+ * 判断一个文件是不是 omp 的 artifacts 子代理(位于 `<time>_<id>/` 目录内)。
+ * watcher 拿到的是**文件路径**,必须先认出这类文件,否则会把它当顶层会话
+ * (magpie 把 advisor/子代理都计入父会话)。
+ */
+export function ompArtifactParent(file: string): { parentId: string; parentFile: string } | null {
+  const dirName = path.basename(path.dirname(file))
+  const parentId = dirName.includes('_') ? dirName.slice(dirName.indexOf('_') + 1) : ''
+  if (!parentId) return null
+  // 同级还应存在主文件 <time>_<id>.jsonl;不存在就说明这不是 artifacts 目录
+  const parentFile = path.join(path.dirname(path.dirname(file)), `${dirName}.jsonl`)
+  return fs.existsSync(parentFile) ? { parentId, parentFile } : null
 }

@@ -66,7 +66,8 @@ export default createCapturePlugin({
   watch: {
     match: /\.jsonl$/i,
     parseFile: (file) => {
-      if (!file.includes(`${path.sep}.factory${path.sep}sessions`)) return []
+      // 不再按 `.factory/sessions` 白名单过滤:用户可以在设置里把数据路径指到
+      // 别处,写死路径会让增量完全失效;解析器自己认不出 droid 转录时返回 null。
       try {
         const s = parseDroidSession(file)
         return s ? [s] : []
