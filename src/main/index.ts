@@ -526,14 +526,15 @@ function registerHostChannels(
         id: p.manifest.id,
         name: p.manifest.name,
         version: p.manifest.version,
-        enabled: settings.get(`plugin.${p.manifest.id}.enabled`, true),
+        // 生效值:显式设置 > 插件的 isAvailable 探测(捕获类没源时默认关)
+        enabled: host.isPluginEnabled(p.manifest.id),
         external: false
       })),
       ...host.externalPlugins().map((p) => ({
         id: p.manifest.id,
         name: p.manifest.name,
         version: p.manifest.version,
-        enabled: settings.get(`plugin.${p.manifest.id}.enabled`, true),
+        enabled: host.isPluginEnabled(p.manifest.id),
         external: true
       }))
     ],

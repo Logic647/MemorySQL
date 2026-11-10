@@ -105,6 +105,13 @@ export interface MemorySQLPlugin {
   init(ctx: PluginContext): Promise<void> | void
   start?(): Promise<void> | void
   stop?(): Promise<void> | void
+  /**
+   * 可选:宿主在**没有显式 `plugin.<id>.enabled`** 时用它决定默认启停。
+   * 捕获类插件实现为「源存在才默认启用」—— 用户没装的 agent 不该在界面上
+   * 显示成启用态(2026-11-10 反馈:新增 11 家全部默认亮起)。
+   * 注意只影响默认值:用户手动开关过的一律以设置为准。
+   */
+  isAvailable?(settings: SettingsStore): boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +226,25 @@ export class PluginHost {
     return [...this.mcpTools.values()]
   }
 
+  /**
+   * 插件是否启用。优先级:显式设置 > 插件的 isAvailable 探测 > 默认启用。
+   * 捕获类插件没有源时默认关闭(不挂 watcher、不扫描、UI 里也不亮)。
+   */
+  isPluginEnabled(id: string): boolean {
+    const explicit = this.settings.get<boolean | undefined>(`plugin.${id}.enabled`, undefined)
+    if (explicit !== undefined) return explicit
+    const plugin = this.plugins.find((p) => p.manifest.id === id)
+    if (plugin?.isAvailable) {
+      try {
+        return plugin.isAvailable(this.settings)
+      } catch {
+        // 探测异常不能把插件关掉(宁可多扫一个不存在的源,也不能漏捕获)
+        return true
+      }
+    }
+    return true
+  }
+
   /** ids of plugins not started this run (disabled or dependency-disabled) */
   skippedPlugins(): string[] {
     return [...this.skipped]
@@ -229,9 +255,13 @@ export class PluginHost {
    * are disabled too (cascading). */
   private topoSort(): MemorySQLPlugin[] {
     this.skipped = []
-    const isDisabled = (id: string): boolean =>
-      this.settings.get(`plugin.${id}.enabled`, true as boolean) === false
     const byId = new Map(this.plugins.map((p) => [p.manifest.id, p]))
+    const isDisabled = (id: string): boolean => !this.isPluginEnabled(id)
+    const skipReason = (id: string): string => {
+      const explicit = this.settings.get<boolean | undefined>(`plugin.${id}.enabled`, undefined)
+      if (explicit === false) return '已禁用'
+      return '未检测到源,默认关闭'
+    }
     const visited = new Set<string>()
     const skippedIds = new Set<string>()
     const visiting = new Set<string>()
@@ -247,7 +277,7 @@ export class PluginHost {
         visited.add(id)
         skippedIds.add(id)
         visiting.delete(id)
-        if (isDisabled(id)) this.skipped.push(`${id} (已禁用)`)
+        if (isDisabled(id)) this.skipped.push(`${id} (${skipReason(id)})`)
         return
       }
       for (const dep of plugin.manifest.requires ?? []) visit(dep)

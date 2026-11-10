@@ -67,6 +67,22 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
       requires: ['core-schema']
     },
 
+    /**
+     * 没有显式 `plugin.<id>.enabled` 时的默认值:源存在才启用。
+     * 这样没装某家 agent 的机器上,它不会亮着、也不会挂 watcher;
+     * 用户手动开关过的一律以设置为准(宿主优先读显式值)。
+     */
+    isAvailable: (settings) => {
+      const configured = settings.get<string | undefined>(`${spec.id}:sourceRoot`, undefined)
+      const root = configured && fs.existsSync(configured) ? configured : spec.defaultRoot
+      try {
+        return spec.sourceExists ? spec.sourceExists(root) : fs.existsSync(root)
+      } catch {
+        return true // 探测异常不关插件
+      }
+    },
+
+
     init(ctx: PluginContext) {
       // a configured root from another machine/install (or a since-moved dir)
       // must not wedge the adapter into "未检测到" — fall back to the default

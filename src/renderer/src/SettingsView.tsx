@@ -1279,8 +1279,21 @@ const CAPTURE_AGENTS: CaptureAgent[] = [
   { id: 'capture-qoder', label: 'Qoder CLI / CN', pathKey: 'sourceRoot' },
   { id: 'capture-gemini', label: 'Gemini CLI', pathKey: 'sourceRoot' },
   { id: 'capture-cursor', label: 'Cursor(实验性)', pathKey: null },
-  { id: 'capture-opencode', label: 'OpenCode / Copilot CLI', pathKey: null },
-  { id: 'capture-dsh', label: 'DeepSeek Harness', pathKey: 'sourceRoot' }
+  { id: 'capture-opencode', label: 'OpenCode', pathKey: null },
+  { id: 'capture-dsh', label: 'DeepSeek Harness', pathKey: 'sourceRoot' },
+  // 2026-11-10 批(Magpie 名单补全)+ copilot:这里漏了就会出现「侧栏亮着、
+  // 设置里却没有对应开关」的状态 —— 必须在同一张表里登记。
+  { id: 'capture-goose', label: 'Goose', pathKey: 'sourceRoot' },
+  { id: 'capture-droid', label: 'Droid (Factory)', pathKey: 'sourceRoot' },
+  { id: 'capture-cline', label: 'Cline CLI', pathKey: 'sourceRoot' },
+  { id: 'capture-pi', label: 'Pi', pathKey: 'sourceRoot' },
+  { id: 'capture-omp', label: 'omp (oh-my-pi)', pathKey: 'sourceRoot' },
+  { id: 'capture-omo', label: 'OmO', pathKey: 'sourceRoot' },
+  { id: 'capture-grok', label: 'Grok Build', pathKey: 'sourceRoot' },
+  { id: 'capture-minimax', label: 'MiniMax Code', pathKey: 'sourceRoot' },
+  { id: 'capture-deveco', label: 'DevEco Code', pathKey: 'sourceRoot' },
+  { id: 'capture-mimocode', label: 'MiMo Code', pathKey: 'sourceRoot' },
+  { id: 'capture-copilot', label: 'GitHub Copilot CLI', pathKey: 'sourceRoot' }
 ]
 
 function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
@@ -1386,6 +1399,11 @@ function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
                 )}
                 {!pending[a.id] && st && (
                   <span className={`agent-state ${st.detail.level}`}>{st.detail.text}</span>
+                )}
+                {/* 未启用 = 没检测到源(或用户手动关掉)。给出可操作提示,
+                    别让人对着一个关着的开关猜。 */}
+                {!pending[a.id] && !st && !on && (
+                  <span className="agent-state dim">未检测到(装好该 agent 后自动启用)</span>
                 )}
               </div>
               {on && a.pathKey && st && (

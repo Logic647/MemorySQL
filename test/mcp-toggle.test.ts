@@ -46,7 +46,9 @@ describe('键名对齐(断了不会报错,只会静默失效)', () => {
   it('**刻意不用 `plugin.mcp-server.enabled`** —— 那会让插件被卸载', () => {
     // 宿主用这个键决定跳过插件;用了它,/status 与 /restart 通道消失,
     // 用户在界面里就再也打不开(只能改文件重启)。开关必须是可逆的。
-    expect(host).toMatch(/this\.settings\.get\(`plugin\.\$\{id\}\.enabled`, true/)
+    // 读取形式在 0.7.5 改过一次(显式值优先、缺省交给 isAvailable 探测),
+    // 这里只钉「跳过用的就是 plugin.<id>.enabled 这个键」。
+    expect(host).toMatch(/`plugin\.\$\{id\}\.enabled`/)
     expect(view).not.toMatch(/hostPluginSetting\('mcp-server', 'plugin\.mcp-server\.enabled'/)
   })
 

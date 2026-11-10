@@ -329,7 +329,7 @@ export default function App() {
    */
   const loadCaptureStatuses = useCallback(async (): Promise<void> => {
     await Promise.all(
-      CAPTURE_PLUGINS.map(async ({ id }) => {
+      CAPTURE_PLUGINS.filter(({ id }) => enabledCaptures[id] !== false).map(async ({ id }) => {
         try {
           const s = await api.captureStatus(id)
           const detail = s.lastError
@@ -482,6 +482,7 @@ export default function App() {
     setScanning(true)
     try {
       for (const { id } of CAPTURE_PLUGINS) {
+        if (enabledCaptures[id] === false) continue // 未启用/未检测到:没有 scanNow IPC
         await api.scanNow(id)
       }
       await refresh()

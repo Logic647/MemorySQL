@@ -20,6 +20,32 @@
 
 ---
 
+## 2026-11-10 · v0.7.5 撤回 → v0.7.6:新增 agent 默认不再全亮
+
+用户发版后立刻发现两个问题:**侧栏把新支持的 11 家全部亮了出来**,而设置页「会话捕获」
+只有旧的 13 家(新增插件根本没登记进那张表,用户想关都关不掉)。要求:未检测到的
+新增 agent 默认关闭。v0.7.5 已撤回(draft + 删 tag + 删草稿资产),镜像 latest 回到 0.7.4。
+
+**修法**:
+1. `SettingsView.CAPTURE_AGENTS` 补齐 19→24 家(必须与 App 的 chips 列表同源,否则就是
+   这次的事故形态:侧栏有、设置没有)。
+2. 宿主新增 `plugin.isAvailable?(settings)`:**没有显式 `plugin.<id>.enabled` 时**由插件
+   探测决定默认启停;显式设置永远优先(用户手动开关过的不受影响)。`createCapturePlugin`
+   统一实现为「源存在才启用」,并尊重 `${id}:sourceRoot` 里用户配置的路径。
+3. `host.isPluginEnabled()` 作为唯一判定,`plugins` IPC 与 topoSort 都用它 —— 渲染层拿到的
+   `enabled` 就是生效值,侧栏 chips 与「捕获状态」自然只显示启用的。
+4. 顺带:未启用的插件没有 `captureStatus` IPC,侧栏状态轮询与「扫描全部」跳过它们;
+   设置页给未启用项加一行「未检测到(装好该 agent 后自动启用)」。
+
+**验证**(构建产物下 headless `--scan`):跳过 15 家(未检测到源),正常加载 9 家
+(codex/zcode/hermes/claudecode/gemini/cursor/opencode/dsh/mimocode)。
+新增 `test/plugin-defaults.test.ts` 6 条锁住「显式 > 探测 > 默认」与探测异常兜底;
+`mcp-toggle` 里盯 `plugin.<id>.enabled` 键名的断言同步改成新读取形式。
+测试 **637:637** / typecheck 0。**版本定为 0.7.6 而不是重发 0.7.5**:0.7.5 曾公开约 6 分钟,
+装过的用户需要更大的版本号才能收到修复。
+
+---
+
 ## 2026-11-10 · v0.7.5 已发版
 
 - tag `v0.7.5` → CI 6/6 绿 → 草稿 20 资产 → 发布(draft=false)。
