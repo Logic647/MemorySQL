@@ -20,6 +20,20 @@
 
 ---
 
+## 2026-11-10 · v0.7.5 已发版
+
+- tag `v0.7.5` → CI 6/6 绿 → 草稿 20 资产 → 发布(draft=false)。
+- **mac 清单合并**:用 Range 请求只取 CI artifact zip 里的 `latest-mac.yml`(251/259MB 的包没整包下),
+  跑 `merge-mac-manifest.mjs` 合并(脚本用 electron-updater 自己的函数校验两架构都能解析到 zip),
+  删旧资产再上传合并版(811B,arm64/x64 各 6 条)。
+- **公网验收**:`releases/latest` 302→v0.7.5、`latest.yml` size 104366357 与资产一致、
+  `latest-mac.yml` 双架构;阿里云镜像 `latest.yml`/`latest-mac.yml` 200、
+  exe Range `206` + `Content-Range: bytes 0-1/104366357`。
+- 0.7.4 及更早用户仍从 GitHub 下 0.7.5;**从 0.7.5 起后续更新走阿里云**(失败自动回退 GitHub)。
+- 未提交的官网/截图流水线/探针日报保持原样(用户明确不动)。
+
+---
+
 ## 2026-11-10 · 发布前审查:P1 服务崩溃 + 4 个 P2 修复
 
 对照 v0.7.4..HEAD 做完整审查(含另一会话的 NAS 面板提交),修掉:

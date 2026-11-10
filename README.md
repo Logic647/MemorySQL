@@ -181,7 +181,7 @@ module.exports = {
 ```bash
 npm install          # Node 24+
 npm run dev          # 开发模式(热重载)
-npm test             # vitest 单元测试(627 条)
+npm test             # vitest 单元测试(631 条)
 npm run typecheck    # tsc --noEmit
 npm run dist         # 打包 Windows 安装包 + 免安装目录
 npm run import:scan  # 无头扫描导入本机 agent 会话(验收用)
