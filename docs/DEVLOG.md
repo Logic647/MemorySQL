@@ -20,6 +20,23 @@
 
 ---
 
+## 2026-11-10 · 再撤回(v0.7.6)→ 更新源回 GitHub → 重发 0.7.5
+
+用户实测**阿里云镜像下载比 GitHub 还慢**(ECS 带宽中转),要求下载源换回 GitHub,
+并重发 0.7.5。
+
+- **客户端**:`updaterFeedUrl()` 默认返回 null(走打包时的 app-update.yml = GitHub),
+  只有显式设置 `updater:feed` 为 http(s) 地址时才用 generic 镜像,失败回退 GitHub
+  provider。服务端 `/updates/*` 路由保留(已加固,备查),不再被默认使用。
+- **撤包**:v0.7.6 转草稿→删除 release→删除 tag;GitHub `/releases/latest` 与镜像
+  latest.yml 都回落到 0.7.4。
+- **重发**:package.json 回到 0.7.5,release notes 改为 v0.7.5-notes.md(明确写「更新源
+  仍是 GitHub;阿里云实测更慢已放弃」),重新打 tag v0.7.5 走完整发布流程。
+- **同号覆盖问题**:11-10 曾短暂公开过一版 0.7.5(约 6 分钟),装过的用户不会收到
+  「同版本更新」;notes 里已提示重新下载安装包覆盖。
+
+---
+
 ## 2026-11-10 · v0.7.5 撤回 → v0.7.6:新增 agent 默认不再全亮
 
 用户发版后立刻发现两个问题:**侧栏把新支持的 11 家全部亮了出来**,而设置页「会话捕获」

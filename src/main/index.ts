@@ -373,33 +373,36 @@ let autoUpdaterWired: AppUpdater | null = null
 let activeSettings: SettingsStore | null = null
 
 /**
- * 更新包下载源。0.7.5 起默认走阿里云镜像(国内 GitHub 下载太慢),失败自动回退
- * GitHub provider。镜像由 tools/upstream-watch/server.mjs 的 /updates/* 提供:
- * latest.yml / latest-mac.yml / latest-linux.yml + 同名资产,全部从**当前最新
- * release** 里按文件名取(不是开放代理)。
+ * 更新包下载源:默认就是 GitHub(电子更新器读打包时写入的 app-update.yml,
+ * 也就是 electron-builder 的 publish 配置)。
  *
- * 设置键 `updater:feed` 可覆盖(空字符串 = 强制走 GitHub)。
+ * 2026-11-10 曾试过改成阿里云镜像(`watch.logic-yjb.top/updates`),实测
+ * **下载速度反而更慢**(ECS 带宽中转),用户要求换回 GitHub —— 镜像路由保留在
+ * tools/upstream-watch/server.mjs 里备查,但客户端不再默认使用。
+ *
+ * 设置键 `updater:feed` 仍可显式指定一个 generic 镜像地址(自建代理时用);
+ * 自定义地址失败会自动回退 GitHub provider,不让更新彻底失联。
  */
-const UPDATE_FEED_ALIYUN = 'https://watch.logic-yjb.top/updates'
-
 function updaterFeedUrl(): string | null {
   const raw = activeSettings?.get<unknown>('updater:feed', undefined)
-  if (raw === '') return null // 显式关掉镜像
   if (typeof raw === 'string' && /^https?:\/\//.test(raw)) return raw.replace(/\/+$/, '')
-  return UPDATE_FEED_ALIYUN
+  return null
 }
 
-/** 先走镜像(若配置),失败回退 GitHub provider —— 镜像挂了不能让更新彻底失联。 */
+/** 自定义 feed(若配置)失败时回退 GitHub provider;默认直接走 GitHub。 */
 async function checkWithFeed(au: AppUpdater, feed: string | null): Promise<unknown> {
   if (feed) {
     try {
       au.setFeedURL({ provider: 'generic', url: feed })
       return await au.checkForUpdates()
     } catch (err) {
-      setUpdater({ type: 'error', message: `镜像源检查失败,回退 GitHub:${String(err instanceof Error ? err.message : err)}` })
+      setUpdater({
+        type: 'error',
+        message: `自定义更新源检查失败,回退 GitHub:${String(err instanceof Error ? err.message : err)}`
+      })
+      au.setFeedURL({ provider: 'github', owner: 'Logic647', repo: 'MemorySQL' })
     }
   }
-  au.setFeedURL({ provider: 'github', owner: 'Logic647', repo: 'MemorySQL' })
   return await au.checkForUpdates()
 }
 
