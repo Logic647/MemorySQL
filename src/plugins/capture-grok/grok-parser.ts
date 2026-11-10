@@ -125,7 +125,7 @@ export function parseGrokSessionDir(dir: string): RawSession | null {
   const kind = summary.session_kind?.trim() ?? ''
   const isSubagent = kind.toLowerCase().startsWith('subagent')
   const parent = summary.parent_session_id?.trim() || ''
-  const title = summary.generated_title?.trim() || undefined
+  const title = summary.generated_title?.trim() || summary.session_summary?.trim() || undefined
   return {
     externalId: id,
     agentType: 'grok',

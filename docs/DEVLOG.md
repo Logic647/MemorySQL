@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-11-10 · 新适配器过 magpie 真实样本回放:抓到两个只剩真样本才暴露的 bug
+
+magpie 仓库自带 `internal/sessions/testdata`(**真实抓取的会话样本**,174 文件,覆盖 droid/grok/cline/
+minimax/pi/omp/agy/alma…),拿我们刚提交的 6 家解析器直接回放,修掉两处:
+
+- **droid 角色硬编码(真 bug)**:用户消息的 `content` 同样是 Anthropic 块数组,旧实现按「数组 → assistant」
+  把每条用户消息写成助手发言(真实样本角色序列 `aatttta`)。修法:块内容形状不决定角色,角色一律取
+  `ev.message.role`。已加回归测试(用户消息用块数组)。
+- **grok 标题回退**:`generated_title` 为空时回退 `session_summary`(magpie 同口径),已加测试。
+
+**回放同时确认的语义**(与实现一致,无需改):cline 的 fork manifest 无 title(留空正确);grok 只有 hook
+事件、无消息的会话应跳过;grok `session_kind` 仅前缀 `subagent` 才算子代理(有 `parent_session_id` 无 kind
+的是 fork/restore);minimax 目录名 `-session_<base64>` 解码出 `mvs_…` 会话 id;omp artifacts 子代理能正确
+挂到父会话。
+
+**方法学**:在没有装机的情况下,「上游项目的测试样本」是证据等级最高的黑盒替代 —— 比"按文档猜"强,
+比"装一台机"便宜。以后补适配器,**先找上游 testdata 再动手**。
+
+vitest **624:624**(+2 回归)、typecheck 0。survey 文档证据列同步升级为「真实样本回放验证」。
+
+---
+
 ## 2026-11-10 · Magpie 名单补全:捕获矩阵 13 → 23 家 + 黑盒队列
 
 用户要求对照 [magpie](https://usemagpie.ai/zh/)(AI coding agent 网关,60+ 家接线)的支持名单补全适配,

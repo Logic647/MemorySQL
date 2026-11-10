@@ -144,6 +144,41 @@ describe('capture-droid(droid-parser)', () => {
     expect(s.messages[2].toolName).toBe('shell')
   })
 
+  it('用户消息的 content 是块数组时仍保持 user 角色(真实样本回归)', async () => {
+    // magpie testdata(droid-skills)里的真实形状:user 的 content 也是 Anthropic 块数组。
+    // 旧实现按「数组内容 → assistant」硬编码,把每条用户消息都写成了助手发言。
+    const dir = tmpdir('droid-userblocks')
+    const file = path.join(dir, 'u1.jsonl')
+    fs.writeFileSync(
+      file,
+      [
+        JSON.stringify({ type: 'session_start', id: 'u1', title: '块数组的用户消息', cwd: '/p' }),
+        JSON.stringify({
+          type: 'message',
+          id: 'm1',
+          timestamp: '2026-11-09T10:00:00.000Z',
+          message: { role: 'user', content: [{ type: 'text', text: '<system-reminder>上下文</system-reminder>' }] }
+        }),
+        JSON.stringify({
+          type: 'message',
+          id: 'm2',
+          timestamp: '2026-11-09T10:00:01.000Z',
+          message: { role: 'user', content: [{ type: 'text', text: '真正的问题' }] }
+        }),
+        JSON.stringify({
+          type: 'message',
+          id: 'm3',
+          timestamp: '2026-11-09T10:00:02.000Z',
+          message: { role: 'assistant', content: [{ type: 'text', text: '回答' }] }
+        })
+      ].join('\n')
+    )
+    const { parseDroidSession } = await import('../src/plugins/capture-droid/droid-parser.ts')
+    const s = parseDroidSession(file)!
+    expect(s.messages.map((m) => m.role)).toEqual(['user', 'user', 'assistant'])
+    expect(s.title).toBe('块数组的用户消息')
+  })
+
   it('fork 的拷贝段(forkedAtMessageId 之前)跳过;子代理按 callingSessionId 标记', async () => {
     const dir = tmpdir('droid-fork')
     fs.writeFileSync(
@@ -344,6 +379,21 @@ describe('capture-grok(grok-parser)', () => {
     const sub = parseGrokSessionDir(subDir)!
     expect(sub.isSubagent).toBe(true)
     expect(sub.parentExternalId).toBe('g1')
+  })
+  it('generated_title 为空时回退 session_summary(真实样本回归)', async () => {
+    const root = tmpdir('grok-title')
+    const dir = path.join(root, 'p', 'g9')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(
+      path.join(dir, 'summary.json'),
+      JSON.stringify({ info: { id: 'g9', cwd: '/p' }, generated_title: '', session_summary: '回退标题' })
+    )
+    fs.writeFileSync(
+      path.join(dir, 'updates.jsonl'),
+      JSON.stringify({ timestamp: 1794218400, params: { update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'hi' } } } })
+    )
+    const { parseGrokSessionDir } = await import('../src/plugins/capture-grok/grok-parser.ts')
+    expect(parseGrokSessionDir(dir)?.title).toBe('回退标题')
   })
 })
 

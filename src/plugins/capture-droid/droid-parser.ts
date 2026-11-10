@@ -59,17 +59,21 @@ function eventTs(ev: DroidEvent, fileMtimeMs: number): number | undefined {
   return undefined
 }
 
-function blocksToRaw(content: unknown, ts: number | undefined): RawMessage[] {
+function blocksToRaw(
+  content: unknown,
+  ts: number | undefined,
+  role: 'user' | 'assistant'
+): RawMessage[] {
   const out: RawMessage[] = []
   if (typeof content === 'string') {
-    if (content.trim()) out.push({ role: 'user', content, ts })
+    if (content.trim()) out.push({ role, content, ts })
     return out
   }
   if (!Array.isArray(content)) return out
   let text = ''
   const flush = (): void => {
     if (text.trim()) {
-      out.push({ role: 'assistant', content: text, ts })
+      out.push({ role, content: text, ts })
       text = ''
     }
   }
@@ -144,7 +148,7 @@ export function parseDroidSession(file: string): RawSession | null {
       if (startedAt == null || ts < startedAt) startedAt = ts
       if (endedAt == null || ts > endedAt) endedAt = ts
     }
-    messages.push(...blocksToRaw(ev.message.content, ts))
+    messages.push(...blocksToRaw(ev.message.content, ts, role))
   }
   if (!header || messages.length === 0) return null
   const id = header.id?.trim() || path.basename(file, '.jsonl')

@@ -21,13 +21,13 @@
 | agent | 厂商/开源 | 会话存储 | 证据 |
 |---|---|---|---|
 | **Goose** | Block→aaif-goose,Apache-2.0 | SQLite `<data>/sessions/sessions.db`(Win `%APPDATA%\Block\goose`,mac `~/Library/Application Support/Block/goose`,Linux `~/.local/share/goose`);sessions+messages 两表,session_type='subagent' 标子代理,archived_at 归档 | **源码核对**(session_manager.rs) |
-| **Droid** | Factory,闭源 | `~/.factory/sessions/<id>.jsonl`(根级+按 cwd 分文件夹两代),首行 session_start,Anthropic 风格块;callingSessionId 标子代理 | magpie 实证 + 黑盒队列 |
-| **Cline CLI** | cline/cline,开源 | `~/.cline/data/sessions/<id>/`(manifest + messages.json + 子代理 `<agentId>.messages.json`) | magpie 实证 + 上游类型定义 |
-| **Pi** | earendil-works/pi(原 badlogic/pi-mono),MIT | `~/.pi/agent/sessions/<cwd>/<time>_<id>.jsonl`,session 头 + message/usage/title_change 条目 | magpie 实证 + 上游仓库 |
-| **omp** | Pi fork | `~/.omp/agent/sessions/…` 同 Pi;子代理在与文件同名的 artifacts 目录 | magpie 实证 |
+| **Droid** | Factory,闭源 | `~/.factory/sessions/<id>.jsonl`(根级+按 cwd 分文件夹两代),首行 session_start,Anthropic 风格块;callingSessionId 标子代理 | **magpie 真实样本回放验证** |
+| **Cline CLI** | cline/cline,开源 | `~/.cline/data/sessions/<id>/`(manifest + messages.json + 子代理 `<agentId>.messages.json`) | **真实样本回放验证** + 上游类型定义 |
+| **Pi** | earendil-works/pi(原 badlogic/pi-mono),MIT | `~/.pi/agent/sessions/<cwd>/<time>_<id>.jsonl`,session 头 + message/usage/title_change 条目 | **真实样本回放验证** + 上游仓库 |
+| **omp** | Pi fork | `~/.omp/agent/sessions/…` 同 Pi;子代理在与文件同名的 artifacts 目录 | **真实样本回放验证** |
 | **OmO** | oh-my-openagent,开源 | `~/.omo/agent/`(引擎 senpi = pi fork),MCP `~/.omo/agent/mcp.json` 上游文档确认 | family(pi 形状)+ 上游文档 |
-| **Grok Build** | xAI,**开源 Apache-2.0**(2026-07) | `~/.grok/sessions/<urlencode(cwd)>/<id>/`(summary.json + updates.jsonl,ACP 式流式 chunk) | 官方 changelog 三处确认路径 + magpie 实证格式 |
-| **MiniMax Code** | MiniMax,**CLI 开源 MIT**(bin mcode) | `~/.minimax/v2/sessions/<y>/<m>/<d>/<ts>-session_<base64(id)>/messages.jsonl`;**运行时 vendor 了 pi-mono** | magpie 实证(@minimax-ai/code 0.6.8)+ 仓库核对 |
+| **Grok Build** | xAI,**开源 Apache-2.0**(2026-07) | `~/.grok/sessions/<urlencode(cwd)>/<id>/`(summary.json + updates.jsonl,ACP 式流式 chunk) | 官方 changelog 确认路径 + **真实样本回放验证** |
+| **MiniMax Code** | MiniMax,**CLI 开源 MIT**(bin mcode) | `~/.minimax/v2/sessions/<y>/<m>/<d>/<ts>-session_<base64(id)>/messages.jsonl`;**运行时 vendor 了 pi-mono** | **真实样本回放验证**(base64 id 解出 mvs_…)+ 仓库核对 |
 | **DevEco Code** | 华为,BitFun+OpenCode 构建(npm @deveco/deveco-code) | opencode 系布局(会话路径官方未写,黑盒队列);MCP `.deveco/deveco.jsonc` 官方文档确认 | family + 官方文档 |
 | **MiMo Code** | 小米,**开源 MIT**(XiaomiMiMo/MiMo-Code,OpenCode fork) | `~/.local/share/mimocode/mimocode.db`(Windows 同路径,`%LOCALAPPDATA%` 不用) | **真机校准 2026-11-10**:本机实装,133MB/222 会话/73 子代理,opencode legacy 三表,生产解析器副本验证 222/222 全过 |
 
@@ -58,6 +58,20 @@
 - **Devin 云端会话 / Copilot 云端同步**:会话主体在云端。
 - **桌面壳类**(Cindy/Lody/AionUi/Cherry Studio/Alma/Raft/PI-Desktop/Kimi Code Desktop…):内嵌引擎写的会话已被对应上游适配器捕获,壳本身不加第二个入口(Alma 的 SQLite 若用户有需求再评估)。
 - **VS Code Chat / JetBrains Air / Zed**:IDE 内置会话存储复杂(state.vscdb/全局存储),未列入队列。
+
+## 三·补、真实样本回放(2026-11-10)
+
+magpie 仓库自带 `internal/sessions/testdata`(**真实抓取的会话样本**,174 个文件),拿我们的 6 家新解析器
+直接回放,发现并修掉两个只有真样本才暴露的问题:
+
+1. **droid 角色硬编码**:用户消息的 `content` 也是 Anthropic 块数组,旧实现按「数组内容 → assistant」
+   把每条用户消息都写成助手发言(样本里角色序列 `aatttta` 应为 `uatt…`)。改为内容形状不决定角色,
+   角色一律取 `ev.message.role`。
+2. **grok 标题回退**:`generated_title` 为空时要用 `session_summary`(magpie 同口径)。
+
+同时确认了三条语义与我们的实现一致:cline 的 fork 会话 manifest 无 title(留空正确)、grok 只有 hook
+事件无消息的会话应跳过、grok `session_kind` 只在前缀为 `subagent` 时才算子代理(有 `parent_session_id`
+但无 kind 的是 fork/restore,不算)。
 
 ## 四、对 magpie 情报的几个横向认知
 
