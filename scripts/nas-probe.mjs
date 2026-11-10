@@ -110,6 +110,21 @@ const NAS_AGENTS = [
     updateCmd: ['npm', 'install', '-g', '@moonshot-ai/kimi-code@latest'],
     versionCmd: ['kimi', '--version'],
     sessionCmd: ['kimi', '-p', 'Reply with exactly: ok']
+  },
+  {
+    // 闭源(NAS 已登录,2026-11-10 实测两轮会话)。只有版本变化才跑会话 —— 会消耗少量 AI credits。
+    id: 'copilot',
+    updateCmd: ['npm', 'install', '-g', '@github/copilot@latest'],
+    versionCmd: ['copilot', '--version'],
+    sessionCmd: ['copilot', '-p', 'Reply with exactly: ok']
+  },
+  {
+    // 闭源(Factory)。NAS 已装未登录:版本看守有效,会话会失败(报告里可见)
+    id: 'droid',
+    // 安装脚本要过 sh(execFile 不能跑管道),用 sh -c 包一层
+    updateCmd: ['sh', '-c', 'curl -fsSL https://app.factory.ai/cli | sh'],
+    versionCmd: ['droid', '--version'],
+    sessionCmd: ['droid', 'exec', 'Reply with exactly: ok']
   }
   // 注意:MiniMax Code 的 CLI 是**开源**的(MiniMax-AI/minimax-code),按约定它归
   // 上游监控 + 源码适配那一侧,不进 NAS 看守表。闭源 agent 走 scripts/nas-discover.mjs。

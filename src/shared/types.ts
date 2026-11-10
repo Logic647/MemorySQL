@@ -26,6 +26,7 @@ export type AgentType =
   | 'minimax'
   | 'deveco'
   | 'mimocode'
+  | 'copilot'
   | (string & {})
 export type MessageRole = 'user' | 'assistant' | 'tool' | 'system'
 

@@ -60,7 +60,7 @@
 
 ## ✨ 特性
 
-- **会话自动捕获** —— 23 家 agent 开箱支持(Codex / ZCode / Claude Code / Hermes / Gemini / Cursor / OpenCode / Qwen Code / Kimi CLI / CodeBuddy Code / WorkBuddy / Qoder / DeepSeek Harness / Goose / Droid / Cline CLI / Pi / omp / OmO / Grok Build / MiniMax Code / DevEco Code / MiMo Code),增量监听零手动操作,默认全开
+- **会话自动捕获** —— 24 家 agent 开箱支持(Codex / ZCode / Claude Code / Hermes / Gemini / Cursor / OpenCode / Qwen Code / Kimi CLI / CodeBuddy Code / WorkBuddy / Qoder / DeepSeek Harness / Goose / Droid / Cline CLI / Pi / omp / OmO / Grok Build / MiniMax Code / DevEco Code / MiMo Code / GitHub Copilot CLI),增量监听零手动操作,默认全开
 - **最后一次对话时间** —— 每条会话并排显示「开始」与「最后」,一眼分出「上周开始、今早还在聊」和「上周就结束了」
 - **子代理会话折叠** —— 会话里派生的子代理/子任务照常入库可搜,但默认折叠在父会话下(「↳ N 个子代理会话」),不再挤占会话列表
 - **项目滚动总结** —— 每个项目定期把新会话总结成 摘要+待办+决策(hindsight 式),agent 用 `memory_get_project_digest` 读这一份即可接手,不必翻大量历史会话;**默认关闭**,开启后 LLM 素材先脱敏再发送,不配 LLM 也能纯本地规则总结
@@ -188,7 +188,7 @@ npm run upstream:check  # 上游契约黑盒检查:哪家 agent 改了格式导�
 
 技术栈:Electron + TypeScript(strict) + React + better-sqlite3(FTS5) + sqlite-vec。
 
-**适配器维护**:23 家 agent 的存储布局、依赖的表/列与 MCP 配置必需键都在 `src/shared/upstream-agents.ts` 登记成台账(`upstream/ledger.json` 是导出件),`upstream/check.ts` 拿真实数据做黑盒比对。改任一 capture 插件或连接器的写入格式,**必须同步台账**,否则 `upstream-contract.test.ts` 会红。
+**适配器维护**:24 家 agent 的存储布局、依赖的表/列与 MCP 配置必需键都在 `src/shared/upstream-agents.ts` 登记成台账(`upstream/ledger.json` 是导出件),`upstream/check.ts` 拿真实数据做黑盒比对。改任一 capture 插件或连接器的写入格式,**必须同步台账**,否则 `upstream-contract.test.ts` 会红。
 
 ## 📁 文档
 

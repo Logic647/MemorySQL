@@ -12,7 +12,8 @@
 |---|---|---|
 | **已适配(本轮前)** | 13 | Codex / ZCode / Claude Code / Hermes / Gemini / Cursor(IDE) / OpenCode / Qwen Code / Kimi CLI / CodeBuddy / WorkBuddy / Qoder / DeepSeek Harness |
 | **本轮新增实现** | 10 | **Goose / Droid / Cline CLI / Pi / omp / OmO / Grok Build / MiniMax Code / DevEco Code / MiMo Code** |
-| **黑盒队列(格式已定位,待装机校准)** | 6 | Copilot CLI / Devin / Command Code / Snow CLI / fx / AtomCode |
+| **NAS 黑盒校准后新增** | 1 | **GitHub Copilot CLI**(2026-11-10 NAS 真机登录跑通,events.jsonl 格式已定) |
+| **黑盒队列(格式已定位,待装机校准)** | 5 | Devin / Command Code / Snow CLI / fx / AtomCode |
 | **黑盒队列(存储未定位)** | 5 | Muse Code / QwenPaw / OpenHanako / Empryo / Mister Morph |
 | **不可行/不值得** | — | Antigravity 桌面版(正文加密)、Copilot 云端同步部分、Devin 云端会话主体、各桌面壳(Cindy/Lody/AionUi/Cherry Studio/Alma/Raft 等,内嵌引擎的会话已被上游捕获) |
 
@@ -37,7 +38,7 @@
 
 | agent | 已知 | 安装 | 校准动作 |
 |---|---|---|---|
-| **Copilot CLI** | `~/.copilot/session-state/<id>/` + `session-store.db`(SQLite);MCP `~/.copilot/mcp-config.json`;COPILOT_HOME 覆盖 | `npm i -g @github/copilot`(需 GitHub 登录) | 装好后跑一轮,检查 session-state 文件格式;注意云端同步(本地删除≠用户删除,tombstone 语义要单独设计) |
+| ~~Copilot CLI~~ | ✅ **已完成**(见下节) | | |
 | **Devin** | `~/.local/share/devin/cli/sessions.db`(message_nodes 表,chat_message JSON) | 官网脚本(需 Devin 登录) | 副本检查 schema;区分 local/cloud 会话主体 |
 | **Command Code** | `~/.commandcode/projects/<slug>/<id>.jsonl` + `.meta.json` sidecar;MCP `~/.commandcode/mcp.json` | `npm i -g command-code` | 拉真实样本对 parser;⚠ 该产品默认读 Claude Code/Codex/Cursor 的会话上传做"taste 学习"——隐私文案对比点 |
 | **Snow CLI** | `~/.snow/sessions/` 目录已确认 | `npm i -g snow-ai` | 跑一轮看 sessions 内部格式 |
@@ -79,3 +80,29 @@ magpie 仓库自带 `internal/sessions/testdata`(**真实抓取的会话样本**
 2. **magpie 的 sessions 读取器 = 现成的格式实证库**,但只覆盖它需要画用量图的 20 来家;goose/crush/copilot 这些它没写读取器的,仍要自己调研。
 3. ** Crush 特殊**:数据按项目散落(`<project>/.crush/crush.db`),没有全局库 —— 捕获需要项目发现策略(从 MemorySQL 已知项目的 cwd 反查),暂缓。
 4. **一个隐私对比点**:Command Code 默认(可跳过)读取竞品会话上传厂商;MemorySQL 是本地明文+出口脱敏,文案可用。
+
+## 五、NAS 黑盒实测记录(2026-11-10)
+
+按「闭源一律装到 NAS、统一在 NAS 跑探针」的分工,新增 `scripts/nas-discover.mjs`
+(装 → 版本 → `--help` → 依次试非交互命令 → **diff HOME** 找落盘位置),首轮结果:
+
+| agent | 安装 | 会话 | 结论 |
+|---|---|---|---|
+| Droid 1.7.0 | ✓ | 未登录也落 `~/.factory/sessions/<cwd>/<uuid>.jsonl` + `.settings.json` | 路径/首行 `session_start` 与适配器一致(真机样本已回放) |
+| **Copilot CLI 1.0.108** | ✓ | **登录后跑通两轮(含工具调用)** | `session-state/<uuid>/events.jsonl` 为正文;`session-store.db` 仅派生索引 |
+| Muse Code 1.4.15 | ✓ | ✗ **Meta 要求订阅付费方式**,登录后被自动登出 | 目录 `<y>/<m>/<d>/<uuid>/session.jsonl` 已确认,正文待有订阅的账号 |
+| Command Code 1.88.5 | ✓ | ✗ `cmd login` 浏览器 OAuth 回调是 127.0.0.1,需端口转发或 API key | 待授权 |
+| Devin 3000.12.32 | ✓ | ✗ 仅支持 `--force-manual-token-flow` | 待用户提供 token |
+| deveco | ✗ | — | npm 只带 mac/win 二进制,Linux 无产物 |
+| workbuddy / antigravity / stepcode / alma / aside / reasonix / ante / kirocrew | ✗ | — | 无公开 Linux 渠道(理由写在 nas-discover.mjs 的 UNSUPPORTED) |
+
+**Copilot CLI 事件形状**(实测,已写进 `capture-copilot/copilot-parser.ts`):
+`session.start` / `user.message{content}` / `assistant.message{content,model}` /
+`tool.execution_start{toolName,arguments}` / `tool.execution_complete{result.content}` /
+`session.usage_record` / `assistant.turn_start|end` / `session.shutdown`;
+`workspace.yaml` 带 id/cwd/name(标题)/created_at/updated_at。
+MCP:`copilot mcp add --transport http …` 写出 `mcpServers.<name>.{type:"http",url,tools:["*"]}`。
+规则文件:`.github/copilot-instructions.md`(`copilot init` 的 --help 原文)。
+
+**运维**:NAS 现在装了 qoder/codebuddy/copilot/droid(+ 原有 qwen/gemini/kimi);
+`nas-probe` 的看守表加了 copilot/droid(版本不变不跑会话;copilot 每次会话会消耗少量 credits)。

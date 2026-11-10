@@ -1463,7 +1463,8 @@ const CONNECT_AGENTS = [
   { id: 'omp', label: 'omp (oh-my-pi)' },
   { id: 'omo', label: 'OmO' },
   { id: 'deveco', label: 'DevEco Code' },
-  { id: 'mimocode', label: 'MiMo Code' }
+  { id: 'mimocode', label: 'MiMo Code' },
+  { id: 'copilot', label: 'Copilot CLI' }
 ]
 
 function AgentConnectSection({ onMsg }: { onMsg: (s: string) => void }) {

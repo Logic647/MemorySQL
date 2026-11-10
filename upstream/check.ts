@@ -311,6 +311,10 @@ async function checkJsonl(c: AgentContract, root: string): Promise<CheckResult> 
       const m = await import('../src/plugins/capture-minimax/minimax-parser.ts')
       return m.parseMinimaxSessionDir(path.dirname(fp))
     },
+    copilot: async (fp) => {
+      const m = await import('../src/plugins/capture-copilot/copilot-parser.ts')
+      return m.parseCopilotSessionDir(path.dirname(fp))
+    },
     dsh: async (fp) => {
       const m = await import('../src/plugins/capture-dsh/dsh-parser.ts')
       const text = m.decodeDshFile(fp)

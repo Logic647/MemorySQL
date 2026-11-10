@@ -28,7 +28,7 @@ describe('台账 rules 覆盖(不许猜)', () => {
       (a) => !a.rules && !(a.upstream.kind === 'none' && a.monitor === 'blackbox_only')
     ).map((a) => a.id)
     expect(missing, `这些 agent 没登记 rules: ${missing.join(', ')}`).toEqual([])
-    expect(AGENTS.length).toBe(23) // 2026-11-10 批(Magpie 补全)+10
+    expect(AGENTS.length).toBe(24) // 2026-11-10:Magpie 补全 +10,再加 NAS 黑盒校准的 copilot
   })
 
   it('证据等级必须是白名单内的一个;canary/source/docs 的 project 或 user 至少有一个落点', () => {

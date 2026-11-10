@@ -206,6 +206,59 @@ describe('capture-droid(droid-parser)', () => {
   })
 })
 
+// ──────────────── copilot(闭源,NAS 真机 event 形状)────────────────
+
+describe('capture-copilot(copilot-parser)', () => {
+  it('workspace.yaml + events.jsonl:用户/助手/工具开始与结果/时间/标题', async () => {
+    const dir = tmpdir('copilot')
+    fs.writeFileSync(
+      path.join(dir, 'workspace.yaml'),
+      [
+        'id: 53ee6a22-2dd3-450c-a6bf-a3c41558106a',
+        'cwd: /tmp/msql-copilot',
+        'client_name: github/cli',
+        "name: 'Read a.txt and reply'",
+        'user_named: false',
+        'created_at: 2026-11-10T05:22:40.650Z',
+        'updated_at: 2026-11-10T05:22:44.244Z'
+      ].join('\n')
+    )
+    const ev = (o: unknown): string => JSON.stringify(o)
+    fs.writeFileSync(
+      path.join(dir, 'events.jsonl'),
+      [
+        ev({ type: 'session.start', timestamp: '2026-11-10T05:22:40.650Z', data: { sessionId: 's1', startTime: '2026-11-10T05:22:40.650Z', context: { cwd: '/tmp/msql-copilot' } } }),
+        ev({ type: 'user.message', timestamp: '2026-11-10T05:22:41.000Z', data: { content: 'Read a.txt' } }),
+        ev({ type: 'assistant.message', timestamp: '2026-11-10T05:22:42.000Z', data: { content: '', toolRequests: [] } }),
+        ev({ type: 'tool.execution_start', timestamp: '2026-11-10T05:22:42.500Z', data: { toolName: 'view', arguments: { path: 'a.txt' }, toolCallId: 'c1' } }),
+        ev({ type: 'tool.execution_complete', timestamp: '2026-11-10T05:22:43.000Z', data: { toolCallId: 'c1', success: true, result: { content: 'hello\n' } } }),
+        ev({ type: 'assistant.message', timestamp: '2026-11-10T05:22:44.000Z', data: { content: 'hello', model: 'gpt-6-luna' } }),
+        ev({ type: 'session.shutdown', timestamp: '2026-11-10T05:22:44.244Z', data: {} })
+      ].join('\n')
+    )
+    const { parseCopilotSessionDir } = await import('../src/plugins/capture-copilot/copilot-parser.ts')
+    const s = parseCopilotSessionDir(dir)!
+    expect(s.externalId).toBe('53ee6a22-2dd3-450c-a6bf-a3c41558106a')
+    expect(s.agentType).toBe('copilot')
+    expect(s.title).toBe('Read a.txt and reply')
+    expect(s.cwd).toBe('/tmp/msql-copilot')
+    expect(s.startedAt).toBe(Math.floor(Date.parse('2026-11-10T05:22:40Z') / 1000))
+    expect(s.endedAt).toBe(Math.floor(Date.parse('2026-11-10T05:22:44Z') / 1000))
+    // 空的 assistant.message 不进时间线;tool start 与 complete 各成一条
+    expect(s.messages.map((m) => m.role)).toEqual(['user', 'tool', 'tool', 'assistant'])
+    expect(s.messages[1].toolName).toBe('view')
+    expect(JSON.parse(s.messages[1].content)).toEqual({ path: 'a.txt' })
+    expect(s.messages[2].content).toBe('hello\n')
+  })
+
+  it('未登录只有 workspace.yaml(无 events.jsonl)→ null', async () => {
+    const dir = tmpdir('copilot-noauth')
+    fs.writeFileSync(path.join(dir, 'workspace.yaml'), 'id: x\ncwd: /tmp\n')
+    const { parseCopilotSessionDir } = await import('../src/plugins/capture-copilot/copilot-parser.ts')
+    expect(parseCopilotSessionDir(dir)).toBeNull()
+  })
+})
+
 // ───────────────────────────── cline(JSON)─────────────────────────────
 
 describe('capture-cline(cline-parser)', () => {

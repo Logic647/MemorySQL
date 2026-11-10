@@ -657,13 +657,55 @@ export const AGENTS: AgentContract[] = [
         requiredPaths: [],
         parser: 'droid',
         note:
-          '根级 <id>.jsonl(老)/ <cwd-slug>/<id>.jsonl(新)两代并存;首行 session_start' +
+          '**2026-11-10 NAS 真机实测 1.7.0**:~/.factory/sessions/<cwd-slug>/<uuid>.jsonl,' +
+          '首行 session_start' +
           '{id,title,cwd,lastCwd,parent,forkedAtMessageId,callingSessionId},之后 message 事件' +
           '(content 为字符串或 Anthropic 块)。格式按 magpie 实证解析还原,装好后黑盒校准'
       }
     },
     mcp: null,
     rules: { project: ['AGENTS.md'], evidence: 'docs', note: 'Factory 官方文档写明 droid 读项目 AGENTS.md;装好后可金丝雀复核' },
+    riskKeywords: DEFAULT_RISK_KEYWORDS
+  },
+  {
+    id: 'copilot',
+    name: 'GitHub Copilot CLI',
+    agentType: 'copilot',
+    upstream: {
+      kind: 'none',
+      note: '闭源(npm @github/copilot 是 loader + 原生二进制;github.com/copilot-cli 只做 issue 跟踪)—— 黑盒守'
+    },
+    monitor: 'blackbox_only',
+    localRoots: ['.copilot/session-state'],
+    source: {
+      kind: 'jsonl',
+      jsonl: {
+        fileMatch: '**/events.jsonl',
+        requiredPaths: ['type', 'timestamp', 'data'],
+        parser: 'copilot',
+        note:
+          'session-state/<uuid>/:workspace.yaml(id/cwd/name/created_at)+ events.jsonl' +
+          '(session.start / user.message{content} / assistant.message{content,model} / ' +
+          'tool.execution_start{toolName,arguments} / tool.execution_complete{result.content} / ' +
+          'session.usage_record)。**2026-11-10 NAS 真机实测 1.0.108**(已登录跑了两轮含工具调用);' +
+          'session-store.db 是派生索引,turns 表虽也有 user/assistant 但正文以 events.jsonl 为准。' +
+          '未登录也会建 workspace.yaml(无 events.jsonl)→ 解析器返回 null 跳过。COPILOT_HOME 可覆盖根'
+      }
+    },
+    mcp: {
+      file: '.copilot/mcp-config.json',
+      jsonpath: '$.mcpServers.memorysql',
+      requiredKeys: ['type', 'url'],
+      valueHints: { type: 'http' },
+      note:
+        '实测 `copilot mcp add --transport http memorysql <url>` 写出 ' +
+        '{mcpServers:{memorysql:{tools:["*"],type:"http",url}}} —— tools 由 CLI 自己补,我们不写也行'
+    },
+    rules: {
+      project: ['.github/copilot-instructions.md', 'AGENTS.md'],
+      evidence: 'docs',
+      note: '`copilot init` 的 --help 原文:生成 .github/copilot-instructions.md;AGENTS.md 为通用兜底'
+    },
     riskKeywords: DEFAULT_RISK_KEYWORDS
   },
   {

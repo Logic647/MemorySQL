@@ -56,6 +56,7 @@ import captureGrok from '../plugins/capture-grok'
 import captureMinimax from '../plugins/capture-minimax'
 import captureDeveco from '../plugins/capture-deveco'
 import captureMimocode from '../plugins/capture-mimocode'
+import captureCopilot from '../plugins/capture-copilot'
 import mcpServer from '../plugins/mcp-server'
 import privacyExport from '../plugins/privacy-export'
 import syncArchive from '../plugins/sync-archive'
@@ -112,6 +113,7 @@ const BUILTIN_PLUGINS = [
   captureMinimax,
   captureDeveco,
   captureMimocode,
+  captureCopilot,
   captureWatcher,
   importChat,
   mcpServer,

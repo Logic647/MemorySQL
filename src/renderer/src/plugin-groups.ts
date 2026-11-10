@@ -40,6 +40,7 @@ export const PLUGIN_GROUPS: PluginGroup[] = [
       'capture-minimax',
       'capture-deveco',
       'capture-mimocode',
+      'capture-copilot',
       'capture-watcher',
       'import-chat'
     ]

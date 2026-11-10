@@ -43,7 +43,8 @@ const CAPTURE_PLUGINS: Array<{ id: string; label: string }> = [
   { id: 'capture-grok', label: 'Grok Build' },
   { id: 'capture-minimax', label: 'MiniMax Code' },
   { id: 'capture-deveco', label: 'DevEco Code' },
-  { id: 'capture-mimocode', label: 'MiMo Code' }
+  { id: 'capture-mimocode', label: 'MiMo Code' },
+  { id: 'capture-copilot', label: 'Copilot CLI' }
 ]
 
 function fmtTime(ts: number | null | undefined): string {

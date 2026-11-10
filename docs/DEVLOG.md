@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-11-10 · 闭源统一上 NAS:发现器 + Copilot CLI 真机适配
+
+用户定的分工:**闭源一律装 NAS 跑探针,开源按原方法**。落地两件:
+
+**1. `scripts/nas-discover.mjs`(新)**:装 → 版本 → `--help` → 依次试非交互命令 → **diff \$HOME**
+找会话落盘位置。判据是「有没有新文件」而不是退出码 —— 未登录也常先落盘。首轮结果:
+Droid 1.7.0 未登录就写出 `~/.factory/sessions/<cwd>/<uuid>.jsonl`(与适配器一致);
+Copilot 1.0.108 登录后跑通两轮;Muse 被 Meta「需订阅付费方式」挡回;Command Code 要端口转发/API key;
+Devin 只能手动贴 token;deveco 无 Linux 二进制、workbuddy 等无公开 Linux 渠道(理由表内建)。
+
+**2. `capture-copilot`(新,24 家)**:真机实测格式 —— `~/.copilot/session-state/<uuid>/`
+的 `workspace.yaml`(id/cwd/name 标题/created_at)+ `events.jsonl`
+(`session.start`/`user.message{content}`/`assistant.message{content,model}`/
+`tool.execution_start{toolName,arguments}`/`tool.execution_complete{result.content}`/
+`session.usage_record`);`session-store.db` 只是派生索引(turns 表虽也存正文,以 events 为准)。
+MCP 用 `~/.copilot/mcp-config.json`(`copilot mcp add --transport http` 写出 `{type:"http",url,tools:["*"]}`),
+规则文件 `.github/copilot-instructions.md`。台账 +1、连接器 +1、向导 +1、check.ts 注册 parser、
+NAS 看守表 +copilot(+droid,版本看守)。
+
+**踩坑**:用 heredoc 写含 `
+` 的测试夹具,`
+` 会变成真实换行导致 esbuild「Unterminated string literal」——
+本轮连中三次;以后含转义的代码一律用 Edit/Write 工具,不要走 shell heredoc。
+
+vitest 626:626 / typecheck 0 / ledger 24 家。
+
+---
+
 ## 2026-11-10 · 新适配器过 magpie 真实样本回放:抓到两个只剩真样本才暴露的 bug
 
 magpie 仓库自带 `internal/sessions/testdata`(**真实抓取的会话样本**,174 文件,覆盖 droid/grok/cline/

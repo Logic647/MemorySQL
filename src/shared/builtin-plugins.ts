@@ -33,6 +33,7 @@ export const BUILTIN_PLUGIN_IDS = [
   'capture-minimax',
   'capture-deveco',
   'capture-mimocode',
+  'capture-copilot',
   'capture-watcher',
   'import-chat',
   'mcp-server',

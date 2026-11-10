@@ -418,6 +418,25 @@ startup_timeout_sec = 30`,
   },
 
   {
+    id: 'copilot',
+    label: 'GitHub Copilot CLI',
+    detect: (home) => fs.existsSync(path.join(home, '.copilot')),
+    configPath: (home) => path.join(home, '.copilot', 'mcp-config.json'),
+    apply: (configPath, url) =>
+      mergeJson(configPath, (root) => {
+        setNested(root, ['mcpServers', 'memorysql'], { type: 'http', url, tools: ['*'] })
+      }),
+    snippet: (url) =>
+      `copilot mcp add --transport http memorysql ${url}
+// 或 ~/.copilot/mcp-config.json:
+{
+  "mcpServers": {
+    "memorysql": { "type": "http", "url": "${url}", "tools": ["*"] }
+  }
+}`,
+    verify: ledgerVerify('copilot')
+  },
+  {
     id: 'cline',
     label: 'Cline CLI',
     detect: (home) => fs.existsSync(path.join(home, '.cline')),
