@@ -74,6 +74,8 @@
 - **记忆治理** —— 收工汇报候选确认、LLM 冲突检测、手动改名/归档/续接链管理
 - **深色 / 浅色主题** —— 深色适合长时间阅读,浅色适合白天/投屏/打印;可跟随系统,顶栏右上角一键切换,秒搜窗口同步换肤
 
+> **v0.7.5 变更**:更新体验改为「发现新版先问是否下载、下完再问是否安装」;**更新包改走阿里云镜像**(`watch.logic-yjb.top/updates`,失败自动回退 GitHub);**外观默认跟随系统**;修复「获取模型列表」下拉为空;会话 id 提亮。详见 [v0.7.5 更新日志](docs/releases/v0.7.5-notes.md)。
+>
 > **v0.7.4 热修**:Linux 导入归档报 `EXDEV`(校验库写 /tmp 后跨设备 rename)——校验库改落数据目录同侧。详见 [v0.7.4 更新日志](docs/releases/v0.7.4-notes.md)。
 >
 > **v0.7.3 变更**:**MCP 主动调用**——协议层 `instructions` + 8 个工具描述写明触发时机,agent 不等你开口就查记忆/记决策/做收工汇报;**「写入规则」第二层**——连接向导一键把工作协议写进 agent 自己读的规则文件(13 家的规则文件路径全部实测/源码/文档测定,五级证据);归档会话跟随源库(opencode 2.2.6 `--archived`);dsh 标题取最后一次。详见 [v0.7.3 更新日志](docs/releases/v0.7.3-notes.md)。
@@ -179,7 +181,7 @@ module.exports = {
 ```bash
 npm install          # Node 24+
 npm run dev          # 开发模式(热重载)
-npm test             # vitest 单元测试(622 条)
+npm test             # vitest 单元测试(627 条)
 npm run typecheck    # tsc --noEmit
 npm run dist         # 打包 Windows 安装包 + 免安装目录
 npm run import:scan  # 无头扫描导入本机 agent 会话(验收用)

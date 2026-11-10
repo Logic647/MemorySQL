@@ -265,9 +265,97 @@ function json(res, code, obj) {
   res.end(JSON.stringify(obj))
 }
 
+/* ── /updates/*:electron-updater 更新源镜像 ────────────────────────────────
+ * 0.7.5 起客户端默认从阿里云拉更新包(国内下 GitHub 资产太慢)。electron-updater
+ * (generic provider)会取 /updates/latest.yml、latest-mac.yml、latest-linux.yml,
+ * 再按 yml 里的文件名取同目录资产。
+ *
+ * 安全:文件名必须**命中当前 latest release 的资产清单**,不是开放代理;
+ * 且只认 GET/HEAD。鉴权交给上面的 auth():nginx 的 location / 会给请求注入
+ * Authorization,所以客户端不需要知道 token。
+ */
+const UPDATES_REPO = 'Logic647/MemorySQL'
+const UPDATE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,150}$/
+let updatesReleaseCache = { at: 0, release: null }
+
+function ghHeaders(accept) {
+  const h = { 'User-Agent': 'memorysql-updates', Accept: accept }
+  if (process.env.GITHUB_TOKEN) h.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`
+  return h
+}
+
+async function latestReleaseForUpdates() {
+  if (updatesReleaseCache.release && Date.now() - updatesReleaseCache.at < 60_000) {
+    return updatesReleaseCache.release
+  }
+  const res = await fetch(`https://api.github.com/repos/${UPDATES_REPO}/releases/latest`, {
+    headers: ghHeaders('application/vnd.github+json')
+  })
+  if (!res.ok) throw new Error(`GitHub releases HTTP ${res.status}`)
+  const rel = await res.json()
+  updatesReleaseCache = { at: Date.now(), release: rel }
+  return rel
+}
+
+async function serveUpdateAsset(req, res, name) {
+  if (!UPDATE_NAME_RE.test(name)) return json(res, 400, { error: 'bad asset name' })
+  let rel
+  try {
+    rel = await latestReleaseForUpdates()
+  } catch (e) {
+    return json(res, 502, { error: `上游获取失败: ${String(e?.message ?? e)}` })
+  }
+  const asset = (rel.assets ?? []).find((a) => a.name === name)
+  if (!asset) return json(res, 404, { error: `latest release 里没有 ${name}` })
+
+  const ac = new AbortController()
+  res.on('close', () => {
+    if (!res.writableEnded) ac.abort()
+  })
+  const headers = ghHeaders('application/octet-stream')
+  if (req.headers.range) headers.Range = req.headers.range
+  let upstream
+  try {
+    upstream = await fetch(asset.url, { headers, signal: ac.signal, redirect: 'follow' })
+  } catch (e) {
+    if (!res.headersSent) return json(res, 502, { error: `下载上游失败: ${String(e?.message ?? e)}` })
+    return
+  }
+  if (!upstream.ok || !upstream.body) {
+    if (!res.headersSent) return json(res, 502, { error: `下载上游 HTTP ${upstream.status}` })
+    return
+  }
+  const out = {
+    'Content-Type': name.endsWith('.yml') ? 'text/yaml; charset=utf-8' : asset.content_type || 'application/octet-stream',
+    'Cache-Control': 'public, max-age=300',
+    'X-Content-Type-Options': 'nosniff'
+  }
+  const len = upstream.headers.get('content-length')
+  if (len) out['Content-Length'] = len
+  const cr = upstream.headers.get('content-range')
+  if (cr) out['Content-Range'] = cr
+  if (upstream.headers.get('accept-ranges')) out['Accept-Ranges'] = 'bytes'
+  if (req.method === 'HEAD') {
+    res.writeHead(upstream.status, out).end()
+    ac.abort()
+    return
+  }
+  const { Readable } = await import('node:stream')
+  Readable.fromWeb(upstream.body)
+    .on('error', () => res.destroy())
+    .pipe(res.writeHead(upstream.status, out))
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
   if (!auth(req, res)) return
+
+  if (url.pathname.startsWith('/updates/')) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'GET only' })
+    const name = decodeURIComponent(url.pathname.slice('/updates/'.length))
+    void serveUpdateAsset(req, res, name)
+    return
+  }
 
   if (url.pathname === '/api/state') {
     // probeHealth 现算不落盘:age 随时间流逝,存进 state.json 的 age 会撒谎

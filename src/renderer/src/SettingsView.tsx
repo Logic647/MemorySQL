@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { LLM_PRESETS, presetById } from '../../shared/llm-presets'
 import { groupedPlugins } from './plugin-groups'
@@ -806,6 +806,7 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
     available?: boolean
     version?: string
     downloaded?: boolean
+    downloading?: boolean
     error?: string
     checkedAt?: number
     progress?: { percent: number; transferred: number; total: number }
@@ -871,7 +872,7 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
       {upStatus?.downloaded && (
         <>
           <p className="hint">
-            新版本 v{upStatus.version ?? ''} 已下载完毕——退出应用后会自动安装,重新打开即是新版。
+            新版本 v{upStatus.version ?? ''} 已下载完毕——点下面按钮立即重启安装,或稍后退出应用时自动安装。
           </p>
           <button
             className="btn btn-accent btn-small"
@@ -881,7 +882,7 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
           </button>
         </>
       )}
-      {upStatus?.available && !upStatus.downloaded && !upStatus.error && (
+      {upStatus?.available && !upStatus.downloaded && upStatus.downloading && (
         <>
           {upStatus.progress && (
             <div className="update-progress" style={{ margin: '8px 0' }}>
@@ -892,16 +893,18 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
             </div>
           )}
           <p className="hint">
-            新版本 v{upStatus.version ?? ''} 检测到,正在后台下载
+            正在下载新版本 v{upStatus.version ?? ''}
             {upStatus.progress
               ? ` ${Math.round(upStatus.progress.percent)}%(${fmtMB(upStatus.progress.transferred)} / ${fmtMB(upStatus.progress.total)})`
               : ''}…(完成后会询问是否立即重启安装)
           </p>
         </>
       )}
-      {upStatus?.available && !upStatus.downloaded && upStatus.error && (
+      {upStatus?.available && !upStatus.downloaded && !upStatus.downloading && (
         <p className="hint">
-          发现新版本 v{upStatus.version ?? ''},但下载失败({upStatus.error})——可点上方按钮手动检查,或到 GitHub Releases 下载。
+          发现新版本 v{upStatus.version ?? ''}
+          {upStatus.error ? `,上次下载失败(${upStatus.error})` : ''}
+          ——点「下载更新包」开始下载(下载完成后才会询问是否立即安装)。
         </p>
       )}
       {upStatus?.error && !upStatus?.available && (
@@ -920,7 +923,7 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
           onClick={() =>
             void api
               .updateNow()
-              .then(() => onMsg('更新包开始后台下载,完成后会询问是否立即重启安装'))
+              .then(() => onMsg('更新包开始下载,完成后会询问是否立即重启安装'))
               .catch((e) => onMsg(`下载失败: ${String(e)}`))
           }
         >
@@ -1424,21 +1427,74 @@ function ModelField({
   onFetch: () => void
   models: string[]
 }) {
-  const listId = `models-${value.length}-${models.length}`
+  // 显式候选面板,不用 <datalist>:Chromium 在 list id 动态变化(旧实现按
+  // value.length/models.length 拼 id)时会丢掉候选,用户点「获取模型列表」
+  // 后下拉是空的。面板还有一个好处 —— 点瞬间就能看到,不要求输入框先聚焦。
+  const [open, setOpen] = useState(false)
+  const boxRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent): void => {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+  const pick = (v: string): void => {
+    onChange(v)
+    setOpen(false)
+  }
   return (
     <label className="field">
       <span>模型(可手输,或点「获取模型列表」)</span>
-      <div className="field-row">
-        <input className="grow" list={listId} value={value} onChange={(e) => onChange(e.target.value)} />
-        <button className="btn btn-small" onClick={onFetch}>
-          获取模型列表
-        </button>
+      <div className="model-field" ref={boxRef}>
+        <div className="field-row">
+          <input
+            className="grow"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            onFocus={() => models.length > 0 && setOpen(true)}
+            onClick={() => models.length > 0 && setOpen(true)}
+            placeholder={models.length > 0 ? `可选 ${models.length} 个模型` : '如 glm-4.7-flash'}
+          />
+          <button
+            className="btn btn-small"
+            onClick={() => {
+              onFetch()
+              setOpen(true)
+            }}
+          >
+            获取模型列表
+          </button>
+        </div>
+        {open && (
+          <div className="model-menu" role="listbox">
+            {models.length === 0 ? (
+              <div className="model-menu-empty">还没有候选 —— 先点「获取模型列表」</div>
+            ) : (
+              models.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="option"
+                  aria-selected={m === value}
+                  className={`model-menu-item${m === value ? ' active' : ''}`}
+                  onClick={() => pick(m)}
+                >
+                  {m}
+                </button>
+              ))
+            )}
+          </div>
+        )}
       </div>
-      <datalist id={listId}>
-        {models.map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
     </label>
   )
 }

@@ -20,6 +20,35 @@
 
 ---
 
+## 2026-11-10 · v0.7.5:更新先问后下 + 阿里云更新镜像 + 外观默认跟随系统
+
+用户报了三处体验问题,一并处理:
+
+**1. 更新流程(autoDownload 由 true 改 false)**:发现新版只提示,点「下载更新」才下;
+下载完成才出现「立即重启安装」。`update-check.ts` 增加 `downloading` 态与 `download-start` 事件;
+`updateNow` 改为 check → downloadUpdate(而非依赖 autoDownload 的副作用)。
+
+**2. 更新包下载源改阿里云(0.7.5 起)**:`wireAutoUpdater` 里 `setFeedURL({provider:'generic',
+url:'https://watch.logic-yjb.top/updates'})`,失败回退 `{provider:'github'}` —— 镜像挂了不能让
+更新彻底失联。镜像路由加在 `tools/upstream-watch/server.mjs` 的 `/updates/*`:只转发**当前 latest
+release 资产清单里命中**的文件名(latest.yml/latest-mac.yml/latest-linux.yml + 安装包/blockmap),
+不是开放代理;鉴权沿用服务自身 auth(nginx 的 location / 会注入 token,客户端无需知道)。
+设置键 `updater:feed` 可覆盖,空串=强制 GitHub。
+
+**3. 外观默认 system**:`normalizeThemeSetting` 缺省从 dark 改 system(显式选过的值不动),
+三处 `settings.get(THEME_KEY,'dark')` 同步改;theme 测试改成「脏值回落 system」。
+
+**4. 模型列表下拉为空(真 bug)**:旧实现用 `<datalist>`,且 `listId` 按 `value.length` +
+`models.length` 动态拼接 —— Chromium 在 list id 变化后会丢掉候选关联。改成显式候选面板
+(`.model-menu`,点击/聚焦即展开、点条目填入、Esc/点外部关闭)。
+
+**5. 会话 id 提亮**:`.sess-id` 用 `--msql-fg`(深色下白/浅色下深灰),不再是 dim 灰。
+
+vitest **627:627** / typecheck 0。**发布注意**:镜像需先在服务器 `git pull + pm2 restart`
+(tools/upstream-watch),否则 0.7.5 的自动更新会回退 GitHub(不阻塞发版)。
+
+---
+
 ## 2026-11-10 · 闭源统一上 NAS:发现器 + Copilot CLI 真机适配
 
 用户定的分工:**闭源一律装 NAS 跑探针,开源按原方法**。落地两件:

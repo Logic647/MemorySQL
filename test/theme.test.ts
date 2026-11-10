@@ -40,11 +40,13 @@ describe('主题解析', () => {
     expect(resolveTheme('system', false)).toBe('light')
   })
 
-  it('脏值一律回落到深色(旧版本没有这个键)', () => {
-    expect(normalizeThemeSetting(undefined)).toBe('dark')
-    expect(normalizeThemeSetting('')).toBe('dark')
-    expect(normalizeThemeSetting('DARK')).toBe('dark')
-    expect(normalizeThemeSetting(42)).toBe('dark')
+  it('脏值一律回落到跟随系统(0.7.5 起默认 system,此前是 dark)', () => {
+    expect(normalizeThemeSetting(undefined)).toBe('system')
+    expect(normalizeThemeSetting('')).toBe('system')
+    expect(normalizeThemeSetting('DARK')).toBe('system')
+    expect(normalizeThemeSetting(42)).toBe('system')
+    // 显式选过的值必须保持,不能被默认值吞掉
+    expect(normalizeThemeSetting('dark')).toBe('dark')
     expect(normalizeThemeSetting('light')).toBe('light')
     expect(normalizeThemeSetting('system')).toBe('system')
   })

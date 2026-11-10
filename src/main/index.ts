@@ -190,9 +190,10 @@ async function bootstrap(opts: { deferStart?: boolean } = {}): Promise<{
   const env = resolveAppEnv()
   processPendingImport(env.dataDir, env.dbPath, env.vaultDir)
   const settings = new SettingsStore(env)
+  activeSettings = settings
   // 主题必须在建窗口之前定好:窗口底色/标题栏用的是解析后的值,
   // 晚一步就会先闪一帧深色(浅色主题下尤其明显)
-  nativeTheme.themeSource = normalizeThemeSetting(settings.get(THEME_KEY, 'dark'))
+  nativeTheme.themeSource = normalizeThemeSetting(settings.get(THEME_KEY, 'system'))
   const db = new Db(env.dbPath)
   const events = new EventBus()
   const host = new PluginHost(env, db, settings, events)
@@ -368,11 +369,45 @@ async function loadUpdater(): Promise<AppUpdater> {
 }
 
 let autoUpdaterWired: AppUpdater | null = null
+/** bootstrap 创建的 SettingsStore(updater 需要读 `updater:feed`) */
+let activeSettings: SettingsStore | null = null
+
+/**
+ * 更新包下载源。0.7.5 起默认走阿里云镜像(国内 GitHub 下载太慢),失败自动回退
+ * GitHub provider。镜像由 tools/upstream-watch/server.mjs 的 /updates/* 提供:
+ * latest.yml / latest-mac.yml / latest-linux.yml + 同名资产,全部从**当前最新
+ * release** 里按文件名取(不是开放代理)。
+ *
+ * 设置键 `updater:feed` 可覆盖(空字符串 = 强制走 GitHub)。
+ */
+const UPDATE_FEED_ALIYUN = 'https://watch.logic-yjb.top/updates'
+
+function updaterFeedUrl(): string | null {
+  const raw = activeSettings?.get<unknown>('updater:feed', undefined)
+  if (raw === '') return null // 显式关掉镜像
+  if (typeof raw === 'string' && /^https?:\/\//.test(raw)) return raw.replace(/\/+$/, '')
+  return UPDATE_FEED_ALIYUN
+}
+
+/** 先走镜像(若配置),失败回退 GitHub provider —— 镜像挂了不能让更新彻底失联。 */
+async function checkWithFeed(au: AppUpdater, feed: string | null): Promise<unknown> {
+  if (feed) {
+    try {
+      au.setFeedURL({ provider: 'generic', url: feed })
+      return await au.checkForUpdates()
+    } catch (err) {
+      setUpdater({ type: 'error', message: `镜像源检查失败,回退 GitHub:${String(err instanceof Error ? err.message : err)}` })
+    }
+  }
+  au.setFeedURL({ provider: 'github', owner: 'Logic647', repo: 'MemorySQL' })
+  return await au.checkForUpdates()
+}
 
 function wireAutoUpdater(au: AppUpdater): void {
   if (autoUpdaterWired) return
   autoUpdaterWired = au
-  au.autoDownload = true
+  // 0.7.5 起:发现新版只提示,由用户点「下载更新」再下(autoDownload=false)。
+  au.autoDownload = false
   au.on('update-available', (info: { version?: string }) => {
     setUpdater({ type: 'available', version: info?.version })
   })
@@ -416,7 +451,7 @@ async function startupUpdateCheck(): Promise<void> {
     // only pay the github.com/downloads route when there is something to fetch;
     // a probe failure still tries it as the fallback availability source
     if (!probeOk || updaterState.available) {
-      await au.checkForUpdates()
+      await checkWithFeed(au, updaterFeedUrl())
     }
   } catch (err) {
     const msg = String(err instanceof Error ? err.message : err)
@@ -449,7 +484,7 @@ function applyWindowTheme(win: BrowserWindow, theme: ResolvedTheme): void {
 
 /** 主题的当前状态(设置值 + 解析后的实际主题) */
 function currentThemeState(settings: SettingsStore): ThemeState {
-  const setting = normalizeThemeSetting(settings.get(THEME_KEY, 'dark'))
+  const setting = normalizeThemeSetting(settings.get(THEME_KEY, 'system'))
   return { setting, effective: currentResolvedTheme(setting) }
 }
 
@@ -593,13 +628,13 @@ function registerHostChannels(
       const r = await probeGitHubRelease(app.getVersion())
       if (r.available) {
         setUpdater({ type: 'probe-available', version: r.version ?? '' })
-        // kick the download path so 立即更新 has something to install
+        // 只确认可用性;下载由用户点「下载更新」触发(autoDownload=false)
         try {
           const au = await loadUpdater()
           wireAutoUpdater(au)
-          void au.checkForUpdates().catch(() => {})
+          await checkWithFeed(au, updaterFeedUrl())
         } catch {
-          /* availability already reported; download path is best-effort */
+          /* probe already confirmed; electron-updater path is best-effort */
         }
         return { available: true, version: r.version }
       }
@@ -616,10 +651,19 @@ function registerHostChannels(
     try {
       const autoUpdater = await loadUpdater()
       wireAutoUpdater(autoUpdater)
-      // autoDownload=true: checkForUpdates kicks the download itself; progress
-      // and completion stream out as push:update-status events and the app
-      // asks "restart now or later" — no silent quitAndInstall here
-      await autoUpdater.checkForUpdates()
+      // autoDownload=false → 先 check 拿 updateInfo,再显式 downloadUpdate。
+      // 进度/完成继续走 push:update-status;完成后再由用户确认安装。
+      const r = (await checkWithFeed(autoUpdater, updaterFeedUrl())) as
+        | { updateInfo?: unknown; downloadPromise?: Promise<unknown> | null }
+        | undefined
+      setUpdater({ type: 'download-start' })
+      if (r?.downloadPromise) {
+        void r.downloadPromise.catch(() => {})
+      } else {
+        void autoUpdater.downloadUpdate().catch((err: unknown) => {
+          setUpdater({ type: 'error', message: String(err instanceof Error ? err.message : err) })
+        })
+      }
       return { ok: true, downloading: true }
     } catch (err) {
       const message = String(err instanceof Error ? err.message : err)
@@ -699,7 +743,7 @@ function registerHostChannels(
 }
 
 function createWindow(host: PluginHost, events: EventBus, settings: SettingsStore): BrowserWindow {
-  const theme = currentResolvedTheme(normalizeThemeSetting(settings.get(THEME_KEY, 'dark')))
+  const theme = currentResolvedTheme(normalizeThemeSetting(settings.get(THEME_KEY, 'system')))
   const win = new BrowserWindow({
     width: 1360,
     height: 860,

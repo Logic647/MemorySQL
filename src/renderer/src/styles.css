@@ -235,7 +235,7 @@ html:not([data-theme]) body { background: transparent; }
 .session:hover { background: var(--msql-surface-faint); border-left-color: var(--msql-accent); }
 .session-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .session-title { font-size: var(--msql-fs-md); color: var(--msql-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; display: flex; gap: 6px; align-items: center; }
-.sess-id { font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); flex-shrink: 0; }
+.sess-id { font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs); color: var(--msql-fg); flex-shrink: 0; }
 /* Two timestamps sit as one group at the right edge. The group is a single
    flex item, so the title's available width is measured once against the whole
    pair — not twice, which used to leave the title ~65px (five characters) in
@@ -694,3 +694,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   color: var(--msql-fg-muted); flex-shrink: 0;
 }
 .theme-toggle:hover { color: var(--msql-fg); }
+
+/* 模型候选下拉(替代 <datalist>:Chromium 在 id 动态变化时会丢掉候选,
+   用户反馈「点获取模型列表后下拉无内容」就是它)。 */
+.model-field { position: relative; }
+.model-menu {
+  position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 4px);
+  max-height: 260px; overflow-y: auto;
+  background: var(--msql-bg-elevated);
+  border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md);
+  box-shadow: var(--msql-card-shadow); padding: 4px;
+  backdrop-filter: blur(14px);
+}
+.model-menu-item {
+  display: block; width: 100%; text-align: left; padding: 6px 8px; border-radius: var(--msql-radius-sm);
+  font-family: var(--msql-font-mono); font-size: var(--msql-fs-sm); color: var(--msql-fg);
+  background: transparent; border: 0; cursor: pointer;
+}
+.model-menu-item:hover, .model-menu-item.active { background: color-mix(in srgb, var(--msql-accent) 22%, transparent); }
+.model-menu-empty { padding: 8px; color: var(--msql-fg-dim); font-size: var(--msql-fs-sm); }

@@ -259,6 +259,7 @@ export default function App() {
     available?: boolean
     version?: string
     downloaded?: boolean
+    downloading?: boolean
     error?: string
     progress?: { percent: number; transferred: number; total: number }
   } | null>(null)
@@ -409,7 +410,9 @@ export default function App() {
       available?: boolean
       version?: string
       downloaded?: boolean
+      downloading?: boolean
       error?: string
+      progress?: { percent: number; transferred: number; total: number }
     }): void => {
       setUpBanner(s.available || s.downloaded ? s : null)
     }
@@ -825,13 +828,15 @@ export default function App() {
       {upBanner && (upBanner.downloaded || upBanner.available) && (
         <div className="update-banner" role="status">
           {upBanner.downloaded
-            ? `新版本 v${upBanner.version ?? ''} 已下载,退出应用后自动安装`
-            : upBanner.error
-              ? `发现新版本 v${upBanner.version ?? ''},下载失败——${upBanner.error}`
-              : upBanner.progress
-                ? `正在下载 v${upBanner.version ?? ''}… ${Math.round(upBanner.progress.percent)}%`
-                : `发现新版本 v${upBanner.version ?? ''},正在后台下载…`}
-          {upBanner.progress && !upBanner.downloaded && (
+            ? `新版本 v${upBanner.version ?? ''} 已下载,是否立即安装?`
+            : upBanner.downloading
+              ? `正在下载 v${upBanner.version ?? ''}…${
+                  upBanner.progress ? ` ${Math.round(upBanner.progress.percent)}%` : ''
+                }`
+              : upBanner.error
+                ? `发现新版本 v${upBanner.version ?? ''},下载失败——${upBanner.error}`
+                : `发现新版本 v${upBanner.version ?? ''}`}
+          {upBanner.downloading && upBanner.progress && (
             <div className="update-progress" style={{ marginLeft: 10 }}>
               <div
                 className="update-progress-fill"
@@ -846,6 +851,17 @@ export default function App() {
               onClick={() => void api.updateInstallNow()}
             >
               立即重启安装
+            </button>
+          )}
+          {!upBanner.downloaded && !upBanner.downloading && (
+            <button
+              className="btn btn-accent btn-small"
+              style={{ marginLeft: 10 }}
+              onClick={() =>
+                void api.updateNow().catch((e) => setUpBanner((b) => (b ? { ...b, error: String(e) } : b)))
+              }
+            >
+              {upBanner.error ? '重试下载' : '下载更新'}
             </button>
           )}
           <button

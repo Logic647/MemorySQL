@@ -18,8 +18,9 @@ export interface ThemeState {
 }
 
 export function normalizeThemeSetting(v: unknown): ThemeSetting {
-  if (v === 'light' || v === 'system') return v
-  return 'dark'
+  if (v === 'light' || v === 'dark' || v === 'system') return v
+  // 默认跟随系统(0.7.5 起;此前是 dark)。用户显式选过 dark/light 的保持原值。
+  return 'system'
 }
 
 /** 把「设置值 + 系统偏好」解析成实际主题 */

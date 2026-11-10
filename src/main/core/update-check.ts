@@ -15,6 +15,9 @@ export interface UpdaterState {
   /** live download progress (download-progress events); cleared on completion
    * and on failure so a stale bar never sticks around */
   progress?: UpdaterProgress
+  /** 用户在横幅/设置里点了「下载更新」,下载进行中。
+   * 0.7.5 起 autoDownload=false:发现新版只提示,必须用户确认才下载。 */
+  downloading?: boolean
   /** availability confirmed by the api.github.com probe (authoritative for
    * "is there a newer release" — electron-updater's latest.yml feed can lag) */
   probeConfirmed?: boolean
@@ -23,6 +26,7 @@ export interface UpdaterState {
 export type UpdaterEvent =
   | { type: 'available'; version?: string }
   | { type: 'not-available'; version?: string }
+  | { type: 'download-start' }
   | { type: 'downloaded'; version?: string }
   | { type: 'error'; message: string }
   | { type: 'probe-available'; version: string }
@@ -65,14 +69,23 @@ export function applyUpdaterEvent(state: UpdaterState, ev: UpdaterEvent): Update
       next.available = false
       next.version = ev.version
       next.downloaded = false
+      next.downloading = false
       next.error = undefined
       next.progress = undefined
       next.probeConfirmed = false
       next.checkedAt = Date.now()
       break
+    case 'download-start':
+      next.available = true
+      next.downloaded = false
+      next.downloading = true
+      next.error = undefined
+      next.progress = undefined
+      break
     case 'downloaded':
       next.available = true
       next.downloaded = true
+      next.downloading = false
       next.version = ev.version ?? next.version
       next.error = undefined
       next.progress = undefined
@@ -84,6 +97,7 @@ export function applyUpdaterEvent(state: UpdaterState, ev: UpdaterEvent): Update
       next.error = ev.message
       next.checkedAt = Date.now()
       next.progress = undefined
+      next.downloading = false
       if (next.available === undefined) next.downloaded = false
       break
     case 'probe-available':
@@ -97,6 +111,7 @@ export function applyUpdaterEvent(state: UpdaterState, ev: UpdaterEvent): Update
       next.available = false
       next.version = undefined
       next.downloaded = false
+      next.downloading = false
       next.error = undefined
       next.progress = undefined
       next.probeConfirmed = false
