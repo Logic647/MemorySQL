@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-11-10 · 看板/探针随 24 家更新:看守表单源化 + PATH 真故障 + 面板卡片渲染 bug
+
+用户补了 11 家适配(台账 13→**24 家**,闭源统一上 NAS)。看板与探针侧跟着核了一遍,修掉四处:
+
+**1. 看守表漂移(面板点不到新家)**:新增 copilot/droid 时只改了探针的 `NAS_AGENTS`,面板的 `LOGIN_TARGETS` 还停在 5 家 —— 界面上根本没有这两家的按钮。抽出 **`scripts/nas-targets.mjs` 单一真相源**(探针用 upgrade/version/session,面板派生 login/sshFallback),两边不会再各写一张表。
+
+**2. PATH 真故障(新装 CLI 全都不可见)**:`copilot --version` 在 NAS 上直接 `command not found` —— npm -g 的包落在 `~/local/node-v22.22.1-linux-x64/bin`(我们自己用户态装的 Node),droid/muse/devin 在 `~/.local/bin`,**两者都不在 systemd 默认 PATH**。后果不只是面板点不动:探针的版本探测失败 → `fact.versionError` → 新鲜度逻辑会把好好的 agent 降级成「数据过期」。两个 unit 显式设 PATH,实测 `copilot 1.0.108 / droid 1.7.0` 都能识别。
+
+**3. 面板卡片渲染 bug(此前引入,一直静默)**:`renderAgents` 里 `rulesRow(st, t.id),` 后面误用**逗号**再接字符串 —— 整个 `return` 退化成逗号表达式,只返回最后一段:名称/版本/登录态/数据行与 rulesRow **全被丢弃**,DOM 还缺一个闭合 div。改成 `+` 连接。教训同「改既有渲染函数必须整体验证」家族:页面 JS 没有 typecheck 把关,只有 `node node --check` 的内联脚本断言能兜住**语法**错误,语义错误(逗号表达式)语法合法,得靠读渲染逻辑。
+
+**4. droid 没有 login 子命令**:`--help` 只有 resume/exec/daemon/search/update/mcp/plugin/computer/doctor,认证只能在交互式 TUI 完成。面板不再硬 spawn 一个会卡住的 TUI:`loginCmd:null` → 按钮禁用为「仅 SSH 登录」,API 回 400 `interactive-only` 并把 SSH 指引显示在输出框。顺带放行 `/api/report` 的 `discover-<stamp>.md`(发现器报告现在能在面板里打开)。
+
+**实测**:NAS 探针一轮 → 7 家版本全部识别、`已接收 24 条`、0 漂移 0 过期;面板 lastRun 里 copilot `ok/sessionOk=true`、droid `ok/sessionOk=false`(未登录仍落盘,与发现器结论一致);开发机探针补报 24 条;云端黑盒双源各 24。**云端白盒仍是 13 家** —— 服务器要 `git pull && pm2 restart` 才会读到 24 家台账(与 `/probe` 页同一批部署)。测试 627:629(面板 14 条含 PATH/interactive-only/discover 报告/7 家覆盖)。
+
+---
+
 ## 2026-11-10 · 闭源统一上 NAS:发现器 + Copilot CLI 真机适配
 
 用户定的分工:**闭源一律装 NAS 跑探针,开源按原方法**。落地两件:
@@ -103,6 +119,8 @@ Antigravity 桌面版正文加密不可捕获。完整清单与安装命令见 s
 **截图流水线(scripts/take-screenshots.mjs,新增)**:CDP 驱动 dev Electron 自动截 会话库/会话详情 两张(1360×860)。链路:`npm run build` → `seed-demo.ts <dir> --theme=light`(seed-demo 新增 --theme 参数)→ 脚本自起 electron(--remote-debugging-port)+ 全局 WebSocket(Node ≥22 免依赖)→ Emulation 尺寸 → 等 `.session` 渲染 → **各选一条会话再截**(02 选「全文检索」、03 换「限流」会话,详情栏都有内容且两图不同)→ 存 design/screenshots。**三个坑**:①spawn 忘传 `--remote-debugging-port` 时 electron 照常起、端口从未监听,30s 只能干等 —— 已加 child.exit/spawn error 监听;②GUI 单实例锁按 userData,dev 与装机同 userData,**截图前必须退出装机版**(截完用 Start-Process 拉回,本轮实测应用已恢复);③浏览器缓存 assets(max-age=86400)会让换图后仍显示旧图 —— 截图 URL 加 `?v=` 查询参数(静态服务忽略 query,天然 cache-buster)。
 
 **旧截图归档**:01(终端图,hero 不再用)从 website/assets 移除(design/screenshots 留源);02/03 浅色版覆盖。screenshots.md 状态同步。
+
+**图片拉伸的根因(用户报「截图拉伸很奇怪」)**:CSS 只写了 `img{max-width:100%}`,**漏 `height:auto`** —— HTML 的 `width=1360 height=860` 属性在宽度被容器夹住后,高度仍按属性值渲染,实测 1360×860 的图渲染成 960×860(横向压扁 1.42 倍,肉眼就是「拉变形了」)。修复 = `img{max-width:100%;height:auto}`,顺带把 .shot-stack 的 960px 上限去掉(白占 70px)。**教训:img 写 width/height 属性做 CLS 占位时必须配 height:auto,否则任何缩放都变形;验收要量 `getBoundingClientRect` 比例 vs `naturalWidth/Height`,别靠肉眼。**
 
 ---
 
