@@ -77,6 +77,11 @@
 第二次扫描 1.3s、回执「没有新会话 · 共读 120 条」。真实 108 条 claudecode 源上
 一轮扫描 **1.0s、0 updated**(修前每次 94 updated)。测试 **642 通过 / 2 跳过(644)**。
 
+**已发版 v0.7.6(2026-11-12)**:https://github.com/Logic647/MemorySQL/releases/tag/v0.7.6
+(20 资产)。CI 六 job 全绿;`latest.yml` / `latest-mac.yml` / `latest-linux.yml` 公网 200,
+exe 与 arm64 zip 的 Content-Length 与清单一致;两个 mac job 的清单经
+`merge-mac-manifest.mjs` 合并后上传(arm64/x64 都能解析到 zip)。
+
 ---
 
 ## 2026-11-10 · 看板/探针随 24 家更新:看守表单源化 + PATH 真故障 + 面板卡片渲染 bug
