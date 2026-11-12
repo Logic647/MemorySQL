@@ -7,6 +7,14 @@ import type { SummarizerProvider } from '../../main/core/plugin-host'
 
 const CONTENT_CAP = 100_000
 
+/**
+ * 单次入库等待摘要的预算。LLM 端点变慢/挂掉时不能把整次扫描堵在几十个
+ * 会话的串行请求上(provider 自己的 45s 超时 × N 会变成分钟级)。
+ * 超预算就先用规则标题入库;会话内容后续变化时会重新尝试总结(内容哈希未变
+ * 则沿用库里的标题,不再重复调用)。
+ */
+const SUMMARY_BUDGET_MS = 15_000
+
 /** stored content is capped before hashing, else >100KB-message sessions re-hash every scan */
 function cap(text: string): string {
   return text.length > CONTENT_CAP ? `${text.slice(0, CONTENT_CAP)}\n…[truncated]` : text
@@ -218,6 +226,21 @@ export function createIngestService(deps: IngestDeps): IngestService {
     )
   }
 
+  /** 超时返回 null(调用方降级);不负责取消 provider 自己的请求 */
+  async function withinBudget<T>(p: Promise<T> | T, ms: number): Promise<T | null> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        Promise.resolve(p),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), ms)
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
   const summarizeSession = async (
     s: RawSession
   ): Promise<{ title: string; summary: string }> => {
@@ -226,16 +249,35 @@ export function createIngestService(deps: IngestDeps): IngestService {
     if (s.title || s.messages.length === 0) {
       return { title: s.title ?? fallbackTitle(s), summary: '' }
     }
+    /**
+     * 内容没变时沿用库里已有的标题/摘要。
+     *
+     * 过去这里对**所有**无标题会话都调一次 LLM:claudecode 一次扫描 108 条里
+     * 94 条会被「重新总结」,LLM 每次给的标题还不一样 → 94 次 update + 94 次
+     * 联网,新会话的入库排在它们后面,用户看到的就是「点了扫描一直转」。
+     * 会话消息哈希没变就没有重新总结的理由;用户改名(title_locked)也由
+     * ingestOne 保留。
+     */
+    const existing = stmtSessionFind.get(s.agentType, s.externalId) as
+      | { title: string | null; summary: string | null; content_hash: string }
+      | undefined
+    if (existing?.title && existing.content_hash === hashSession(s)) {
+      return { title: existing.title, summary: existing.summary ?? '' }
+    }
     const provider = getSummarizer()
     if (provider) {
       try {
-        const out = await provider.summarize({
-          agentType: s.agentType,
-          cwd: s.cwd,
-          messages: s.messages,
-          currentTitle: s.title
-        })
+        const out = await withinBudget(
+          provider.summarize({
+            agentType: s.agentType,
+            cwd: s.cwd,
+            messages: s.messages,
+            currentTitle: s.title
+          }),
+          SUMMARY_BUDGET_MS
+        )
         if (out) return out
+        console.warn('[core-schema] summarizer timed out, using fallback title')
       } catch (err) {
         console.error('[core-schema] summarizer failed, using fallback', err)
       }

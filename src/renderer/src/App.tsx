@@ -225,6 +225,11 @@ export default function App() {
   const [overview, setOverview] = useState<Overview | null>(null)
   const [statuses, setStatuses] = useState<Record<string, string>>({})
   const [scanning, setScanning] = useState(false)
+  // 扫描进度 + 结果标签:以前点「立即扫描」只有一个「扫描中…」,扫完没有任何回执,
+  // 用户只能切页面看列表是否变了(2026-11-12 反馈)。
+  const [scanProgress, setScanProgress] = useState<{ done: number; total: number } | null>(null)
+  const [scanNote, setScanNote] = useState<string | null>(null)
+  const scanNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [devlogBusy, setDevlogBusy] = useState(false)
   const [devlogNote, setDevlogNote] = useState<string | null>(null)
   const [devlogDir, setDevlogDir] = useState<string | null>(null)
@@ -335,7 +340,7 @@ export default function App() {
           const detail = s.lastError
             ? `错误: ${s.lastError}`
             : s.lastScanAt
-              ? `${s.sessionsImported} 新导入 / ${s.sessionsFound} 扫描`
+              ? `新增 ${s.sessionsNew ?? s.sessionsImported} / 扫描 ${s.sessionsFound}`
               : '本次运行未扫描(数据已在库)'
           setStatuses((prev) => ({ ...prev, [id]: detail }))
         } catch {
@@ -343,7 +348,7 @@ export default function App() {
         }
       })
     )
-  }, [])
+  }, [enabledCaptures])
 
   useEffect(() => {
     void refresh()
@@ -351,7 +356,18 @@ export default function App() {
 
   useEffect(() => {
     void loadCaptureStatuses()
-    return api.onSessionsChanged(() => void refresh())
+    // 抓取可能连续触发多条 sessions:changed(一次扫描多个插件),状态查询
+    // 合并到 1.5s 后再打,避免每个事件都刷 20 多次 IPC
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const off = api.onSessionsChanged(() => {
+      void refresh()
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => void loadCaptureStatuses(), 1500)
+    })
+    return () => {
+      off()
+      if (timer) clearTimeout(timer)
+    }
   }, [loadCaptureStatuses, refresh])
 
   useEffect(() => {
@@ -480,16 +496,57 @@ export default function App() {
 
   const scanAll = useCallback(async () => {
     setScanning(true)
+    setScanNote(null)
+    // 上一次的回执定时器要撤掉,否则它会把本次的结果提前清空
+    if (scanNoteTimer.current) {
+      clearTimeout(scanNoteTimer.current)
+      scanNoteTimer.current = null
+    }
+    // 必须在点击时取最新的启用表:旧实现的 useCallback 依赖里没有
+    // enabledCaptures,闭包里永远是初始的 {} → 会去调用没有 scanNow 的
+    // 禁用插件,第一个抛错就把整轮扫描截断(后面的 agent 永远不会被扫)。
+    const targets = CAPTURE_PLUGINS.filter(({ id }) => enabledCaptures[id] !== false)
+    let imported = 0
+    let added = 0
+    let found = 0
+    let failed = 0
     try {
-      for (const { id } of CAPTURE_PLUGINS) {
-        if (enabledCaptures[id] === false) continue // 未启用/未检测到:没有 scanNow IPC
-        await api.scanNow(id)
+      setScanProgress({ done: 0, total: targets.length })
+      for (let i = 0; i < targets.length; i++) {
+        setScanProgress({ done: i, total: targets.length })
+        try {
+          const s = await api.scanNow(targets[i].id)
+          imported += s.sessionsImported
+          // 旧主进程没有 sessionsNew 字段 —— 退回 imported 口径,至少不显示 0
+          added += s.sessionsNew ?? s.sessionsImported
+          found += s.sessionsFound
+          if (s.lastError) failed++
+        } catch {
+          // 单个插件失败不能截断整轮(禁用/未注册 IPC 就在这里)
+          failed++
+        }
+        setScanProgress({ done: i + 1, total: targets.length })
       }
       await refresh()
+      // 侧栏/设置页的「N 新导入 / M 扫描」也刷新,不然要切页面才更新
+      await loadCaptureStatuses()
+      const parts: string[] = []
+      if (added > 0) parts.push(`新增 ${added} 条会话`)
+      if (imported > added) parts.push(`更新 ${imported - added} 条`)
+      if (parts.length === 0) parts.push('没有新会话')
+      parts.push(`共读 ${found} 条`)
+      if (failed > 0) parts.push(`${failed} 个插件失败`)
+      setScanNote(parts.join(' · '))
     } finally {
       setScanning(false)
+      setScanProgress(null)
+      // 回执留一会儿再消失;新的一次扫描会先撤掉这个定时器
+      scanNoteTimer.current = setTimeout(() => {
+        scanNoteTimer.current = null
+        setScanNote(null)
+      }, 8000)
     }
-  }, [refresh])
+  }, [refresh, loadCaptureStatuses, enabledCaptures])
 
   const devlog = useCallback(async () => {
     setDevlogBusy(true)
@@ -801,8 +858,13 @@ export default function App() {
           项目总结
         </button>
         <button className="btn btn-accent" disabled={scanning} onClick={() => void scanAll()}>
-          {scanning ? '扫描中…' : '立即扫描'}
+          {scanning
+            ? scanProgress
+              ? `扫描中 ${scanProgress.done}/${scanProgress.total}…`
+              : '扫描中…'
+            : '立即扫描'}
         </button>
+        {scanNote && <span className="devlog-note">{scanNote}</span>}
         <button className="btn" disabled={devlogBusy} onClick={() => void devlog()}>
           {devlogBusy ? '生成中…' : '生成项目日志'}
         </button>

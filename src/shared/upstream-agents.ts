@@ -206,9 +206,10 @@ export const AGENTS: AgentContract[] = [
     agentType: 'claudecode',
     upstream: { kind: 'github', repo: 'anthropics/claude-code' },
     monitor: 'tracked',
-    // 主源 = 完整对话 JSONL。另有 Desktop 元数据源(local_*.json)与
-    // history.jsonl(仅用户侧),两者格式不同,由 parseDesktopMeta / parseHistoryJsonl
-    // 单独处理,故不入 localRoots(避免 jsonl 探测误判)
+    // 主源 = 完整对话 JSONL。桌面端(≥5.x)的 Code 会话另有一份 CLAUDE_CONFIG_DIR
+    // (见 source.note),格式与 CLI 相同;Desktop 元数据(local_*.json)与
+    // history.jsonl(仅用户侧)由 parseDesktopMeta / parseHistoryJsonl 单独处理,
+    // 故不入 localRoots(避免 jsonl 探测误判)
     localRoots: ['.claude/projects'],
     source: {
       kind: 'jsonl',
@@ -217,9 +218,9 @@ export const AGENTS: AgentContract[] = [
         requiredPaths: ['type', 'message'],
         parser: 'claude',
         note:
-          '三源合并去重:①~/.claude/projects/**/*.jsonl 完整对话(主源) ' +
-          '②%LOCALAPPDATA%/Claude-3p/claude-code-sessions/**/local_*.json 桌面版元数据(无对话正文) ' +
-          '③~/.claude/history.jsonl 仅用户侧。桌面版 SDK 不落盘对话'
+          '多源合并去重:①~/.claude/projects/**/*.jsonl 完整对话(CLI 主源) ' +
+          '②Claude 桌面版(CCD)自己的 CLAUDE_CONFIG_DIR:<LOCALAPPDATA>/<app>/claude-code-sessions|local-agent-mode-sessions/**/.claude/projects/**/*.jsonl(同一 transcript 格式) ' +
+          '③local_*.json 桌面元数据(无正文时兜底标题/项目)+ ~/.claude/history.jsonl 仅用户侧'
       }
     },
     mcp: {

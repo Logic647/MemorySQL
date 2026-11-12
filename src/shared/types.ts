@@ -132,7 +132,10 @@ export interface CaptureStatus {
   /** 源目录是否存在(仅表示「装没装」,不代表「读不读得懂」) */
   available: boolean
   sessionsFound: number
+  /** imported + updated(界面历史口径,兼容旧字段) */
   sessionsImported: number
+  /** 其中**真正新增**的会话数(updated 不算);旧版本状态可能没有该字段 */
+  sessionsNew?: number
   lastScanAt: number | null
   /** 最近一次「手动/启动扫描」的错误;增量 watcher 的失败见 health 相关字段 */
   lastError: string | null

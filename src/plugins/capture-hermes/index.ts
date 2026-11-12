@@ -234,6 +234,7 @@ const plugin: MemorySQLPlugin = {
           available: true,
           sessionsFound: res.scanned,
           sessionsImported: res.imported + res.updated,
+          sessionsNew: res.imported,
           lastScanAt: Date.now(),
           lastError: null,
           health: allFailed ? healthFrom(n, lastStatus.lastSuccessAt !== null) : 'healthy',

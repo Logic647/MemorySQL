@@ -4,6 +4,81 @@
 
 ---
 
+## 2026-11-12 · Claude Code 桌面版(CCD)并入捕获 + 设置提示改为「就地显示」
+
+**1. Claude Code 桌面版:不单独适配,并入 `capture-claudecode`**
+
+旧认知(2026-09-11)是「Claude Desktop 通过 Agent SDK 驱动 claude.exe,对话从不落盘」。
+这次拆 `C:\Program Files\WindowsApps\Claude_5.1231.2.0_x64__…\app\resources\app.asar`
+确认已经变了(实测版本 5.1231.2,内置 claude 2.1.321):
+
+- 桌面端 Code 会话有自己的 `CLAUDE_CONFIG_DIR`:transcript 仍按 Claude Code 的
+  `<config>/projects/<slug>/<sessionId>.jsonl` 落盘,只是 config 在应用会话存储里:
+  `%LOCALAPPDATA%/Claude-3p/claude-code-sessions/<org>/<acct>/.claude/projects/…`,
+  `local-agent-mode-sessions/<org>/<acct>/<session>/.claude/projects/…`(少数形态是
+  会话目录下直接 `projects/`)。asar 里的读取路径就是
+  `join(sessionStorageDir, '.claude', 'projects')`,并且 Code 扫描会同时看会话存储与终端 `~/.claude/projects`。
+- 因此**不新增插件、不新增 chip**:同一 transcript 格式 + 同一 `~/.claude.json` 连接器,
+  合并进 `capture-claudecode` 是正确的形态。新增 `findDesktopProjectsRoots()`
+  (walk 两个 store,找带 transcript 的 `projects`),`collect` 把 CLI 与桌面端 transcript
+  按 `externalId` 去重并**保留消息更多的一份**(桌面端可能是窗口内缓存,不能覆盖完整 CLI 版);
+  旧 `local_*.json` 元数据仍在无正文时兜底。`sourceExists` 把「桌面端会话存储存在」
+  也算作数据源,避免只装了桌面版、没有 `~/.claude/projects` 的机器默认关闭插件。
+- watcher 监听整个两个 store 根(会话目录是按需创建的),`history.jsonl` 的增量事件跳过,
+  避免凭空造出 `history:xxx` 副本(全量扫描仍与 transcript 合并去重)。
+- **真机验证(用户当天用桌面版 Code 开了一次会话后)**:`~/.claude/projects/H-----temp/110bee09-….jsonl`
+  + 元数据 `local_eed7949a-…`(`cliSessionId` 同为 110bee09)已正常入库为 #559。
+  说明本机桌面版默认仍用 `~/.claude` 作为 config dir;`findDesktopProjectsRoots()`
+  仍返回 `[]`,那两条 store 路径保留作「用户改过 Desktop Settings 的 CLAUDE_CONFIG_DIR」
+  时的兜底。台账 note 已同步为多源,`ledger:export` 已重导。
+
+**2. 设置页提示:从页面末尾搬到设置项下方,切页即清空**
+
+用户反馈「提示总在该页末尾,应该改哪项就显示在哪项下方,切换页面后消失」。把单一
+`msg` 状态换成按插槽存放的 `NoticeContext`:每个 `<NoticeLine slot>` 就地渲染
+(`.inline-msg`,成功绿/失败红,错误语气按既有文案里的「失败/错误/异常/未通过」判定,
+不改 40 多个调用点的签名)。粒度到行:插件开关按 `plugin:<id>`、捕获开关按
+`capture:<id>`、连接/写入规则按 `connect:<id>`;锁屏/存储/MCP 开关/端口/LLM/同步/
+备份/语义/总结/更新各自独立插槽。切换左侧分类时整体清空,切回来不会复现。
+`useNotice()` 提供 no-op 兜底,子组件单独渲染也不会炸。
+
+**3. 其余**:连接向导标签去掉示例路径(改为「项目根目录(仅项目级规则的 agent 需要;
+用户级规则的留空即可)」,占位符也从本机路径换成通用的 `如 D:\projects\my-app`);
+捕获列表与连接向导标签标注「CLI / 桌面版」。
+
+**验证**:vitest **641 通过 / 2 跳过(643)**(新增 CCD 布局发现 + 解析用例);typecheck 0;
+`npm run build` 通过;CDP 实测设置页(临时 user-data-dir,不碰装机版)12/12 ——
+插件行下方出现 `.inline-msg`、位置在行底之下、切到「通用」后清空、切回不再出现、
+连接向导标签文案正确,截图 `out/tmp/settings-notice.png`。
+
+**4. 扫描会话「卡住 / 新会话不出现」的根因与修复(同日追加)**
+
+用户反馈:桌面版新会话 `110bee09` 没录入,点「立即扫描」也没用,且按钮一直停在
+「扫描中…」直到切页面。复现后拆成两个独立问题:
+
+- **① 每次扫描都把无标题会话重新送 LLM**:`ingestSessions` 在写库前对**所有**
+  `title` 为空的会话串行调 `summarizeSession`。claudecode 一次扫描 108 条里 94 条
+  每次都更新(启动日志 `108 found, 0 imported, 94 updated`),LLM 标题每次还不一样
+  → 94 次联网 + 94 次 update,新会话的入库排在后面,用户看到的就是「扫描一直转」。
+  **修**:内容哈希(`hashSession`)与库里一致且已有标题时**直接沿用库里的标题/摘要**,
+  不再调 LLM(用户改名 `title_locked` 的语义不变);摘要调用加 15s 预算,超时用规则
+  标题入库。修后同机启动扫描 `108 found, 0 imported, 0 updated, 108 unchanged`。
+- **② `scanAll` 的闭包与回执**:`useCallback` 依赖里没有 `enabledCaptures`,永远用初始
+  `{}` → 会去调禁用插件的 `scanNow`(没有 handler),第一个异常就中断整轮;而且结果
+  全丢、不刷捕获状态、无任何完成回执。**修**:点击时取最新启用表、单插件 try/catch
+  不截断、按钮显示 `扫描中 i/n…`、完成后刷新列表与捕获状态并回执 8 秒;状态文案
+  改「新增 N / 扫描 M」(新增字段 `CaptureStatus.sessionsNew`,旧的
+  `sessionsImported` 保留兼容);`sessions:changed` 后 1.5s 防抖刷新捕获状态,
+  不再需要切页面才更新。
+
+**E2E(真库副本 + 真实 settings,LLM 生效)**:启动完成后往 `capture-claudecode` 源里
+落一份真实 transcript 的副本(换 sessionId)→ 点「立即扫描」:3.1–6.1s 完成,
+回执「新增 1 条会话 · 共读 120 条」,搜索命中且列表 DOM 从 124 行变 125 行;
+第二次扫描 1.3s、回执「没有新会话 · 共读 120 条」。真实 108 条 claudecode 源上
+一轮扫描 **1.0s、0 updated**(修前每次 94 updated)。测试 **642 通过 / 2 跳过(644)**。
+
+---
+
 ## 2026-11-10 · 看板/探针随 24 家更新:看守表单源化 + PATH 真故障 + 面板卡片渲染 bug
 
 用户补了 11 家适配(台账 13→**24 家**,闭源统一上 NAS)。看板与探针侧跟着核了一遍,修掉四处:

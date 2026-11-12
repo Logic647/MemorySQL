@@ -1,9 +1,36 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { LLM_PRESETS, presetById } from '../../shared/llm-presets'
 import { groupedPlugins } from './plugin-groups'
 
 type Provider = 'none' | 'openai' | 'anthropic' | 'ollama'
+
+/**
+ * 设置页的操作反馈(who was changed → shown right under that control)。
+ *
+ * 以前所有消息都堆在页面末尾的一个「kb-msg」里:改的是顶部的主题,提示却
+ * 出现在滚动到底才能看见的地方;切换分类后还会跟着新页面一起显示。
+ * 现在按「插槽」存放,`<NoticeLine slot=…>` 就地渲染,切页时整体清空。
+ */
+type Notice = { text: string; tone: 'ok' | 'err' }
+interface NoticeApi {
+  notices: Record<string, Notice>
+  push: (slot: string, text: string) => void
+}
+
+const NoticeContext = createContext<NoticeApi | null>(null)
+
+function useNotice(): NoticeApi {
+  // Provider 总会包住设置页;兜底成 no-op,避免子组件单独渲染时炸掉
+  return useContext(NoticeContext) ?? { notices: {}, push: () => {} }
+}
+
+function NoticeLine({ slot }: { slot: string }) {
+  const { notices } = useNotice()
+  const notice = notices[slot]
+  if (!notice) return null
+  return <div className={`inline-msg ${notice.tone}`}>{notice.text}</div>
+}
 
 const PROVIDER_LABEL: Record<Provider, string> = {
   none: '本地规则(默认,无 LLM)',
@@ -21,7 +48,7 @@ const PLUGIN_DESC: Record<string, string> = {
   'capture-codex': 'Codex CLI 会话捕获',
   'capture-zcode': 'ZCode 会话捕获',
   'capture-hermes': 'Hermes 桌面版会话捕获',
-  'capture-claudecode': 'Claude Code 会话捕获',
+  'capture-claudecode': 'Claude Code 会话捕获(CLI + 桌面版)',
   'capture-qwencode': 'Qwen Code(通义千问 CLI)会话捕获',
   'capture-kimicli': 'Kimi CLI 会话捕获',
   'capture-codebuddy': 'CodeBuddy Code(腾讯)会话捕获',
@@ -50,7 +77,14 @@ export default function SettingsView() {
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
   const [folder, setFolder] = useState('')
   const [syncInfo, setSyncInfo] = useState<{ deviceId: string; lastSyncAt: number; plaintextAck: boolean } | null>(null)
-  const [msg, setMsg] = useState('')
+  const [notices, setNotices] = useState<Record<string, Notice>>({})
+  const push = useCallback((slot: string, text: string): void => {
+    // 错误语气只影响配色,不改变文案;判定靠现有文案里的固定词,免得
+    // 把 40 多个调用点全部改成 (text, tone) 二元签名
+    const tone: Notice['tone'] = /失败|错误|异常|未通过/.test(text) ? 'err' : 'ok'
+    setNotices((prev) => ({ ...prev, [slot]: { text, tone } }))
+  }, [])
+  const noticeApi = useMemo<NoticeApi>(() => ({ notices, push }), [notices, push])
   const [mcpPort, setMcpPort] = useState('')
   /**
    * MCP 端点是否对外服务。
@@ -109,6 +143,11 @@ export default function SettingsView() {
     void load()
   }, [load])
 
+  // 切页即清空:提示属于"刚才在哪个分类里做了什么",不该跨页存活
+  useEffect(() => {
+    setNotices({})
+  }, [category])
+
   // 外观主题:主进程是真相源,设置页打开时读一次当前值
   useEffect(() => {
     void api
@@ -129,19 +168,19 @@ export default function SettingsView() {
   const togglePlugin = useCallback((p: { id: string; name: string }, next: boolean): void => {
     // optimistic:先翻开关再等 IPC;失败回滚,不能让界面显示一个并未生效的状态
     setPluginList((prev) => prev.map((q) => (q.id === p.id ? { ...q, enabled: next } : q)))
-    setMsg(`${p.name} 已${next ? '启用' : '停用'},重启生效`)
+    push(`plugin:${p.id}`, `${p.name} 已${next ? '启用' : '停用'},重启生效`)
     void api.hostPluginEnable(p.id, next).catch((err) => {
       setPluginList((prev) => prev.map((q) => (q.id === p.id ? { ...q, enabled: !next } : q)))
-      setMsg(`操作失败: ${String(err)}`)
+      push(`plugin:${p.id}`, `操作失败: ${String(err)}`)
     })
-  }, [])
+  }, [push])
 
   const saveLlm = useCallback(async () => {
     if (!cfg) return
     await api.llmSetConfig(cfg)
     setCfg(await api.llmGetConfig())
-    setMsg(`LLM 引擎已保存(${String(cfg.provider)})`)
-  }, [cfg])
+    push('llm', `LLM 引擎已保存(${String(cfg.provider)})`)
+  }, [cfg, push])
 
   const testConn = useCallback(async () => {
     if (!cfg) return
@@ -171,6 +210,7 @@ export default function SettingsView() {
           </button>
         ))}
       </aside>
+      <NoticeContext.Provider value={noticeApi}>
       <div className="settings-main">
       <div className="settings-body">
         {category === '通用' && (
@@ -195,13 +235,14 @@ export default function SettingsView() {
                       setThemeSetting(value)
                       void api
                         .setTheme(value)
-                        .catch((e) => setMsg(`主题切换失败: ${String(e)}`))
+                        .catch((e) => push('theme', `主题切换失败: ${String(e)}`))
                     }}
                   >
                     {label}
                   </button>
                 ))}
               </div>
+              <NoticeLine slot="theme" />
             </section>
 
             <section>
@@ -209,7 +250,7 @@ export default function SettingsView() {
               <p className="hint">
                 开机自动运行 MemorySQL(写入系统登录项,即时生效)。启动后隐藏到托盘时窗口不弹出,MCP 服务照常可用,点托盘图标或全局秒搜热键唤起。
               </p>
-              <LaunchSection onMsg={setMsg} />
+              <LaunchSection />
             </section>
 
             <section>
@@ -228,8 +269,8 @@ export default function SettingsView() {
                   onClick={() =>
                     void api
                       .hostDataDir(dataDir.trim())
-                      .then(() => setMsg('迁移完成,应用即将重启…'))
-                      .catch((e) => setMsg(`迁移失败: ${String(e)}`))
+                      .then(() => push('storage', '迁移完成,应用即将重启…'))
+                      .catch((e) => push('storage', `迁移失败: ${String(e)}`))
                   }
                 >
                   迁移到新目录
@@ -239,13 +280,14 @@ export default function SettingsView() {
                   onClick={() =>
                     void api
                       .hostDataDir(undefined, true)
-                      .then(() => setMsg('将恢复默认位置,应用即将重启…'))
-                      .catch((e) => setMsg(`操作失败: ${String(e)}`))
+                      .then(() => push('storage', '将恢复默认位置,应用即将重启…'))
+                      .catch((e) => push('storage', `操作失败: ${String(e)}`))
                   }
                 >
                   恢复默认位置
                 </button>
               </div>
+              <NoticeLine slot="storage" />
             </section>
 
             <section>
@@ -273,7 +315,8 @@ export default function SettingsView() {
                         // 而 ipc 早就有 stop+start 通道,只是界面从没用过
                         .then(() => api.mcpRestart())
                         .then((r) => {
-                          setMsg(
+                          push(
+                            'mcp',
                             next
                               ? r.running
                                 ? 'MCP 端点已开启'
@@ -284,7 +327,7 @@ export default function SettingsView() {
                         .catch((err) => {
                           // 失败必须回滚,不能让界面显示一个并未生效的状态
                           setMcpOn(prev)
-                          setMsg(`操作失败: ${String(err)}`)
+                          push('mcp', `操作失败: ${String(err)}`)
                         })
                     }}
                   />
@@ -292,6 +335,7 @@ export default function SettingsView() {
                 </label>
                 <span className="mono-tag">{mcpOn ? '已开启 · agent 可连' : '已关闭 · 本机进程也读不到'}</span>
               </div>
+              <NoticeLine slot="mcp" />
               <p className="hint">
                 <strong>对外提供 MCP 端点</strong>
                 :agent 连接端点 http://127.0.0.1:端口/mcp。端口被占用时自动向后顺延并在侧栏提示。
@@ -340,12 +384,13 @@ export default function SettingsView() {
                 onClick={() =>
                   void api
                     .hostPluginSetting('mcp-server', 'port', Number(mcpPort) || 8642)
-                    .then(() => setMsg('端口已保存,重启生效'))
-                    .catch((e) => setMsg(`保存失败: ${String(e)}`))
+                    .then(() => push('mcp-port', '端口已保存,重启生效'))
+                    .catch((e) => push('mcp-port', `保存失败: ${String(e)}`))
                 }
               >
                 保存端口
               </button>
+              <NoticeLine slot="mcp-port" />
             </section>
           </>
         )}
@@ -363,13 +408,13 @@ export default function SettingsView() {
                 写哪个文件由台账决定(金丝雀实测/源码/官方文档测定,不许猜);幂等、可逆。只认项目级规则的 agent(qoder/codebuddy 等)需要下面的目录;
                 认用户级规则的(codex/claudecode/kimi/dsh 等)留空即可对所有项目生效。
               </p>
-              <AgentConnectSection onMsg={setMsg} />
+              <AgentConnectSection />
             </section>
 
             <section>
               <h3>Agent 会话捕获</h3>
               <p className="hint">启停各家 agent 的会话自动导入(关闭后重启应用生效);数据路径可改。未检测到数据目录的 agent 会显示「未检测到」,装好后点立即扫描或等增量监听。</p>
-              <AgentCaptureSection onMsg={setMsg} />
+              <AgentCaptureSection />
             </section>
 
             <section>
@@ -378,7 +423,7 @@ export default function SettingsView() {
                 使用未内置支持的 agent?登记它的项目目录与要捕获的文件(如 AGENTS.md / CLAUDE.md / MEMORY.md / *.jsonl),
                 命中文件将只读导入为该 agent 的记忆。
               </p>
-              <WatcherSection onMsg={setMsg} />
+              <WatcherSection />
             </section>
           </>
         )}
@@ -458,8 +503,8 @@ export default function SettingsView() {
                       api.llmListModels().then((r) => {
                         if (r.ok && r.models) {
                           setCfg((c) => (c ? { ...c, _models: r.models } : c))
-                          setMsg(`已获取 ${r.models.length} 个模型`)
-                        } else setMsg(r.message ?? '获取失败')
+                          push('llm', `已获取 ${r.models.length} 个模型`)
+                        } else push('llm', r.message ?? '获取失败')
                       })
                     }
                     models={(cfg._models as string[] | undefined) ?? []}
@@ -488,8 +533,8 @@ export default function SettingsView() {
                       api.llmListModels().then((r) => {
                         if (r.ok && r.models) {
                           setCfg((c) => (c ? { ...c, _models: r.models } : c))
-                          setMsg(`已获取 ${r.models.length} 个模型`)
-                        } else setMsg(r.message ?? '获取失败')
+                          push('llm', `已获取 ${r.models.length} 个模型`)
+                        } else push('llm', r.message ?? '获取失败')
                       })
                     }
                     models={(cfg._models as string[] | undefined) ?? []}
@@ -510,8 +555,8 @@ export default function SettingsView() {
                       api.llmListModels().then((r) => {
                         if (r.ok && r.models) {
                           setCfg((c) => (c ? { ...c, _models: r.models } : c))
-                          setMsg(`已获取 ${r.models.length} 个模型`)
-                        } else setMsg(r.message ?? '获取失败')
+                          push('llm', `已获取 ${r.models.length} 个模型`)
+                        } else push('llm', r.message ?? '获取失败')
                       })
                     }
                     models={(cfg._models as string[] | undefined) ?? []}
@@ -528,6 +573,7 @@ export default function SettingsView() {
                 </button>
                 {llmTest && <span className={llmTest.ok ? 'ok-tag' : 'hint'}>{llmTest.message}</span>}
               </div>
+              <NoticeLine slot="llm" />
               {Boolean(cfg.available) && provider !== 'none' && (
                 <span className="ok-tag">✓ 已就绪 · 会话摘要与记忆精炼将使用 LLM</span>
               )}
@@ -540,7 +586,7 @@ export default function SettingsView() {
                 为缩小安装包,原生推理组件(约 15MB)与模型(约 100MB)都在首次启用时下载,缓存于数据目录;
                 停用后纯关键词检索照常。
               </p>
-              <SemanticSection onMsg={setMsg} />
+              <SemanticSection />
             </section>
 
             <section>
@@ -551,7 +597,7 @@ export default function SettingsView() {
                 <strong>默认关闭</strong>;开启后,LLM 引擎可用时素材<strong>脱敏后</strong>发送至所选 provider,
                 未配置 LLM 则用本地规则总结(零外发)。
               </p>
-              <DigestSection onMsg={setMsg} />
+              <DigestSection />
             </section>
           </>
         )}
@@ -577,8 +623,8 @@ export default function SettingsView() {
                   onClick={() =>
                     void api
                       .syncConfigure(folder)
-                      .then(() => setMsg('同步文件夹已保存'))
-                      .catch((e) => setMsg(`保存失败: ${String(e)}`))
+                      .then(() => push('sync', '同步文件夹已保存'))
+                      .catch((e) => push('sync', `保存失败: ${String(e)}`))
                   }
                 >
                   保存文件夹
@@ -589,16 +635,18 @@ export default function SettingsView() {
                   onClick={() =>
                     void api.syncNow().then(
                       (r) =>
-                        setMsg(
+                        push(
+                          'sync',
                           `同步完成:拉取 ${r.filesPulled} 个文件,新增会话 ${r.sessionsAdded},更新 ${r.sessionsUpdated},新增记忆 ${r.memoriesAdded}`
                         ),
-                      (e) => setMsg(`同步失败: ${String(e)}`)
+                      (e) => push('sync', `同步失败: ${String(e)}`)
                     )
                   }
                 >
                   立即同步
                 </button>
               </div>
+              <NoticeLine slot="sync" />
               <label
                 className="hint"
                 style={{ display: 'flex', gap: 6, alignItems: 'flex-start', cursor: 'pointer' }}
@@ -611,13 +659,14 @@ export default function SettingsView() {
                       .hostPluginSetting('sync-folder', 'plaintextAck', e.target.checked)
                       .then(() => {
                         setSyncInfo((prev) => (prev ? { ...prev, plaintextAck: e.target.checked } : prev))
-                        setMsg(e.target.checked ? '已确认：云同步将不做脱敏(明文写入网盘目录)' : '已撤销确认')
+                        push('sync-ack', e.target.checked ? '已确认：云同步将不做脱敏(明文写入网盘目录)' : '已撤销确认')
                       })
-                      .catch((err) => setMsg(`操作失败: ${String(err)}`))
+                      .catch((err) => push('sync-ack', `操作失败: ${String(err)}`))
                   }
                 />
                 我已知晓:云同步不做脱敏,会话与记忆明文写入网盘目录(两机数据一致所需)
               </label>
+              <NoticeLine slot="sync-ack" />
               {syncInfo && (
                 <p className="hint">
                   设备 ID: {syncInfo.deviceId} · 上次同步: {syncInfo.lastSyncAt ? new Date(syncInfo.lastSyncAt).toLocaleString('zh-CN') : '从未'}
@@ -625,7 +674,7 @@ export default function SettingsView() {
               )}
             </section>
 
-            <BackupPathsSection onMsg={setMsg} />
+            <BackupPathsSection />
           </>
         )}
 
@@ -679,11 +728,10 @@ export default function SettingsView() {
           </section>
         )}
 
-        {category === '关于' && <AboutSection onMsg={setMsg} />}
-
-        {msg && <div className="kb-msg">{msg}</div>}
+        {category === '关于' && <AboutSection />}
       </div>
       </div>
+      </NoticeContext.Provider>
     </div>
   )
 }
@@ -696,24 +744,28 @@ function PluginRow({
   onToggle: (p: { id: string; name: string }, next: boolean) => void
 }) {
   return (
-    <div className="plugin-row">
-      <div className="plugin-main">
-        <div className="field-row" style={{ margin: 0 }}>
-          <label className="switch">
-            <input type="checkbox" checked={p.enabled} onChange={(e) => onToggle(p, e.target.checked)} />
-            <span className="slider" />
-          </label>
-          <span className="mono-tag">
-            {p.name} ({p.id}@{p.version}){p.external ? ' · 外部' : ''}
-          </span>
+    <>
+      <div className="plugin-row">
+        <div className="plugin-main">
+          <div className="field-row" style={{ margin: 0 }}>
+            <label className="switch">
+              <input type="checkbox" checked={p.enabled} onChange={(e) => onToggle(p, e.target.checked)} />
+              <span className="slider" />
+            </label>
+            <span className="mono-tag">
+              {p.name} ({p.id}@{p.version}){p.external ? ' · 外部' : ''}
+            </span>
+          </div>
+          {PLUGIN_DESC[p.id] && <div className="plugin-desc">{PLUGIN_DESC[p.id]}</div>}
         </div>
-        {PLUGIN_DESC[p.id] && <div className="plugin-desc">{PLUGIN_DESC[p.id]}</div>}
       </div>
-    </div>
+      <NoticeLine slot={`plugin:${p.id}`} />
+    </>
   )
 }
 
-function BackupPathsSection({ onMsg }: { onMsg: (s: string) => void }) {
+function BackupPathsSection() {
+  const { push } = useNotice()
   const [paths, setPaths] = useState<{ backupsDir: string; dispatchDir: string; devlogDir: string } | null>(null)
   const [backupDraft, setBackupDraft] = useState('')
   const [dispatchDraft, setDispatchDraft] = useState('')
@@ -727,8 +779,8 @@ function BackupPathsSection({ onMsg }: { onMsg: (s: string) => void }) {
       })
       .catch(() => setPaths(null))
   }, [])
-  const open = (p: string): void => {
-    void api.openPath(p).catch((e) => onMsg(`打开失败: ${String(e)}`))
+  const open = (p: string, slot: string): void => {
+    void api.openPath(p).catch((e) => push(slot, `打开失败: ${String(e)}`))
   }
   return (
     <section>
@@ -748,16 +800,17 @@ function BackupPathsSection({ onMsg }: { onMsg: (s: string) => void }) {
               onClick={() =>
                 void api
                   .hostPluginSetting('sync-archive', 'backupDir', backupDraft.trim())
-                  .then(() => onMsg('备份目录已保存,即时生效'))
-                  .catch((e) => onMsg(`保存失败: ${String(e)}`))
+                  .then(() => push('backup', '备份目录已保存,即时生效'))
+                  .catch((e) => push('backup', `保存失败: ${String(e)}`))
               }
             >
               保存
             </button>
-            <button className="btn btn-small" onClick={() => open(backupDraft.trim())}>
+            <button className="btn btn-small" onClick={() => open(backupDraft.trim(), 'backup')}>
               打开
             </button>
           </div>
+          <NoticeLine slot="backup" />
 
           <label className="field">
             <span>记忆分发目录</span>
@@ -769,25 +822,27 @@ function BackupPathsSection({ onMsg }: { onMsg: (s: string) => void }) {
               onClick={() =>
                 void api
                   .hostPluginSetting('memory-dispatch', 'dispatchDir', dispatchDraft.trim())
-                  .then(() => onMsg('分发目录已保存,即时生效'))
-                  .catch((e) => onMsg(`保存失败: ${String(e)}`))
+                  .then(() => push('dispatch', '分发目录已保存,即时生效'))
+                  .catch((e) => push('dispatch', `保存失败: ${String(e)}`))
               }
             >
               保存
             </button>
-            <button className="btn btn-small" onClick={() => open(dispatchDraft.trim())}>
+            <button className="btn btn-small" onClick={() => open(dispatchDraft.trim(), 'dispatch')}>
               打开
             </button>
           </div>
+          <NoticeLine slot="dispatch" />
 
           <div className="field-row">
             <span className="mono-tag" style={{ flex: 1 }}>
               项目开发日志: {paths.devlogDir}(随 vault,不可改)
             </span>
-            <button className="btn btn-small" onClick={() => open(paths.devlogDir)}>
+            <button className="btn btn-small" onClick={() => open(paths.devlogDir, 'devlog')}>
               打开
             </button>
           </div>
+          <NoticeLine slot="devlog" />
         </>
       )}
     </section>
@@ -797,7 +852,8 @@ function BackupPathsSection({ onMsg }: { onMsg: (s: string) => void }) {
 /** bytes → compact MB display for the download progress line */
 const fmtMB = (n: number): string => `${(n / 1024 / 1024).toFixed(1)}MB`
 
-function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
+function AboutSection() {
+  const { push } = useNotice()
   const [info, setInfo] = useState<{ version: string; electron: string; packaged: boolean } | null>(null)
   const [update, setUpdate] = useState<{ available: boolean; version?: string; reason?: string } | null>(null)
   const [checking, setChecking] = useState(false)
@@ -846,7 +902,7 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
     void api
       .checkUpdate()
       .then(setUpdate)
-      .catch((e) => onMsg(`检查失败: ${String(e)}`))
+      .catch((e) => push('about', `检查失败: ${String(e)}`))
       .finally(() => setChecking(false))
   }
 
@@ -869,6 +925,7 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
           BUG 反馈
         </button>
       </div>
+      <NoticeLine slot="about" />
       {upStatus?.downloaded && (
         <>
           <p className="hint">
@@ -876,7 +933,7 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
           </p>
           <button
             className="btn btn-accent btn-small"
-            onClick={() => void api.updateInstallNow().catch((e) => onMsg(`安装失败: ${String(e)}`))}
+            onClick={() => void api.updateInstallNow().catch((e) => push('update', `安装失败: ${String(e)}`))}
           >
             立即重启安装 v{upStatus.version ?? ''}
           </button>
@@ -923,13 +980,14 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
           onClick={() =>
             void api
               .updateNow()
-              .then((r) => onMsg(r.ok ? '更新包开始下载,完成后会询问是否立即重启安装' : r.reason ?? '下载失败'))
-              .catch((e) => onMsg(`下载失败: ${String(e)}`))
+              .then((r) => push('update', r.ok ? '更新包开始下载,完成后会询问是否立即重启安装' : r.reason ?? '下载失败'))
+              .catch((e) => push('update', `下载失败: ${String(e)}`))
           }
         >
           下载更新包 v{update.version}
         </button>
       )}
+      <NoticeLine slot="update" />
 
       <h3 style={{ marginTop: 18 }}>更新日志(当前版本)</h3>
       {currentLog.length === 0 && <p className="hint">暂无当前版本的更新日志(可到 GitHub Releases 查看)。</p>}
@@ -946,7 +1004,8 @@ function AboutSection({ onMsg }: { onMsg: (s: string) => void }) {
   )
 }
 
-function LaunchSection({ onMsg }: { onMsg: (s: string) => void }) {
+function LaunchSection() {
+  const { push } = useNotice()
   const [status, setStatus] = useState<{ supported: boolean; openAtLogin: boolean; launchHidden: boolean } | null>(null)
 
   const load = useCallback(async (): Promise<void> => {
@@ -972,7 +1031,7 @@ function LaunchSection({ onMsg }: { onMsg: (s: string) => void }) {
       .then((r) => setStatus((prev) => (prev ? { ...prev, ...r } : prev)))
       .catch((err) => {
         void load()
-        onMsg(`设置失败: ${String(err)}`)
+        push('launch', `设置失败: ${String(err)}`)
       })
   }
 
@@ -994,11 +1053,13 @@ function LaunchSection({ onMsg }: { onMsg: (s: string) => void }) {
           <span className="mono-tag">{status.launchHidden ? '启动后隐藏到托盘' : '启动后显示主窗口'}</span>
         </div>
       )}
+      <NoticeLine slot="launch" />
     </>
   )
 }
 
-function SemanticSection({ onMsg }: { onMsg: (s: string) => void }) {
+function SemanticSection() {
+  const { push } = useNotice()
   const [status, setStatus] = useState<{
     enabled: boolean
     available: boolean
@@ -1036,11 +1097,11 @@ function SemanticSection({ onMsg }: { onMsg: (s: string) => void }) {
               const next = e.target.checked
               setStatus((prev) => (prev ? { ...prev, enabled: next } : prev))
               setPending(next)
-              onMsg(`语义检索已${next ? '启用' : '停用'},重启应用生效`)
+              push('semantic', `语义检索已${next ? '启用' : '停用'},重启应用生效`)
               void api.hostPluginSetting('semantic-search', 'enabled', next).catch((err) => {
                 setStatus((prev) => (prev ? { ...prev, enabled: !next } : prev))
                 setPending(null)
-                onMsg(`操作失败: ${String(err)}`)
+                push('semantic', `操作失败: ${String(err)}`)
               })
             }}
           />
@@ -1064,8 +1125,8 @@ function SemanticSection({ onMsg }: { onMsg: (s: string) => void }) {
             setBusy(true)
             void api
               .semanticReindex()
-              .then((r) => onMsg(`语义索引已重建:新增 ${r.embedded},移除 ${r.removed},共 ${r.rows} 条`))
-              .catch((err) => onMsg(`重建失败: ${String(err)}`))
+              .then((r) => push('semantic', `语义索引已重建:新增 ${r.embedded},移除 ${r.removed},共 ${r.rows} 条`))
+              .catch((err) => push('semantic', `重建失败: ${String(err)}`))
               .finally(() => setBusy(false))
           }}
         >
@@ -1082,13 +1143,13 @@ function SemanticSection({ onMsg }: { onMsg: (s: string) => void }) {
             void api
               .semanticInstallRuntime()
               .then((r) =>
-                onMsg(
+                push('semantic',
                   r.ok
                     ? `语义组件已就绪(v${r.version ?? ''})${r.available ? ',语义检索即时启用' : ',重启应用后生效'}`
                     : (r.message ?? '下载失败')
                 )
               )
-              .catch((err) => onMsg(`下载失败: ${String(err)}`))
+              .catch((err) => push('semantic', `下载失败: ${String(err)}`))
               .finally(() => {
                 setInstalling(false)
                 void load()
@@ -1098,11 +1159,13 @@ function SemanticSection({ onMsg }: { onMsg: (s: string) => void }) {
           {installing ? '下载中…(约 15MB)…' : '下载语义组件(~15MB)'}
         </button>
       )}
+      <NoticeLine slot="semantic" />
     </>
   )
 }
 
-function DigestSection({ onMsg }: { onMsg: (s: string) => void }) {
+function DigestSection() {
+  const { push } = useNotice()
   const [st, setSt] = useState<{
     enabled: boolean
     quietMinutes: number
@@ -1141,7 +1204,7 @@ function DigestSection({ onMsg }: { onMsg: (s: string) => void }) {
               void api
                 .hostPluginSetting('project-digest', 'enabled', next)
                 .then(() => {
-                  onMsg(
+                  push('digest-toggle',
                     next
                       ? '项目总结已开启(即时生效):新会话安静期后自动总结,会话页项目组头出现状态徽标'
                       : '项目总结已关闭:不再自动总结,也不再发送任何数据'
@@ -1150,7 +1213,7 @@ function DigestSection({ onMsg }: { onMsg: (s: string) => void }) {
                 })
                 .catch((err) => {
                   setSt((prev) => (prev ? { ...prev, enabled: !next } : prev))
-                  onMsg(`操作失败: ${String(err)}`)
+                  push('digest-toggle', `操作失败: ${String(err)}`)
                 })
             }}
           />
@@ -1162,6 +1225,7 @@ function DigestSection({ onMsg }: { onMsg: (s: string) => void }) {
             : '已关闭(默认)· 不总结、不外发任何数据'}
         </span>
       </div>
+      <NoticeLine slot="digest-toggle" />
       <div className="field-row">
         <label className="field" style={{ maxWidth: 320 }}>
           <span>安静期(分钟)—— 新会话入库后安静多久才自动总结</span>
@@ -1172,13 +1236,14 @@ function DigestSection({ onMsg }: { onMsg: (s: string) => void }) {
           onClick={() =>
             void api
               .hostPluginSetting('project-digest', 'quietMinutes', Math.max(1, Number(quiet) || 30))
-              .then(() => onMsg('安静期已保存,即时生效'))
-              .catch((e) => onMsg(`保存失败: ${String(e)}`))
+              .then(() => push('digest-quiet', '安静期已保存,即时生效'))
+              .catch((e) => push('digest-quiet', `保存失败: ${String(e)}`))
           }
         >
           保存
         </button>
       </div>
+      <NoticeLine slot="digest-quiet" />
       <div className="field-row">
         <button
           className="btn btn-accent btn-small"
@@ -1187,28 +1252,30 @@ function DigestSection({ onMsg }: { onMsg: (s: string) => void }) {
               .digestQueueAll()
               .then((r) => {
                 if (!r.ok) {
-                  onMsg(r.message ?? '失败')
+                  push('digest-all', r.message ?? '失败')
                   return
                 }
-                onMsg(
+                push('digest-all',
                   r.queued
                     ? `已入队 ${r.queued} 个项目,后台逐个总结中 —— 会话页徽标与此处计数会自动刷新`
                     : '所有项目都已总结到最新,无需处理'
                 )
                 void load()
               })
-              .catch((e) => onMsg(`操作失败: ${String(e)}`))
+              .catch((e) => push('digest-all', `操作失败: ${String(e)}`))
           }
         >
           立即总结全部项目
         </button>
         <span className="hint">首次总结会读完项目全部会话(分批滚动消化,单项目至多 200 个/次),之后只读上次水位之后的新会话。</span>
       </div>
+      <NoticeLine slot="digest-all" />
     </>
   )
 }
 
-function WatcherSection({ onMsg }: { onMsg: (s: string) => void }) {
+function WatcherSection() {
+  const { push } = useNotice()
   const [entries, setEntries] = useState<Array<{ agent: string; root: string; patterns: string }>>([])
   const [agent, setAgent] = useState('')
   const [root, setRoot] = useState('')
@@ -1233,9 +1300,9 @@ function WatcherSection({ onMsg }: { onMsg: (s: string) => void }) {
                 setEntries(r.entries)
                 setAgent('')
                 setRoot('')
-                onMsg('自定义 agent 已登记并导入')
+                push('watcher', '自定义 agent 已登记并导入')
               })
-              .catch((e) => onMsg(`登记失败: ${String(e)}`))
+              .catch((e) => push('watcher', `登记失败: ${String(e)}`))
           }
         >
           登记
@@ -1257,6 +1324,7 @@ function WatcherSection({ onMsg }: { onMsg: (s: string) => void }) {
         </div>
       ))}
       {entries.length === 0 && <p className="hint">暂无登记</p>}
+      <NoticeLine slot="watcher" />
     </>
   )
 }
@@ -1271,7 +1339,7 @@ const CAPTURE_AGENTS: CaptureAgent[] = [
   { id: 'capture-codex', label: 'Codex CLI', pathKey: 'sourceRoot' },
   { id: 'capture-zcode', label: 'ZCode', pathKey: 'sourceRoot' },
   { id: 'capture-hermes', label: 'Hermes CN Desktop', pathKey: 'profilesRoot' },
-  { id: 'capture-claudecode', label: 'Claude Code', pathKey: 'sourceRoot' },
+  { id: 'capture-claudecode', label: 'Claude Code / 桌面版', pathKey: 'sourceRoot' },
   { id: 'capture-qwencode', label: 'Qwen Code', pathKey: 'sourceRoot' },
   { id: 'capture-kimicli', label: 'Kimi CLI', pathKey: 'sourceRoot' },
   { id: 'capture-codebuddy', label: 'CodeBuddy Code', pathKey: 'sourceRoot' },
@@ -1296,7 +1364,8 @@ const CAPTURE_AGENTS: CaptureAgent[] = [
   { id: 'capture-copilot', label: 'GitHub Copilot CLI', pathKey: 'sourceRoot' }
 ]
 
-function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
+function AgentCaptureSection() {
+  const { push } = useNotice()
   const [enabled, setEnabled] = useState<Record<string, boolean>>({})
   const [pending, setPending] = useState<Record<string, boolean>>({})
   const [status, setStatus] = useState<
@@ -1346,7 +1415,7 @@ function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
                           text:
                             s.sessionsFound === 0
                               ? `已扫描但 0 条会话(源存在但没读到内容,可能格式已变)`
-                              : `${s.sessionsImported} 新导入 / ${s.sessionsFound} 扫描`
+                              : `新增 ${s.sessionsNew ?? s.sessionsImported} / 扫描 ${s.sessionsFound}`
                         }
                       : { level: 'ok', text: '已检测到,待扫描' }
           }
@@ -1368,7 +1437,8 @@ function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
         const on = enabled[a.id] ?? true
         const st = status[a.id]
         return (
-          <div key={a.id} className={`agent-row ${on ? '' : 'agent-off'} ${pending[a.id] != null ? 'agent-pending' : ''}`}>
+          <div key={a.id} className="agent-row-group">
+          <div className={`agent-row ${on ? '' : 'agent-off'} ${pending[a.id] != null ? 'agent-pending' : ''}`}>
             <label className="switch">
               <input
                 type="checkbox"
@@ -1379,13 +1449,13 @@ function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
                   // sessions:changed refresh) can snap the knob back
                   setEnabled((prev) => ({ ...prev, [a.id]: next }))
                   setPending((prev) => ({ ...prev, [a.id]: next }))
-                  onMsg(`${a.label} 已${next ? '启用' : '停用'},重启应用生效`)
+                  push(`capture:${a.id}`, `${a.label} 已${next ? '启用' : '停用'},重启应用生效`)
                   void api
                     .hostPluginEnable(a.id, next)
                     .catch((err) => {
                       setEnabled((prev) => ({ ...prev, [a.id]: !next }))
                       setPending((prev) => ({ ...prev, [a.id]: !next }))
-                      onMsg(`操作失败: ${String(err)}`)
+                      push(`capture:${a.id}`, `操作失败: ${String(err)}`)
                     })
                 }}
               />
@@ -1418,8 +1488,8 @@ function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
                     onClick={() =>
                       void api
                         .hostPluginSetting(a.id, a.pathKey as string, (drafts[a.id] ?? '').trim())
-                        .then(() => onMsg(`${a.label} 数据路径已保存,重启生效`))
-                        .catch((err) => onMsg(`保存失败: ${String(err)}`))
+                        .then(() => push(`capture:${a.id}`, `${a.label} 数据路径已保存,重启生效`))
+                        .catch((err) => push(`capture:${a.id}`, `保存失败: ${String(err)}`))
                     }
                   >
                     存路径
@@ -1427,6 +1497,8 @@ function AgentCaptureSection({ onMsg }: { onMsg: (s: string) => void }) {
                 </div>
               )}
             </div>
+          </div>
+          <NoticeLine slot={`capture:${a.id}`} />
           </div>
         )
       })}
@@ -1520,7 +1592,7 @@ function ModelField({
 const CONNECT_AGENTS = [
   { id: 'codex', label: 'Codex CLI' },
   { id: 'zcode', label: 'ZCode' },
-  { id: 'claudecode', label: 'Claude Code' },
+  { id: 'claudecode', label: 'Claude Code(CLI / 桌面版)' },
   { id: 'qwencode', label: 'Qwen Code' },
   { id: 'kimicli', label: 'Kimi CLI' },
   { id: 'codebuddy', label: 'CodeBuddy Code' },
@@ -1541,7 +1613,8 @@ const CONNECT_AGENTS = [
   { id: 'copilot', label: 'Copilot CLI' }
 ]
 
-function AgentConnectSection({ onMsg }: { onMsg: (s: string) => void }) {
+function AgentConnectSection() {
+  const { push } = useNotice()
   const [rows, setRows] = useState<
     Record<string, { label: string; detected: boolean; snippet: string }>
   >({})
@@ -1563,21 +1636,21 @@ function AgentConnectSection({ onMsg }: { onMsg: (s: string) => void }) {
       .agentConnect(id)
       .then((r) => {
         if (!r.detected) {
-          onMsg(`${r.label} 未在本机检测到,未写入配置`)
+          push(`connect:${id}`, `${r.label} 未在本机检测到,未写入配置`)
           return
         }
         // 回读校验没过 = 我们写的东西该 agent 不认。此时报「已连接」是骗人的,
         // 必须把原因摊开,否则用户只能重启后对着失效的 MCP 一头雾水。
         if (!r.configured) {
-          onMsg(`${r.label} 已写入但回读校验未通过 → ${r.verifyError ?? '未知原因'}`)
+          push(`connect:${id}`, `${r.label} 已写入但回读校验未通过 → ${r.verifyError ?? '未知原因'}`)
           return
         }
-        onMsg(`${r.label} 已连接并校验通过 → ${r.configPath}(重启该 agent 生效)`)
+        push(`connect:${id}`, `${r.label} 已连接并校验通过 → ${r.configPath}(重启该 agent 生效)`)
         return api.agentSnippet(id).then((s) => {
           setRows((prev) => ({ ...prev, [id]: { ...prev[id], snippet: s.snippet } }))
         })
       })
-      .catch((e) => onMsg(`连接失败: ${String(e)}`))
+      .catch((e) => push(`connect:${id}`, `连接失败: ${String(e)}`))
   }
 
   const writeRulesFor = (id: string, label: string): void => {
@@ -1586,32 +1659,32 @@ function AgentConnectSection({ onMsg }: { onMsg: (s: string) => void }) {
       .rulesWrite(id, rulesDir.trim() || undefined)
       .then((r) => {
         if (!r.ok) {
-          onMsg(`${label} 规则写入失败 → ${r.error ?? '未知原因'}`)
+          push(/项目根目录/.test(r.error ?? '') ? 'rules-dir' : `connect:${id}`, `${label} 规则写入失败 → ${r.error ?? '未知原因'}`)
           return
         }
         const where = [...r.written, ...r.skipped].join('、')
-        onMsg(
-          `${label} 使用规则已写入 → ${where}${r.skipped.length ? '(已存在,内容未变)' : ''}`
-        )
+        push(`connect:${id}`, `${label} 使用规则已写入 → ${where}${r.skipped.length ? '(已存在,内容未变)' : ''}`)
       })
-      .catch((e) => onMsg(`规则写入失败: ${String(e)}`))
+      .catch((e) => push(`connect:${id}`, `规则写入失败: ${String(e)}`))
       .finally(() => setRulesBusy(null))
   }
 
   return (
     <div className="agent-capture">
       <label className="field">
-        <span>项目根目录(仅项目级规则的 agent 需要,如 H:\桌面\MemorySQL;用户级规则的留空即可)</span>
+        <span>项目根目录(仅项目级规则的 agent 需要;用户级规则的留空即可)</span>
         <input
           value={rulesDir}
           onChange={(e) => setRulesDir(e.target.value)}
-          placeholder="H:\桌面\MemorySQL"
+          placeholder="如 D:\projects\my-app"
         />
       </label>
+      <NoticeLine slot="rules-dir" />
       {CONNECT_AGENTS.map(({ id, label }) => {
         const row = rows[id]
         return (
-          <div key={id} className="agent-row">
+          <div key={id} className="agent-row-group">
+          <div className="agent-row">
             <div className="agent-main">
               <div className="agent-name">
                 {label}
@@ -1640,12 +1713,14 @@ function AgentConnectSection({ onMsg }: { onMsg: (s: string) => void }) {
                   row &&
                   void navigator.clipboard
                     .writeText(row.snippet)
-                    .then(() => onMsg(`${label} 手动配置片段已复制`))
+                    .then(() => push(`connect:${id}`, `${label} 手动配置片段已复制`))
                 }
               >
                 复制配置
               </button>
             </div>
+          </div>
+          <NoticeLine slot={`connect:${id}`} />
           </div>
         )
       })}

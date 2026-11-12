@@ -137,6 +137,23 @@ html:not([data-theme]) body { background: transparent; }
 .kb-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
 .kb-msg { font-size: var(--msql-fs-sm); color: var(--msql-accent-fg-dim); padding: 8px 6px 0; white-space: pre-wrap; }
 
+/* ---------- inline setting notice(改哪项就在哪项下方) ---------- */
+.inline-msg {
+  margin: 8px 0 2px; padding: 6px 10px; border-radius: var(--msql-radius-sm);
+  font-size: var(--msql-fs-sm); line-height: 1.55; white-space: pre-wrap;
+  color: var(--msql-success-fg);
+  background: color-mix(in srgb, var(--msql-success) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--msql-success) 22%, transparent);
+  animation: fade-in-fast var(--msql-t-fast) ease-out both;
+}
+.inline-msg.err {
+  color: var(--msql-danger-fg);
+  background: color-mix(in srgb, var(--msql-danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--msql-danger) 24%, transparent);
+}
+/* 每个 agent 一行开关 + 该行的操作提示(提示必须跟着它所属的那一行) */
+.agent-row-group { display: flex; flex-direction: column; }
+
 /* ---------- main panes ---------- */
 .main, .list-pane, .detail-pane, .memories-pane, .settings-pane {
   background: var(--msql-glass);

@@ -137,6 +137,7 @@ export function createCapturePlugin(spec: CaptureSpec): MemorySQLPlugin {
             available: true,
             sessionsFound: res.scanned,
             sessionsImported: res.imported + res.updated,
+            sessionsNew: res.imported,
             lastScanAt: Date.now(),
             lastError: null,
             // a full scan that completes is proof the format is still readable

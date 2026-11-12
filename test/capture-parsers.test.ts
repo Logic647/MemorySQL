@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   findDesktopMetaFiles,
+  findDesktopProjectsRoots,
   parseClaudeJsonl,
   parseDesktopMeta,
   parseHistoryJsonl
@@ -101,6 +102,65 @@ describe('findDesktopMetaFiles', () => {
     const files = findDesktopMetaFiles(tmp)
     expect(files).toHaveLength(1)
     expect(files[0].endsWith('local_a.json')).toBe(true)
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+})
+
+describe('findDesktopProjectsRoots (Claude Code Desktop)', () => {
+  it('discovers both CCD layouts, skips empty projects dirs, and dedupes', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ccd-projects-'))
+    const app = path.join(tmp, 'Claude-3p')
+
+    // 形态 A:claude-code-sessions/<org>/<acct>/.claude/projects/<slug>/<id>.jsonl
+    const a = path.join(app, 'claude-code-sessions', 'org', 'acct', '.claude', 'projects', 'H--work-demo')
+    fs.mkdirSync(a, { recursive: true })
+    const fileA = path.join(a, 'sess-desktop-1.jsonl')
+    fs.writeFileSync(
+      fileA,
+      [
+        JSON.stringify({
+          type: 'user',
+          sessionId: 'sess-desktop-1',
+          cwd: 'H:\\work\\demo',
+          timestamp: '2026-11-12T09:00:00Z',
+          message: { role: 'user', content: '桌面端提问' }
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          sessionId: 'sess-desktop-1',
+          timestamp: '2026-11-12T09:00:05Z',
+          message: { role: 'assistant', content: [{ type: 'text', text: '桌面端回答' }] }
+        })
+      ].join('\n')
+    )
+
+    // 形态 B:local-agent-mode-sessions/<org>/<acct>/<session>/projects/<slug>/<id>.jsonl
+    const b = path.join(app, 'local-agent-mode-sessions', 'org', 'acct', 'sessdir', 'projects', 'slug-b')
+    fs.mkdirSync(b, { recursive: true })
+    fs.writeFileSync(
+      path.join(b, 'sess-desktop-2.jsonl'),
+      JSON.stringify({
+        type: 'user',
+        sessionId: 'sess-desktop-2',
+        timestamp: '2026-11-12T10:00:00Z',
+        message: { role: 'user', content: '第二个会话' }
+      })
+    )
+
+    // 噪音:同名 projects 目录但没有 transcript,不能当成来源
+    fs.mkdirSync(path.join(app, 'local-agent-mode-sessions', 'skills-plugin', 'projects', 'empty'), {
+      recursive: true
+    })
+
+    const roots = findDesktopProjectsRoots([app, app])
+    expect(roots).toHaveLength(2)
+    expect(roots.map((r) => path.basename(path.dirname(r))).sort()).toEqual(['.claude', 'sessdir'])
+
+    const s = parseClaudeJsonl(fileA, fs.readFileSync(fileA, 'utf-8'))
+    expect(s).not.toBeNull()
+    expect(s!.externalId).toBe('sess-desktop-1')
+    expect(s!.cwd).toBe('H:\\work\\demo')
+    expect(s!.messages.map((m) => m.content)).toEqual(['桌面端提问', '桌面端回答'])
     fs.rmSync(tmp, { recursive: true, force: true })
   })
 })

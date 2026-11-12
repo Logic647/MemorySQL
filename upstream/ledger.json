@@ -129,7 +129,7 @@
             "message"
           ],
           "parser": "claude",
-          "note": "三源合并去重:①~/.claude/projects/**/*.jsonl 完整对话(主源) ②%LOCALAPPDATA%/Claude-3p/claude-code-sessions/**/local_*.json 桌面版元数据(无对话正文) ③~/.claude/history.jsonl 仅用户侧。桌面版 SDK 不落盘对话"
+          "note": "多源合并去重:①~/.claude/projects/**/*.jsonl 完整对话(CLI 主源) ②Claude 桌面版(CCD)自己的 CLAUDE_CONFIG_DIR:<LOCALAPPDATA>/<app>/claude-code-sessions|local-agent-mode-sessions/**/.claude/projects/**/*.jsonl(同一 transcript 格式) ③local_*.json 桌面元数据(无正文时兜底标题/项目)+ ~/.claude/history.jsonl 仅用户侧"
         }
       },
       "mcp": {

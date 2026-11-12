@@ -134,3 +134,55 @@ describe('ingest rename/cwd sync (content_hash gate)', () => {
     expect(p2.path).toBe(projA)
   })
 })
+
+describe('summary cache (content_hash gate)', () => {
+  function countingIngest(): { svc: IngestService; calls: () => number } {
+    let calls = 0
+    const svc = createIngestService({
+      sqlite: db,
+      getSummarizer: () => ({
+        id: 'fake',
+        available: () => true,
+        summarize: async () => {
+          calls += 1
+          return { title: `auto-${calls}`, summary: `sum-${calls}` }
+        }
+      }),
+      onIngest: () => {}
+    })
+    return { svc, calls: () => calls }
+  }
+
+  it('summarizes a new session once, then reuses the stored title without calling the LLM', async () => {
+    const { svc, calls } = countingIngest()
+    const untitled = (messages?: RawSession['messages']): RawSession =>
+      session({ externalId: 'cached-1', title: undefined, ...(messages ? { messages } : {}) })
+
+    const first = await svc.ingestSessions([untitled()])
+    expect(first).toMatchObject({ imported: 1 })
+    expect(calls()).toBe(1)
+    expect(get('cached-1').title).toBe('auto-1')
+
+    // 内容没变:不再调 LLM,标题保持上次的结果(LLM 每次给的标题可能不同,
+    // 过去就是这点让每次扫描都把 90+ 条会话重新 update 一遍)
+    const second = await svc.ingestSessions([untitled()])
+    expect(second).toMatchObject({ imported: 0, updated: 0, skipped: 1 })
+    expect(calls()).toBe(1)
+    expect(get('cached-1').title).toBe('auto-1')
+
+    // 内容变了:允许重新总结
+    const grown = [
+      { role: 'user' as const, content: 'hello' },
+      { role: 'assistant' as const, content: 'world' },
+      { role: 'user' as const, content: 'more' }
+    ]
+    const third = await svc.ingestSessions([untitled(grown)])
+    expect(third).toMatchObject({ updated: 1 })
+    expect(calls()).toBe(2)
+    expect(get('cached-1').title).toBe('auto-2')
+
+    // 再扫一次同样的内容:仍然只用了 2 次
+    await svc.ingestSessions([untitled(grown)])
+    expect(calls()).toBe(2)
+  })
+})

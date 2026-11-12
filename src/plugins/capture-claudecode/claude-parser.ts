@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import type { RawMessage, RawSession } from '../../shared/types'
 import { safeDir, walkWithin } from '../../main/core/safe-path.ts'
@@ -134,12 +135,93 @@ function msToSec(ms: unknown): number | undefined {
   return typeof ms === 'number' && Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined
 }
 
+/** Claude 桌面端(Claude.app ≥5.x,内部代号 CCD)的会话存储目录名 */
+export const DESKTOP_SESSION_STORES = ['claude-code-sessions', 'local-agent-mode-sessions']
+
+/** 会话目录可以嵌套得多深(org/account/[session]) —— 留出余量,防止未来布局加深 */
+const MAX_PROJECTS_DEPTH = 8
+
 /**
- * Claude Desktop (Electron shell, data dir "Claude-3p") drives the bundled
- * claude.exe through the Agent SDK, so no transcript is ever written under
- * ~/.claude/projects — only this per-session metadata file survives. The
- * title/cwd/timestamps still make the conversation visible in the session
- * list, project grouping and search.
+ * Claude Code **桌面版**不再"对话不落盘"。
+ *
+ * 桌面端给 Code 会话单独设 `CLAUDE_CONFIG_DIR`,transcript 仍按 Claude Code 的
+ * 格式写在 `<config>/projects/<project-slug>/<sessionId>.jsonl`,只是 config 不在
+ * `~/.claude`,而在应用自己的会话存储里:
+ *
+ *   %LOCALAPPDATA%/<app>/claude-code-sessions/<org>/<account>/.claude/projects/…
+ *   %LOCALAPPDATA%/<app>/local-agent-mode-sessions/<org>/<account>/<session>/.claude/projects/…
+ *
+ * 依据:claude.exe 的 asar 里 transcript 读取路径是
+ * `join(sessionStorageDir, '.claude', 'projects')`;写侧由 CLI 按 CLAUDE_CONFIG_DIR
+ * 落盘(同一个 projects 布局)。少数形态把 `projects/` 直接放在会话目录下,
+ * 因此两种都收。目录在用户第一次打开 Code 标签页之前**不存在**,所以必须
+ * 每次扫描现场发现,不能缓存。
+ */
+export function findDesktopProjectsRoots(appDataDirs: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+
+  const hasTranscript = (dir: string): boolean => {
+    let slugs: fs.Dirent[]
+    try {
+      slugs = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return false
+    }
+    for (const slug of slugs) {
+      if (!slug.isDirectory()) continue
+      let files: fs.Dirent[]
+      try {
+        files = fs.readdirSync(path.join(dir, slug.name), { withFileTypes: true })
+      } catch {
+        continue
+      }
+      if (files.some((f) => f.isFile() && f.name.endsWith('.jsonl'))) return true
+    }
+    return false
+  }
+
+  const walk = (dir: string, depth: number): void => {
+    if (depth > MAX_PROJECTS_DEPTH) return
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue
+      const full = path.join(dir, e.name)
+      if (e.name === 'projects') {
+        // transcript 树内部不再下钻(projects 下面全是 <slug>/<id>.jsonl)
+        if (hasTranscript(full)) out.push(full)
+        continue
+      }
+      walk(full, depth + 1)
+    }
+  }
+
+  for (const appDir of appDataDirs) {
+    for (const store of DESKTOP_SESSION_STORES) {
+      const base = safeDir(path.join(appDir, store))
+      if (base) walk(base, 0)
+    }
+  }
+  // Windows 路径大小写不敏感 —— 同一个目录经不同候选根进来只保留一次
+  return out.filter((dir) => {
+    const key = process.platform === 'win32' ? path.resolve(dir).toLowerCase() : path.resolve(dir)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+/**
+ * Claude Desktop 旧版(Electron shell, data dir "Claude-3p")通过 Agent SDK 驱动
+ * 内置 claude.exe,**对话不落盘**,只有这份 per-session 元数据(local_*.json)。
+ * 新版(≥5.x)的 Code 会话会把 transcript 写进自己的 CLAUDE_CONFIG_DIR
+ * (见 findDesktopProjectsRoots),元数据仍在;有 transcript 时以 transcript 为准,
+ * 这里只在没有正文时兜底 —— 标题/cwd/时间至少让对话在列表、项目分组和搜索里可见。
  */
 interface DesktopMetaJson {
   sessionId?: string
