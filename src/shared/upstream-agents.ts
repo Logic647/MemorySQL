@@ -87,6 +87,12 @@ export interface AgentContract {
   upstream: {
     kind: UpstreamKind
     repo?: string
+    /**
+     * npm 源的**真实包名**(可选)。scoped 包必须显式写:看板解析包名的旧实现
+     * 取 repo 最后一段,`@moonshot-ai/kimi-code` 会被截成 `kimi-code` ——
+     * npm 上那个名字是第三方抢注的假包。
+     */
+    npmPackage?: string
     /** release 无正文 / 无 release 时的说明 */
     note?: string
   }
@@ -384,7 +390,10 @@ export const AGENTS: AgentContract[] = [
     upstream: {
       kind: 'npm',
       repo: 'MoonshotAI/kimi-code',
-      note: '原记录的 MoonshotAI/Kimi-Dev 已归档失效,2026-09-30 修正;0 条 release → npm + commit'
+      npmPackage: '@moonshot-ai/kimi-code',
+      note:
+        '原记录的 MoonshotAI/Kimi-Dev 已归档失效,2026-09-30 修正;0 条 release → npm + commit。' +
+        '**包名必须带 scope**:无 scope 的 `kimi-code` 是第三方抢注的假包(2026-11-12 修正)'
     },
     monitor: 'tracked',
     localRoots: ['.kimi/sessions'],
@@ -886,12 +895,17 @@ export const AGENTS: AgentContract[] = [
     name: 'DevEco Code',
     agentType: 'deveco',
     upstream: {
-      kind: 'commit',
+      // 2026-11-12 改:此前盯 CarSmallGuo/deveco-code 的 commit,但那个社区镜像
+      // **2026-06-14 就停更了**,一条 6 月的「specs 路径迁移」提交被反复判成
+      // 「high·影响配置路径」—— 实际 npm 0.2.5 README 仍写 ~/.config/deveco/deveco.jsonc。
+      // 现改为按 npm 版本跟踪(不再读过期 commit 正文);镜像保留作来源佐证。
+      kind: 'npm',
       repo: 'CarSmallGuo/deveco-code',
+      npmPackage: '@deveco/deveco-code',
       note:
         '华为 HarmonyOS 开发 agent,**基于华为 BitFun + OpenCode 构建**(HDC 2026 发布;' +
-        'npm 分发 @deveco/deveco-code,repo 为社区镜像)—— 盯 opencode 上游的 schema 变更即可覆盖它;' +
-        '会话存储官方文档未写,需黑盒探测'
+        'npm 分发 @deveco/deveco-code,repo 为**已停更**的社区镜像,仅作路径佐证)。' +
+        '会话存储官方文档未写,需黑盒探测;配置路径以 npm 包 README 为准(用户级 ~/.config/deveco/deveco.jsonc)'
     },
     monitor: 'tracked',
     localRoots: ['.local/share/deveco', 'AppData/Local/deveco'],

@@ -104,6 +104,16 @@ describe('台账自洽性(防台账腐化)', () => {
     }
   })
 
+  it('npm 源必须显式声明 npmPackage(scoped 包被截断会指向抢注假包)', () => {
+    for (const a of AGENTS) {
+      if (a.upstream.kind !== 'npm') continue
+      expect(
+        a.upstream.npmPackage,
+        `${a.id} 是 npm 源但没写 upstream.npmPackage`
+      ).toBeTruthy()
+    }
+  })
+
   it('风险关键词非空(白盒粗筛依赖它)', () => {
     for (const a of AGENTS) {
       expect(a.riskKeywords.length, `${a.id} 未声明 riskKeywords`).toBeGreaterThan(0)

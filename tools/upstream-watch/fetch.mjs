@@ -106,7 +106,7 @@ export async function fetchUpstream(agent) {
   if (kind === 'none' || !kind) {
     return { kind: 'none', notes: '', error: '闭源,无公开更新日志' }
   }
-  if (kind === 'npm') return fetchNpm(agent, repo)
+  if (kind === 'npm') return fetchNpm(agent, repo, agent.upstream?.npmPackage)
   return fetchGithub(agent, repo, kind)
 }
 
@@ -184,9 +184,19 @@ async function fetchCommits(repo) {
   }
 }
 
-async function fetchNpm(agent, repo) {
-  // repo 形如 "MoonshotAI/kimi-code" → 包名取最后一段
-  const pkg = String(repo).split('/').pop()
+/**
+ * npm 包名解析:优先用台账显式声明的 `npmPackage`(scoped 包必须用这个,
+ * 否则 `@moonshot-ai/kimi-code` 会被截成 `kimi-code` —— npm 上那个名字是
+ * 第三方抢注的假包,看板会拿它的版本当 Kimi CLI 的上游,真信号变噪音)。
+ * 没声明时退回「repo 最后一段」,兼容老台账。
+ */
+export function npmPackageName(repo, npmPackage) {
+  if (typeof npmPackage === 'string' && npmPackage.trim()) return npmPackage.trim()
+  return String(repo ?? '').split('/').pop()
+}
+
+async function fetchNpm(agent, repo, npmPackage) {
+  const pkg = npmPackageName(repo, npmPackage)
   // 必须覆盖 Accept:npm registry 不认 GitHub 的 vnd.github+json,会回 406
   const res = await httpJson(`https://registry.npmjs.org/${encodeURIComponent(pkg)}/latest`, {
     headers: { Accept: 'application/json' }

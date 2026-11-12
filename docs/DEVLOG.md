@@ -20,6 +20,32 @@
 
 ---
 
+## 2026-11-12 · 看板核对:无需更新适配;修两处上游信号源(deveco 停更镜像 / kimi npm 抢注包)
+
+按用户要求核对看板(24 家,dev 07:39Z + NAS 08:49Z 双源):**🔴 0 漂移 / 🟣 0 检查器故障**,
+本机 `upstream:check` 🟢7/🔴0。逐条核实两个「high」:
+
+- **dsh(rc.2)**:上游 `docs/session-format-status.md` 在 tag 里仍写 `latestFinalizedVersion: 4`
+  —— 会话格式没变,release notes 是 SubAgent 具名/侧栏等 UI 功能。不改。
+- **deveco**:触发项来自 `CarSmallGuo/deveco-code`(社区镜像)**2026-06-14 已停更**,
+  6 月一条「specs 模板/指令路径迁移」被反复判成 high。权威渠道 npm `@deveco/deveco-code@0.2.5`
+  README 仍写用户配置 `~/.config/deveco/deveco.jsonc`、数据 `.local/share/deveco` —— 与连接器/台账一致。不改。
+
+其余 medium(goose v1.59 / pi v1.5.2 / gemini v0.69 / cline / omo / mimocode)逐条对过源码或 changelog:
+goose 的 sessions/messages 建表语句与 requiredColumns 逐列一致;pi 只是 fork UX + 修重复副本;
+gemini 改动在 ACP/headless;mimocode 真库 36→40 张表但 session/message/part 与 222 条会话不变。
+
+**顺手修两处「信号源本身是假的」**:
+1. **deveco 台账改按 npm 跟踪**(`kind:'npm'` + `npmPackage:'@deveco/deveco-code'`),不再读停更镜像的 commit。
+2. **npm 包名解析 bug**:`fetchNpm` 取 repo 最后一段,`@moonshot-ai/kimi-code` 被截成 `kimi-code`
+   —— npm 上那是第三方抢注假包,看板一直把假包描述当 Kimi 上游。现在 `upstream.npmPackage`
+   显式声明(类型新增字段),`npmPackageName()` 优先用它;实测 deveco→0.2.5、kimi→2.6.0 均正确。
+   台账断言新增「npm 源必须显式 npmPackage」防回归。
+
+部署提醒:云端需 `cd /root/MemorySQL && git -c http.version=HTTP/1.1 pull && pm2 restart msql-upstream-watch --update-env` 才生效。
+
+---
+
 ## 2026-11-10 · 再撤回(v0.7.6)→ 更新源回 GitHub → 重发 0.7.5
 
 用户实测**阿里云镜像下载比 GitHub 还慢**(ECS 带宽中转),要求下载源换回 GitHub,

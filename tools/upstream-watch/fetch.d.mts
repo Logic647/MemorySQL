@@ -39,6 +39,12 @@ export function httpJson<T = unknown>(
   opts?: { headers?: Record<string, string> }
 ): Promise<HttpResult<T>>
 
+/**
+ * npm 包名解析:显式 npmPackage 优先;否则退回 repo 最后一段。
+ * scoped 包(@scope/name)必须显式声明,否则会被截成抢注的裸名。
+ */
+export function npmPackageName(repo?: string, npmPackage?: string): string
+
 export function fetchUpstream(agent: {
-  upstream?: { kind?: string; repo?: string; pkg?: string }
+  upstream?: { kind?: string; repo?: string; npmPackage?: string; pkg?: string }
 }): Promise<UpstreamInfo>

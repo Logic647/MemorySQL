@@ -433,7 +433,8 @@
       "upstream": {
         "kind": "npm",
         "repo": "MoonshotAI/kimi-code",
-        "note": "原记录的 MoonshotAI/Kimi-Dev 已归档失效,2026-09-30 修正;0 条 release → npm + commit"
+        "npmPackage": "@moonshot-ai/kimi-code",
+        "note": "原记录的 MoonshotAI/Kimi-Dev 已归档失效,2026-09-30 修正;0 条 release → npm + commit。**包名必须带 scope**:无 scope 的 `kimi-code` 是第三方抢注的假包(2026-11-12 修正)"
       },
       "monitor": "tracked",
       "localRoots": [
@@ -1404,9 +1405,10 @@
       "name": "DevEco Code",
       "agentType": "deveco",
       "upstream": {
-        "kind": "commit",
+        "kind": "npm",
         "repo": "CarSmallGuo/deveco-code",
-        "note": "华为 HarmonyOS 开发 agent,**基于华为 BitFun + OpenCode 构建**(HDC 2026 发布;npm 分发 @deveco/deveco-code,repo 为社区镜像)—— 盯 opencode 上游的 schema 变更即可覆盖它;会话存储官方文档未写,需黑盒探测"
+        "npmPackage": "@deveco/deveco-code",
+        "note": "华为 HarmonyOS 开发 agent,**基于华为 BitFun + OpenCode 构建**(HDC 2026 发布;npm 分发 @deveco/deveco-code,repo 为**已停更**的社区镜像,仅作路径佐证)。会话存储官方文档未写,需黑盒探测;配置路径以 npm 包 README 为准(用户级 ~/.config/deveco/deveco.jsonc)"
       },
       "monitor": "tracked",
       "localRoots": [

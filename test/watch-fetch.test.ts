@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { httpJson } from '../tools/upstream-watch/fetch.mjs'
+import { httpJson, npmPackageName } from '../tools/upstream-watch/fetch.mjs'
 import type { HttpErr } from '../tools/upstream-watch/fetch.mjs'
 import fs from 'node:fs'
 
@@ -14,6 +14,23 @@ import fs from 'node:fs'
 type Reply = { status: number; headers: Record<string, string>; body: string }
 type FetchInit = { headers?: Record<string, string> }
 const URL_UNDER_TEST = 'https://api.github.com/repos/x/y/releases?per_page=5'
+
+/**
+ * npm 包名解析。2026-11-12 修:`@moonshot-ai/kimi-code` 按 repo 最后一段截成
+ * `kimi-code`,而 npm 上那个名字是第三方抢注的假包 —— 看板会把假包的版本
+ * 当成 Kimi CLI 的上游(静默错信号,比没有信号更糟)。
+ */
+describe('npm 包名解析(scoped 包必须原样)', () => {
+  it('显式 npmPackage 优先,scoped 包不被截断', () => {
+    expect(npmPackageName('MoonshotAI/kimi-code', '@moonshot-ai/kimi-code')).toBe('@moonshot-ai/kimi-code')
+    expect(npmPackageName('CarSmallGuo/deveco-code', '@deveco/deveco-code')).toBe('@deveco/deveco-code')
+  })
+  it('没声明时退回 repo 最后一段(兼容老台账)', () => {
+    expect(npmPackageName('block/goose', undefined)).toBe('goose')
+    expect(npmPackageName('', undefined)).toBe('')
+    expect(npmPackageName('a/b', '   ')).toBe('b')
+  })
+})
 
 function mockFetch(reply: Reply) {
   const spy = vi.fn(async (_url: string, _init?: FetchInit) => ({
