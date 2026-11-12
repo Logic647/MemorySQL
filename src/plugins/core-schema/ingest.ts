@@ -45,7 +45,18 @@ export interface IngestResult {
 
 export interface IngestService {
   ingestSessions(sessions: RawSession[]): Promise<IngestResult>
-  upsertMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string; tags?: string[]; projectId?: number | null }): { id: number; changed: boolean }
+  upsertMemory(input: {
+    kind: string
+    content: string
+    source: string
+    agentType?: string
+    status?: string
+    tags?: string[]
+    projectId?: number | null
+    /** 缺省按 projectId 推断:有项目 = project,否则 = global */
+    scope?: 'global' | 'project'
+    locked?: boolean
+  }): { id: number; changed: boolean }
   addMemory(input: {
     kind: string
     content: string
@@ -54,6 +65,8 @@ export interface IngestService {
     status?: string
     projectId?: number | null
     tags?: string[]
+    scope?: 'global' | 'project'
+    locked?: boolean
   }): { id: number }
 }
 
@@ -522,7 +535,9 @@ export function createIngestService(deps: IngestDeps): IngestService {
   // deleted rows stay found: user deletion must not be resurrected by a re-import
   const memoryFind = sqlite.prepare('SELECT id, content, deleted FROM memories WHERE source = ?')
   const memoryIns = sqlite.prepare(
-    'INSERT INTO memories (kind, content, source, updated_at, device_id, agent_type, status, tags, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    `INSERT INTO memories
+       (kind, content, source, updated_at, device_id, agent_type, status, tags, project_id, scope, locked)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
   const memoryUpdate = sqlite.prepare(
     'UPDATE memories SET kind = ?, content = ?, agent_type = ?, updated_at = ? WHERE id = ?'
@@ -557,6 +572,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
         memoryUpdate.run(input.kind, input.content, input.agentType ?? null, now(), existing.id)
         return { id: existing.id, changed: true }
       }
+      const scope = input.scope ?? (input.projectId != null ? 'project' : 'global')
       const id = Number(
         (memoryIns.run(
           input.kind,
@@ -567,7 +583,9 @@ export function createIngestService(deps: IngestDeps): IngestService {
           input.agentType ?? null,
           input.status ?? 'active',
           input.tags && input.tags.length > 0 ? JSON.stringify(input.tags.slice(0, 10)) : null,
-          input.projectId ?? null
+          input.projectId ?? null,
+          scope,
+          input.locked ? 1 : 0
         ) as {
           lastInsertRowid: number | bigint
         }).lastInsertRowid
@@ -583,6 +601,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
         input.content.length > MEMORY_CAP
           ? `${input.content.slice(0, MEMORY_CAP)}\n…[truncated]`
           : input.content
+      const scope = input.scope ?? (input.projectId != null ? 'project' : 'global')
       const id = Number(
         (
           memoryIns.run(
@@ -594,7 +613,9 @@ export function createIngestService(deps: IngestDeps): IngestService {
             input.agentType ?? null,
             input.status ?? 'active',
             input.tags && input.tags.length > 0 ? JSON.stringify(input.tags.slice(0, 10)) : null,
-            input.projectId ?? null
+            input.projectId ?? null,
+            scope,
+            input.locked ? 1 : 0
           ) as { lastInsertRowid: number | bigint }
         ).lastInsertRowid
       )

@@ -65,6 +65,7 @@ export interface DigestLatest {
   projectId: number
   projectName: string
   summary: string
+  recent: string
   perSession: Array<{ id: number; title: string; note: string }>
   todos: Array<{ content: string; status: string }>
   decisions: string[]
@@ -73,6 +74,29 @@ export interface DigestLatest {
   periodEnd: number | null
   sessionsCovered: number
   createdAt: number
+}
+
+// memory-curator(项目/全局记忆自动整理)
+export interface CuratorProjectState {
+  projectId: number
+  name: string
+  digestId: number | null
+  lastRunAt: number | null
+  lastError: string | null
+  status: string
+  memoryCount: number
+  curated: boolean
+}
+
+export interface CuratorStatusInfo {
+  enabled: boolean
+  llmReady: boolean
+  digestEnabled: boolean
+  maxProject: number
+  maxGlobal: number
+  globalEveryHours: number
+  projects: CuratorProjectState[]
+  global: { lastRunAt: number | null; lastError: string | null; status: string; memoryCount: number }
 }
 
 export const api = {
@@ -139,11 +163,34 @@ export const api = {
     window.memorysql.invoke('core-schema:search:all', { q, limit: 50 }) as Promise<SearchHit[]>,
   overview: (): Promise<Overview> =>
     window.memorysql.invoke('core-schema:stats:overview') as Promise<Overview>,
-  memories: (opts?: { offset?: number }): Promise<Array<Record<string, unknown>>> =>
-    window.memorysql.invoke(
-      'core-schema:memories:list',
-      opts?.offset != null ? { offset: opts.offset } : {}
-    ) as Promise<Array<Record<string, unknown>>>,
+  memories: (opts?: {
+    offset?: number
+    scope?: 'global' | 'project'
+    projectId?: number
+    kind?: string
+    status?: string
+  }): Promise<Array<Record<string, unknown>>> =>
+    window.memorysql.invoke('core-schema:memories:list', opts ?? {}) as Promise<
+      Array<Record<string, unknown>>
+    >,
+  memoriesProjects: (): Promise<Array<{ id: number; name: string; count: number }>> =>
+    window.memorysql.invoke('core-schema:memories:projects') as Promise<
+      Array<{ id: number; name: string; count: number }>
+    >,
+  memoriesSetLocked: (id: number, locked: boolean): Promise<{ ok: boolean }> =>
+    window.memorysql.invoke('memory-core:setLocked', { id, locked }) as Promise<{ ok: boolean }>,
+  // memory-curator(从项目总结自动整理全局/项目记忆)
+  curatorStatus: (): Promise<CuratorStatusInfo> =>
+    window.memorysql.invoke('memory-curator:status') as Promise<CuratorStatusInfo>,
+  curatorRun: (projectId: number): Promise<{ ok: boolean; queued?: boolean }> =>
+    window.memorysql.invoke('memory-curator:runNow', { projectId }) as Promise<{
+      ok: boolean
+      queued?: boolean
+    }>,
+  curatorRunAll: (): Promise<{ ok: boolean; queued?: number }> =>
+    window.memorysql.invoke('memory-curator:runAll') as Promise<{ ok: boolean; queued?: number }>,
+  curatorRunGlobal: (): Promise<{ ok: boolean; queued?: boolean }> =>
+    window.memorysql.invoke('memory-curator:runGlobal') as Promise<{ ok: boolean; queued?: boolean }>,
   captureStatus: (pluginId: string): Promise<CaptureStatus> =>
     window.memorysql.invoke(`${pluginId}:status`) as Promise<CaptureStatus>,
   scanNow: (pluginId: string): Promise<CaptureStatus> =>
@@ -223,22 +270,19 @@ export const api = {
   mcpRestart: (): Promise<{ ok: boolean; running: boolean }> =>
     window.memorysql.invoke('mcp-server:restart') as Promise<{ ok: boolean; running: boolean }>,
   // memory-core
-  memoriesSave: (input: { id?: number; kind: string; content: string }): Promise<{ id: number }> =>
+  memoriesSave: (input: {
+    id?: number
+    kind: string
+    content: string
+    scope?: 'global' | 'project'
+    projectId?: number | null
+    locked?: boolean
+  }): Promise<{ id: number }> =>
     window.memorysql.invoke('memory-core:save', input) as Promise<{ id: number }>,
   memoriesDelete: (id: number): Promise<{ ok: boolean }> =>
     window.memorysql.invoke('memory-core:delete', { id }) as Promise<{ ok: boolean }>,
   memoriesSetStatus: (id: number, status: string): Promise<{ ok: boolean }> =>
     window.memorysql.invoke('memory-core:setStatus', { id, status }) as Promise<{ ok: boolean }>,
-  memoriesConfirmAll: (agentType?: string, kind?: string): Promise<{ confirmed: number }> =>
-    window.memorysql.invoke('memory-core:confirmAll', { agentType, kind }) as Promise<{
-      confirmed: number
-    }>,
-  memoriesRefine: (agentType?: string): Promise<{ ok: boolean; inserted?: number; message: string }> =>
-    window.memorysql.invoke('memory-core:refine', { agentType }) as Promise<{
-      ok: boolean
-      inserted?: number
-      message: string
-    }>,
   memoriesDetectConflicts: (): Promise<{
     ok: boolean
     message: string

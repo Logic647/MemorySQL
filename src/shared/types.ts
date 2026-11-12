@@ -112,6 +112,9 @@ export interface SearchHit {
   title?: string | null
   snippet: string
   rank: number
+  /** memory hits: global = 跨项目,project = 绑定到 projectId */
+  scope?: 'global' | 'project'
+  projectId?: number | null
 }
 
 /**

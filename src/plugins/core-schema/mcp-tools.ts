@@ -41,9 +41,17 @@ interface SessionRow {
   message_count?: number
 }
 interface MemoryRow {
+  id: number
   kind: string
   content: string
   updated_at: number
+  scope?: 'global' | 'project'
+  projectId?: number | null
+  locked?: number
+  confidence?: number
+  accessCount?: number
+  lastAccessAt?: number | null
+  agent_type?: string | null
 }
 
 /**
@@ -60,32 +68,116 @@ export function createMcpTools(deps: {
 }): McpToolDef[] {
   const { sqlite, search, memories, services } = deps
 
-  const getPersona = (): string[] =>
-    (
-      sqlite
-        .prepare(
-          `SELECT content FROM memories
-           WHERE kind = 'persona' AND status = 'active' AND deleted = 0
-           ORDER BY updated_at DESC`
-        )
-        .all() as Array<{ content: string }>
-    ).map((r) => r.content)
+  const KIND_ORDER = ['persona', 'preference', 'fact', 'decision'] as const
+  const KIND_LABEL: Record<string, string> = {
+    persona: '画像',
+    preference: '偏好',
+    fact: '事实',
+    decision: '决策'
+  }
+  const KIND_QUOTA: Record<string, number> = { persona: 6, preference: 8, fact: 10, decision: 8 }
 
-  // agent filter keeps global (NULL) memories and rows tagged for that agent
-  const getFacts = (limit = 12, agent?: string): MemoryRow[] => {
-    const where = [
-      `kind IN ('fact','preference','decision')`,
-      `status = 'active'`,
-      `deleted = 0`,
-      ...(agent ? ['(agent_type IS NULL OR agent_type = ?)'] : [])
-    ]
+  const heatOf = (row: MemoryRow, now: number): number => {
+    const last = row.lastAccessAt ?? row.updated_at
+    const days = Math.max(0, (now - last) / 86_400_000)
+    const confidence = typeof row.confidence === 'number' && row.confidence > 0 ? row.confidence : 1
+    return Math.exp(-0.5 * days) * (1 + Math.log1p(Math.max(0, row.accessCount ?? 0))) * confidence
+  }
+
+  /** 读某一层(global/project)的活跃记忆;agent 过滤保留全局 NULL 行。 */
+  const loadMemories = (
+    scope: 'global' | 'project',
+    projectIds: number[] | null,
+    agent?: string
+  ): MemoryRow[] => {
+    const where = ['deleted = 0', `status = 'active'`, 'scope = ?']
+    const params: unknown[] = [scope]
+    if (scope === 'project') {
+      const ids = projectIds ?? []
+      if (ids.length === 0) return []
+      where.push(`project_id IN (${ids.map(() => '?').join(',')})`)
+      params.push(...ids)
+    }
+    if (agent) {
+      // persona 是用户画像,不随 agent 过滤丢失;其余记忆保留全局 NULL + 当前 agent
+      where.push("(kind = 'persona' OR agent_type IS NULL OR agent_type = ?)")
+      params.push(agent)
+    }
     return sqlite
       .prepare(
-        `SELECT kind, content, updated_at FROM memories
-         WHERE ${where.join(' AND ')}
-         ORDER BY updated_at DESC LIMIT ?`
+        `SELECT id, kind, content, scope, project_id AS projectId, locked, confidence,
+                updated_at, access_count AS accessCount, last_access_at AS lastAccessAt,
+                agent_type
+           FROM memories
+          WHERE ${where.join(' AND ')}
+          ORDER BY kind, updated_at DESC
+          LIMIT 240`
       )
-      .all(...(agent ? [agent] : []), limit) as MemoryRow[]
+      .all(...params) as MemoryRow[]
+  }
+
+  /** 把记忆按 kind 分组、按「锁定 > 热度 > 最近」排序,再按配额/字符预算裁剪。 */
+  const renderMemoryBlock = (
+    heading: string,
+    rows: MemoryRow[],
+    budget: number
+  ): { text: string; ids: number[] } => {
+    const now = Date.now()
+    const byKind = new Map<string, MemoryRow[]>()
+    for (const row of rows) {
+      const list = byKind.get(row.kind) ?? []
+      list.push(row)
+      byKind.set(row.kind, list)
+    }
+    const lines: string[] = [`\n${heading}`]
+    const ids: number[] = []
+    const seen = new Set<string>()
+    let used = 0
+    outer: for (const kind of KIND_ORDER) {
+      const list = (byKind.get(kind) ?? [])
+        .filter((r) => {
+          const key = `${r.kind}|${r.content}`
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+        .sort((a, b) => {
+          if ((a.locked ?? 0) !== (b.locked ?? 0)) return (b.locked ?? 0) - (a.locked ?? 0)
+          const heat = heatOf(b, now) - heatOf(a, now)
+          return heat !== 0 ? heat : b.updated_at - a.updated_at
+        })
+        .slice(0, KIND_QUOTA[kind] ?? 8)
+      if (list.length === 0) continue
+      lines.push(`### ${KIND_LABEL[kind] ?? kind}`)
+      for (const row of list) {
+        const line = `- ${clip(row.content, 220)}`
+        if (used + line.length > budget) break outer
+        lines.push(line)
+        used += line.length
+        ids.push(row.id)
+      }
+    }
+    if (ids.length === 0) {
+      lines.push('(暂无 — 可调用 memory_write 写入)')
+    }
+    return { text: lines.join('\n'), ids }
+  }
+
+  /** 注入即使用:累加访问次数/最近访问时间,作为下次排序与淘汰的热度依据。 */
+  const touchMemories = (ids: number[]): void => {
+    if (ids.length === 0) return
+    const unique = [...new Set(ids)]
+    try {
+      sqlite
+        .prepare(
+          `UPDATE memories
+              SET access_count = access_count + 1, last_access_at = ?
+            WHERE id IN (${unique.map(() => '?').join(',')}) AND deleted = 0`
+        )
+        .run(Date.now(), ...unique)
+    } catch {
+      /* 热度是排序增强,写失败不能影响上下文返回 */
+    }
   }
 
   const findProjectByKeyword = (keyword: string): ProjectRow | null =>
@@ -224,43 +316,59 @@ export function createMcpTools(deps: {
     projectIds: number | number[] | null
   ): {
     summary: string
+    recent: string
     perSession: Array<{ id: number; title: string; note: string }>
     todos: Array<{ content: string; status?: string }>
     model: string
     covered: number
+    createdAt: number | null
   } | null => {
     const ids = projectIds == null ? [] : Array.isArray(projectIds) ? projectIds : [projectIds]
     if (ids.length === 0) return null
     try {
       // 同名项目可能有多份总结 —— 取整体最新的一份(与"最近一次总结"语义一致)
-      // per_session 是 v2 迁移加的列:老库未迁移时缺列,用 try/catch 里再退一层
-      let row: { summary: string; per_session: string; todos: string; model: string; sessions_covered: number } | undefined
+      // per_session 是 v2 迁移加的列;recent 是 v3 加的列:老库缺列时逐级退。
+      let row:
+        | {
+            summary: string
+            recent: string
+            per_session: string
+            todos: string
+            model: string
+            sessions_covered: number
+            created_at: number
+          }
+        | undefined
       try {
         row = sqlite
           .prepare(
-            `SELECT summary, per_session, todos, model, sessions_covered FROM project_digests
+            `SELECT summary, recent, per_session, todos, model, sessions_covered, created_at FROM project_digests
              WHERE project_id IN (${ids.map(() => '?').join(',')}) AND deleted = 0
              ORDER BY created_at DESC LIMIT 1`
           )
           .get(...ids) as typeof row
       } catch {
-        // 老 schema(无 per_session 列):退到只读 summary/todos
+        // 老 schema(无 recent/per_session 列):退到只读 summary/todos
         const legacy = sqlite
           .prepare(
-            `SELECT summary, todos, model, sessions_covered FROM project_digests
+            `SELECT summary, todos, model, sessions_covered, created_at FROM project_digests
              WHERE project_id IN (${ids.map(() => '?').join(',')}) AND deleted = 0
              ORDER BY created_at DESC LIMIT 1`
           )
-          .get(...ids) as { summary: string; todos: string; model: string; sessions_covered: number } | undefined
-        row = legacy ? { ...legacy, per_session: '[]' } : undefined
+          .get(...ids) as
+          | { summary: string; todos: string; model: string; sessions_covered: number; created_at: number }
+          | undefined
+        row = legacy ? { ...legacy, recent: '', per_session: '[]' } : undefined
       }
       if (!row) return null
       return {
         summary: row.summary,
+        recent: row.recent ?? '',
         perSession: JSON.parse(row.per_session || '[]') as Array<{ id: number; title: string; note: string }>,
         todos: JSON.parse(row.todos || '[]') as Array<{ content: string; status?: string }>,
         model: row.model,
-        covered: row.sessions_covered
+        covered: row.sessions_covered,
+        createdAt: row.created_at ?? null
       }
     } catch {
       return null
@@ -277,15 +385,25 @@ export function createMcpTools(deps: {
     const todos = Array.isArray(d.todos) ? d.todos : []
     const open = todos.filter((t) => t && t.status !== 'done')
     const lines = [`\n${heading}`, d.summary]
-    // 按会话分类(有数据时展开)—— agent 可据此定位某条结论来自哪个会话
-    const perSession = Array.isArray(d.perSession) ? d.perSession : []
-    if (perSession.length > 0) {
-      lines.push('按会话:')
-      for (const p of perSession.slice(0, 15)) {
-        if (!p) continue
-        const note = typeof p.note === 'string' ? p.note : ''
-        if (!note) continue
-        lines.push(`  - #${p.id ?? 0} ${p.title || '(无标题)'} — ${clip(note, 120)}`)
+    const staleDays =
+      typeof d.createdAt === 'number' && d.createdAt > 0
+        ? Math.floor((Date.now() - d.createdAt) / 86_400_000)
+        : 0
+    if (staleDays > 14) {
+      lines.push(`(总结最后更新于 ${staleDays} 天前,最近进展可能已过时)`)
+    }
+    const recent = typeof d.recent === 'string' ? d.recent.trim() : ''
+    if (recent) {
+      lines.push('\n最近进展:', recent)
+    } else {
+      // 老 digest 没有 recent 列:用 perSession 的短注兜底,升级后不会突然丢信息
+      const perSession = Array.isArray(d.perSession) ? d.perSession : []
+      const fallback = perSession.slice(0, 8).filter((p) => p && p.note)
+      if (fallback.length > 0) {
+        lines.push('\n按会话:')
+        for (const p of fallback) {
+          lines.push(`  - #${p.id ?? 0} ${p.title || '(无标题)'} — ${clip(String(p.note), 120)}`)
+        }
       }
     }
     if (open.length > 0) {
@@ -303,39 +421,38 @@ export function createMcpTools(deps: {
     // **必须用同一份集合**,否则同一段返回里会出现三个不同口径的项目
     // (实测:标题是「嵌入式…省赛」,总结正文却是「冰冰快答小助手」)。
     const matched = keyword ? findProjectsByKeyword(keyword) : []
-    const projectIds = matched.length > 0 ? matched.map((p) => p.id) : null
-    const project = projectIds !== null ? (matched[0] ?? null) : findProject(undefined)
-    const persona = getPersona()
-    const facts = getFacts(12, agent)
+    const active = findProject(undefined)
+    const project = matched[0] ?? active
+    // 即使调用方没传 project,也落到最近活跃项目:这样「全局 + 项目记忆 + 总结」
+    // 每次都有;过去 projectIds=null 会既不带项目记忆也不带 digest。
+    const projectIds = matched.length > 0 ? matched.map((p) => p.id) : active ? [active.id] : null
+    const globalRows = loadMemories('global', null, agent)
+    const projectRows = projectIds ? loadMemories('project', projectIds, agent) : []
+    const globalBlock = renderMemoryBlock('## 全局记忆', globalRows, 2200)
+    const projectBlock = projectIds
+      ? renderMemoryBlock(`## 项目记忆: ${project?.name ?? '(未指定)'}`, projectRows, 2600)
+      : null
+    touchMemories([...globalBlock.ids, ...(projectBlock?.ids ?? [])])
     const sessions = recentSessionsOf(projectIds, 5)
 
     const parts: string[] = ['# MemorySQL 续接上下文\n']
     if (agent) parts.push(`> 记忆按 agent 过滤: ${agent}(含全局记忆)\n`)
 
-    parts.push('## 开发者画像')
-    if (persona.length > 0) {
-      for (const p of persona) parts.push(p.split('\n').map((l) => `- ${l}`).join('\n'))
-    } else {
-      parts.push('(暂无画像 — 可调用 memory_write 写入 kind=persona)')
+    parts.push(globalBlock.text)
+    if (project) {
+      parts.push(`\n## 项目: ${project.name}`)
+      if (project.path) parts.push(`- 路径: ${project.path}`)
+      if (project.tech_stack) parts.push(`- 技术栈: ${project.tech_stack}`)
     }
+    if (projectBlock) parts.push(projectBlock.text)
 
-    parts.push('\n## 长期记忆(最近 12 条)')
-    if (facts.length > 0) {
-      for (const f of facts) parts.push(`- [${f.kind}] ${clip(f.content, 160)}`)
-    } else {
-      parts.push('(暂无)')
-    }
-
-    parts.push(`\n## 项目: ${project?.name ?? '(未指定)'}`)
-    if (project?.path) parts.push(`- 路径: ${project.path}`)
-    if (project?.tech_stack) parts.push(`- 技术栈: ${project.tech_stack}`)
     // 滚动总结放在会话列表之前:agent 读这一段就能接手,不必再逐个翻会话
     const digest = latestProjectDigest(projectIds)
     if (digest) {
       parts.push(
         renderDigestBlock(
           digest,
-          `## 项目滚动总结(${digest.model} · 覆盖 ${digest.covered} 个会话 · 定期生成)`
+          `## 项目总结(${digest.model} · 覆盖 ${digest.covered} 个会话 · 定期生成)`
         )
       )
     }
@@ -352,7 +469,7 @@ export function createMcpTools(deps: {
     }
 
     parts.push(
-      '\n> 深读某条会话用 memory_get_session({id});需要更多历史用 memory_list_sessions 或 memory_search({query});拿到新结论/偏好用 memory_write({kind, content}) 记录;收工时用 memory_log_progress 汇报进度。'
+      '\n> 深读某条会话用 memory_get_session({id});需要更多历史用 memory_list_sessions 或 memory_search({query});拿到新结论/偏好用 memory_write({kind, content, project?}) 记录;收工时用 memory_log_progress 汇报进度。'
     )
     return parts.join('\n')
   }
@@ -374,8 +491,18 @@ export function createMcpTools(deps: {
     if (project?.tech_stack) parts.push(`- 技术栈: ${project.tech_stack}`)
     if (agent) parts.push(`- 面向 agent: ${agent}(记忆含全局)`)
 
+    const globalRows = loadMemories('global', null, agent)
+    const projectRows = projectIds ? loadMemories('project', projectIds, agent) : []
+    const globalBlock = renderMemoryBlock('## 全局记忆', globalRows, 2200)
+    const projectBlock = projectIds
+      ? renderMemoryBlock(`## 项目记忆: ${project?.name ?? '(未指定)'}`, projectRows, 2600)
+      : null
+    touchMemories([...globalBlock.ids, ...(projectBlock?.ids ?? [])])
+    parts.push(globalBlock.text)
+    if (projectBlock) parts.push(projectBlock.text)
+
     const digest = latestProjectDigest(projectIds)
-    if (digest) parts.push(renderDigestBlock(digest, '## 项目滚动总结(定期生成 —— 先读这段,不必逐个翻会话)'))
+    if (digest) parts.push(renderDigestBlock(digest, '## 项目总结(定期生成 —— 先读这段,不必逐个翻会话)'))
 
     parts.push('\n## 最近会话(接棒上下文)')
     if (sessions.length > 0) {
@@ -389,35 +516,25 @@ export function createMcpTools(deps: {
       parts.push(renderTail(sessions[0].id))
     }
 
-    const memWhere = [
-      `kind IN ('fact','preference','decision')`,
-      `status = 'active'`,
-      `deleted = 0`,
-      ...(agent ? ['(agent_type IS NULL OR agent_type = ?)'] : [])
-    ]
-    const activeMems = sqlite
-      .prepare(
-        `SELECT kind, content FROM memories WHERE ${memWhere.join(' AND ')} ORDER BY updated_at DESC LIMIT 10`
-      )
-      .all(...(agent ? [agent] : [])) as Array<{ kind: string; content: string }>
-    parts.push('\n## 相关活跃记忆')
-    if (activeMems.length > 0) {
-      for (const m of activeMems) parts.push(`- [${m.kind}] ${clip(m.content, 200)}`)
-    } else {
-      parts.push('(暂无)')
-    }
-
     const progressWhere = [
       `status = 'candidate'`,
       `deleted = 0`,
       `source LIKE 'agent:mcp:log_progress%'`,
-      ...(agent ? ['(agent_type IS NULL OR agent_type = ?)'] : [])
+      ...(agent ? ['(agent_type IS NULL OR agent_type = ?)'] : []),
+      // 只看本项目已关联的汇报;未匹配项目(scope=global)的不属于任何项目简报,
+      // 否则 A 项目的简报会带出 B 项目/无主项目的进度
+      ...(projectIds && projectIds.length > 0
+        ? [`project_id IN (${projectIds.map(() => '?').join(',')})`]
+        : ['1=0'])
     ]
+    const progressParams: unknown[] = []
+    if (agent) progressParams.push(agent)
+    if (projectIds && projectIds.length > 0) progressParams.push(...projectIds)
     const progress = sqlite
       .prepare(
         `SELECT id, content FROM memories WHERE ${progressWhere.join(' AND ')} ORDER BY updated_at DESC LIMIT 5`
       )
-      .all(...(agent ? [agent] : [])) as Array<{ id: number; content: string }>
+      .all(...progressParams) as Array<{ id: number; content: string }>
     parts.push('\n## 待确认进度(收工汇报候选)')
     if (progress.length > 0) {
       for (const p of progress) parts.push(`- #${p.id} ${clip(p.content, 200)}`)
@@ -436,7 +553,7 @@ export function createMcpTools(deps: {
       name: 'memory_get_context',
       description:
         '【何时调用】开始一个任务、进入不熟悉的项目、或用户说"续接/接着上次/继续做"时,先调一次(每个会话最多一次)。\n' +
-        '返回"续接包":开发者画像 + 长期记忆 + 项目状态 + 最近会话(带 id,可直接深读),可选按 agent 过滤记忆、内联上一棒交接摘要。',
+        '返回"续接包":全局记忆(画像/偏好/事实/决策)+ 项目记忆 + 项目总结(总览 + 最近进展)+ 最近会话(带 id,可直接深读),可选按 agent 过滤记忆、内联上一棒交接摘要。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -454,7 +571,7 @@ export function createMcpTools(deps: {
       name: 'memory_get_project_brief',
       description:
         '【何时调用】要接手别人做了一半的项目、或用户问"这个项目进展到哪了"时用;比逐个翻会话便宜得多。\n' +
-        '返回项目交接简报:最近会话、上一棒 tail、相关活跃记忆、待确认进度,从知识库自动汇编。',
+        '返回项目交接简报:全局记忆 + 项目记忆 + 项目总结(总览/最近进展/待办)+ 最近会话 + 上一棒 tail + 待确认进度,从知识库自动汇编。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -647,7 +764,7 @@ export function createMcpTools(deps: {
           limit: { type: 'number', description: '返回条数,默认 20,上限 100' },
           kind: { type: 'string', enum: ['session', 'message', 'memory'], description: '只搜某类资产' },
           agent: { type: 'string', description: '按 agent 过滤(记忆含全局)' },
-          project: { type: 'string', description: '项目名或路径关键词(作用于会话/消息)' },
+          project: { type: 'string', description: '项目名或路径关键词(会话/消息/项目记忆;全局记忆始终保留)' },
           since: { type: 'number', description: '只看最近 N 天,如 7' }
         },
         required: ['query']
@@ -682,10 +799,12 @@ export function createMcpTools(deps: {
           projectIds,
           sinceSec
         })
-        const lines = hits.map(
-          (h, i) =>
-            `${i + 1}. [${h.kind}${h.sessionId != null ? ` 会话#${h.sessionId}` : ''}/${h.agentType ?? '?'}] ${h.title ?? ''}\n   ${h.snippet.replace(/\n/g, ' ')}`
-        )
+        const memoryHitIds = hits.filter((h) => h.kind === 'memory').map((h) => h.id)
+        const lines = hits.map((h, i) => {
+          const tag =
+            h.kind === 'memory' ? `${h.kind}·${h.scope === 'project' ? '项目' : '全局'}` : h.kind
+          return `${i + 1}. [${tag}${h.sessionId != null ? ` 会话#${h.sessionId}` : ''}/${h.agentType ?? '?'}] ${h.title ?? ''}\n   ${h.snippet.replace(/\n/g, ' ')}`
+        })
         // semantic backfill (semantic-search plugin; silently absent when disabled)
         if (q.trim() && (!kind || kind === 'memory' || kind === 'session')) {
           try {
@@ -702,12 +821,32 @@ export function createMcpTools(deps: {
               seen.add(key)
               if (s.kind === 'memory') {
                 const row = sqlite
-                  .prepare(`SELECT kind, content, agent_type, updated_at FROM memories WHERE id = ? AND deleted = 0 AND status != 'retired'`)
-                  .get(s.refId) as { kind: string; content: string; agent_type: string | null; updated_at: number } | undefined
+                  .prepare(
+                    `SELECT id, kind, content, agent_type, updated_at, scope, project_id
+                       FROM memories WHERE id = ? AND deleted = 0 AND status != 'retired'`
+                  )
+                  .get(s.refId) as
+                  | {
+                      id: number
+                      kind: string
+                      content: string
+                      agent_type: string | null
+                      updated_at: number
+                      scope: string
+                      project_id: number | null
+                    }
+                  | undefined
                 if (!row) continue
                 if (agent && !(row.agent_type == null || row.agent_type === agent)) continue
                 if (sinceSec != null && row.updated_at < sinceSec * 1000) continue
-                extra.push(`[memory·语义/${row.agent_type ?? '全局'}] [${row.kind}]\n   ${clip(row.content, 160)}`)
+                if (row.scope === 'project') {
+                  const ids = projectIds ?? (projectId != null ? [projectId] : null)
+                  if (ids != null && !ids.includes(row.project_id ?? -1)) continue
+                }
+                if (!memoryHitIds.includes(row.id)) memoryHitIds.push(row.id)
+                extra.push(
+                  `[memory·语义/${row.scope === 'project' ? '项目' : '全局'}/${row.agent_type ?? '全局'}] [${row.kind}]\n   ${clip(row.content, 160)}`
+                )
               } else {
                 const row = sqlite
                   .prepare(
@@ -742,6 +881,7 @@ export function createMcpTools(deps: {
             /* semantic search not available — pure FTS result stands */
           }
         }
+        touchMemories(memoryHitIds)
         if (lines.length === 0) return `未找到与"${q}"相关的记录。`
         return lines.join('\n')
       }
@@ -750,14 +890,15 @@ export function createMcpTools(deps: {
       name: 'memory_write',
       description:
         '【何时调用】用户表达了偏好/习惯、你们拍板了架构决策、或确认了一个以后还会用到的事实 —— **当场记一条**,不必等用户要求。\n' +
-        '写入长期记忆(跨项目跨 agent 生效),可附 agent 归因、项目关联与标签;内容完全相同时拒绝重复写入。一条只写一件事。',
+        '写入长期记忆:默认全局;带 project 时写成该项目记忆;也可显式 scope=global/project。一条只写一件事,内容完全相同时拒绝重复写入。',
       inputSchema: {
         type: 'object',
         properties: {
           kind: { type: 'string', enum: ['fact', 'preference', 'persona', 'decision'] },
           content: { type: 'string', description: '记忆内容(一句话到一小段)' },
           agent: { type: 'string', description: '写入方 agent 归因,如 codex / hermes;全局记忆省略' },
-          project: { type: 'string', description: '关联项目名或路径关键词(需已登记,未匹配则不关联)' },
+          project: { type: 'string', description: '关联项目名或路径关键词(需已登记);带此参数默认写项目记忆' },
+          scope: { type: 'string', enum: ['global', 'project'], description: '记忆作用域;缺省按 project 参数推断' },
           tags: { type: 'array', items: { type: 'string' }, description: '标签,最多 10 个' }
         },
         required: ['kind', 'content']
@@ -776,6 +917,11 @@ export function createMcpTools(deps: {
         const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
         const keyword = typeof args.project === 'string' && args.project.trim() ? args.project.trim() : undefined
         const project = keyword ? findProjectByKeyword(keyword) : null
+        const scopeArg = args.scope === 'project' || args.scope === 'global' ? args.scope : undefined
+        const scope = scopeArg ?? (project ? 'project' : 'global')
+        if (scope === 'project' && !project) {
+          return `写入失败:未找到项目「${keyword ?? ''}」,无法写入项目记忆(可先不带 project 写成全局记忆)`
+        }
         const rawTags = Array.isArray(args.tags) ? args.tags : []
         const tags = rawTags
           .map((t) => String(t).trim())
@@ -786,10 +932,11 @@ export function createMcpTools(deps: {
           content,
           source: 'agent:mcp',
           agentType: agent,
-          projectId: project?.id ?? null,
+          projectId: scope === 'project' ? (project?.id ?? null) : null,
+          scope,
           tags
         })
-        const bits = [`kind=${kind}`]
+        const bits = [`kind=${kind}`, `scope=${scope}`]
         if (agent) bits.push(`agent=${agent}`)
         if (project) bits.push(`project=${project.name}`)
         if (tags.length > 0) bits.push(`tags=${tags.join(',')}`)
@@ -836,7 +983,7 @@ export function createMcpTools(deps: {
         const bits = [`#${res.id}`]
         if (matched) bits.push(`关联项目 ${matched.name}`)
         else bits.push('项目未匹配,未关联')
-        return `已记录收工进度(${bits.join(', ')})。该条为候选记忆,用户在 UI 确认后进入活跃记忆;其余 agent 可在 memory_get_project_brief 的"待确认进度"中看到。`
+        return `已记录收工进度(${bits.join(', ')})。该条为候选记忆:会出现在交接简报的「待确认进度」并作为项目总结素材;用户可在记忆页将其「启用」转正,或由自动整理吸收。`
       }
     }
   ]

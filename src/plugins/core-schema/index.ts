@@ -6,7 +6,17 @@ import { createSearchService, type SearchService } from './search'
 import { createMcpTools } from './mcp-tools'
 
 export interface MemoriesService {
-  upsertMemory(input: { kind: string; content: string; source: string; agentType?: string; status?: string; tags?: string[]; projectId?: number | null }): { id: number; changed: boolean }
+  upsertMemory(input: {
+    kind: string
+    content: string
+    source: string
+    agentType?: string
+    status?: string
+    tags?: string[]
+    projectId?: number | null
+    scope?: 'global' | 'project'
+    locked?: boolean
+  }): { id: number; changed: boolean }
   addMemory(input: {
     kind: string
     content: string
@@ -15,6 +25,8 @@ export interface MemoriesService {
     status?: string
     projectId?: number | null
     tags?: string[]
+    scope?: 'global' | 'project'
+    locked?: boolean
   }): { id: number }
 }
 
@@ -292,15 +304,65 @@ const plugin: MemorySQLPlugin = {
 
     ctx.ipc.handle('memories:list', (payload) => {
       // paged: the memory list grows without bound (distill candidates, MCP
-      // writes), so the renderer fetches it in chunks
-      const { limit = 500, offset = 0 } = (payload ?? {}) as { limit?: number; offset?: number }
+      // writes), so the renderer fetches it in chunks.
+      // scope/project filters are pushed into SQL: the memory page now has a
+      // global/project switch, and filtering 2000 loaded rows client-side would
+      // make "项目记忆" look empty on large libraries.
+      const { limit = 500, offset = 0, scope, projectId, kind, status } = (payload ?? {}) as {
+        limit?: number
+        offset?: number
+        scope?: string
+        projectId?: number
+        kind?: string
+        status?: string
+      }
       const cap = Math.min(Math.max(limit ?? 500, 1), 2000)
+      const where = ['m.deleted = 0']
+      const params: Array<string | number> = []
+      if (scope === 'global' || scope === 'project') {
+        where.push('m.scope = ?')
+        params.push(scope)
+      }
+      if (typeof projectId === 'number' && projectId > 0) {
+        where.push('m.project_id = ?')
+        params.push(projectId)
+      }
+      if (kind) {
+        where.push('m.kind = ?')
+        params.push(kind)
+      }
+      if (status) {
+        where.push('m.status = ?')
+        params.push(status)
+      }
       return ctx.db.sqlite
         .prepare(
-          `SELECT id, kind, content, source, status, agent_type AS agentType, tags, project_id AS projectId, updated_at FROM memories
-           WHERE deleted = 0 ORDER BY kind, updated_at DESC LIMIT ? OFFSET ?`
+          `SELECT m.id, m.kind, m.content, m.source, m.status, m.agent_type AS agentType,
+                  m.tags, m.project_id AS projectId, p.name AS projectName,
+                  m.scope, m.locked, m.access_count AS accessCount, m.last_access_at AS lastAccessAt,
+                  m.updated_at
+             FROM memories m
+             LEFT JOIN projects p ON p.id = m.project_id
+            WHERE ${where.join(' AND ')}
+            ORDER BY m.kind, m.updated_at DESC
+            LIMIT ? OFFSET ?`
         )
-        .all(cap, Math.max(offset ?? 0, 0))
+        .all(...params, cap, Math.max(offset ?? 0, 0))
+    })
+
+    // 记忆页的项目筛选器:只列真正有项目记忆的项目(按条数降序)。
+    // retired 不计入:自动整理会持续停用旧候选,侧栏计数要和默认列表一致。
+    ctx.ipc.handle('memories:projects', () => {
+      return ctx.db.sqlite
+        .prepare(
+          `SELECT p.id, p.name, COUNT(m.id) AS count
+             FROM projects p
+             JOIN memories m ON m.project_id = p.id AND m.deleted = 0 AND m.scope = 'project' AND m.status != 'retired'
+            WHERE p.deleted = 0
+            GROUP BY p.id
+            ORDER BY count DESC, p.name`
+        )
+        .all() as Array<{ id: number; name: string; count: number }>
     })
 
     ctx.ipc.handle('stats:overview', () => {

@@ -48,7 +48,7 @@ export const PLUGIN_GROUPS: PluginGroup[] = [
   {
     id: 'memory',
     label: '项目与记忆',
-    pluginIds: ['memory-core', 'memory-dispatch', 'project-devlog', 'project-digest']
+    pluginIds: ['memory-core', 'memory-dispatch', 'project-devlog', 'project-digest', 'memory-curator']
   },
   { id: 'service', label: '检索与服务', pluginIds: ['semantic-search', 'mcp-server'] },
   { id: 'sync', label: '同步与备份', pluginIds: ['sync-archive', 'sync-folder', 'privacy-export'] },

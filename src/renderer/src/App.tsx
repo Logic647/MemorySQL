@@ -1268,6 +1268,12 @@ export default function App() {
                                 </span>
                               </div>
                               <pre className="digest-summary">{card.summary}</pre>
+                              {card.recent && (
+                                <>
+                                  <div className="digest-sessions-title">最近进展</div>
+                                  <pre className="digest-summary">{card.recent}</pre>
+                                </>
+                              )}
                               {card.perSession?.length > 0 && (
                                 <div className="digest-sessions">
                                   <div className="digest-sessions-title">按会话</div>
@@ -1519,6 +1525,12 @@ export default function App() {
                             </span>
                           </div>
                           <pre className="digest-summary">{d.summary}</pre>
+                          {d.recent && (
+                            <>
+                              <div className="digest-sessions-title">最近进展</div>
+                              <pre className="digest-summary">{d.recent}</pre>
+                            </>
+                          )}
                           {d.perSession?.length > 0 && (
                             <div className="digest-sessions">
                               <div className="digest-sessions-title">按会话</div>

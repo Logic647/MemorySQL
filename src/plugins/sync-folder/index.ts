@@ -100,7 +100,11 @@ const plugin: MemorySQLPlugin = {
       }
       const memories = ctx.db.sqlite
         .prepare(
-          `SELECT kind, content, source, updated_at, device_id FROM memories WHERE updated_at > ? AND deleted = 0`
+          `SELECT m.kind, m.content, m.source, m.status, m.locked, m.scope, m.agent_type,
+                  p.path AS project_path, p.name AS project_name, m.updated_at, m.device_id
+             FROM memories m
+             LEFT JOIN projects p ON p.id = m.project_id
+            WHERE m.updated_at > ? AND m.deleted = 0`
         )
         .all(since) as SyncBundle['memories']
       const projects = ctx.db.sqlite

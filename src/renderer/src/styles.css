@@ -127,6 +127,12 @@ html:not([data-theme]) body { background: transparent; }
 .side-item:hover { color: var(--msql-fg); background: var(--msql-hover); }
 .side-item.active { color: var(--msql-fg); background: var(--msql-accent-soft); }
 .side-item .count { font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); font-family: var(--msql-font-mono); }
+/* 记忆页:分类挂在项目下面(树状缩进),不再单独占一个全局分组 */
+.mem-subkinds {
+  margin: 2px 0 4px 10px; padding-left: 4px;
+  border-left: 1px solid var(--msql-glass-border);
+}
+.side-item.side-sub { padding: 3px 8px; font-size: var(--msql-fs-sm); }
 .capture-status { display: flex; gap: 8px; padding: 4px 6px; align-items: flex-start; }
 .capture-name { font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); }
 .capture-detail { font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); }
@@ -439,12 +445,39 @@ select option { background: var(--msql-bg-solid); color: var(--msql-fg); }
 .mem-edit-actions { display: flex; gap: 8px; align-items: center; }
 .mem-list { padding: 0 18px var(--msql-sp-5); }
 .mem-group { font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); margin: 14px 0 6px; letter-spacing: 0.06em; }
+/* 项目是记忆页的一级分组,分类收进项目内部 */
+.mem-project-head {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: var(--msql-fs-lg); font-weight: 600; color: var(--msql-fg);
+  margin: 18px 0 2px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--msql-glass-border);
+}
+.mem-project-head .count { font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); }
+.mem-group.mem-group-sub { margin: 8px 0 4px; }
+.mem-retired-toggle {
+  display: inline-flex; align-items: center; gap: 5px; margin-left: 12px;
+  font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); cursor: pointer; white-space: nowrap;
+}
 .mem-row { padding: 10px 12px; margin-bottom: 8px; border: 1px solid var(--msql-glass-border); border-radius: var(--msql-radius-md); background: var(--msql-glass-soft); box-shadow: var(--msql-card-shadow); }
 .mem-retired { opacity: 0.5; }
 .mem-content { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: var(--msql-fs-md); line-height: 1.6; font-family: inherit; color: var(--msql-fg); }
 .mem-meta { display: flex; gap: 10px; margin-top: 8px; font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); align-items: center; flex-wrap: wrap; }
 .mem-source { font-family: var(--msql-font-mono); }
 .mem-actions { display: inline-flex; gap: 8px; margin-left: auto; }
+.mem-edit-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mem-lock { display: inline-flex; gap: 6px; align-items: center; font-size: var(--msql-fs-sm); color: var(--msql-fg-muted); }
+.mem-scope {
+  font-size: var(--msql-fs-xs); padding: 1px 7px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--msql-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--msql-accent) 10%, transparent);
+  color: var(--msql-accent-fg);
+}
+.mem-scope.global {
+  border-color: color-mix(in srgb, var(--msql-fg) 22%, transparent);
+  background: color-mix(in srgb, var(--msql-fg) 7%, transparent);
+  color: var(--msql-fg-muted);
+}
+.mem-project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
 
 /* (笔记与知识图谱已下线 —— 相关的 notes-* / graph-* 样式随之移除) */
 

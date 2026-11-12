@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { api } from './api'
+import { api, type CuratorStatusInfo } from './api'
 import { LLM_PRESETS, presetById } from '../../shared/llm-presets'
 import { groupedPlugins } from './plugin-groups'
 
@@ -64,10 +64,11 @@ const PLUGIN_DESC: Record<string, string> = {
   'privacy-export': '出口脱敏 —— 导出分享前自动遮蔽密钥',
   'sync-archive': '归档备份 —— .msqlv 一键导出/导入',
   'sync-folder': '增量同步 —— 通过网盘文件夹多机合并',
-  'memory-core': '记忆管理 —— 增删改、LLM 精炼、冲突检测',
+  'memory-core': '记忆管理 —— 增删改、冲突检测',
   'memory-dispatch': '记忆分发 —— 生成各 agent 可用的记忆文件',
   'project-devlog': '自动项目日志 —— 按项目生成 Markdown 日志文件(vault/devlog)',
   'project-digest': '项目总结 —— 滚动总结+待办(hindsight 式),LLM 可选、默认关闭',
+  'memory-curator': '项目记忆自动整理 —— 从项目总结提炼全局/项目记忆,用户可编辑锁定',
   'semantic-search': '语义检索 —— 本地向量模型,字面未命中时补足召回',
   'summarizer-llm': 'LLM 摘要引擎(可选,自动降级)',
   'summarizer-rules': '本地规则摘要(默认,零依赖)'
@@ -598,6 +599,16 @@ export default function SettingsView() {
                 未配置 LLM 则用本地规则总结(零外发)。
               </p>
               <DigestSection />
+            </section>
+
+            <section>
+              <h3>项目记忆(LLM 自动整理)</h3>
+              <p className="hint">
+                每次某个项目的总结完成后,LLM 把总结与最近进展提炼成「全局记忆 / 项目记忆」(画像、偏好、事实、决策),
+                下次 memory_get_context 会先给记忆再看总结。<strong>自动整理直接生效</strong>,你编辑过的条目会自动锁定、不再被覆盖;
+                总结和记忆素材经脱敏后发送到「LLM 引擎」所选 provider,未配置 LLM 时不会执行。
+              </p>
+              <MemoryCuratorSection />
             </section>
           </>
         )}
@@ -1270,6 +1281,195 @@ function DigestSection() {
         <span className="hint">首次总结会读完项目全部会话(分批滚动消化,单项目至多 200 个/次),之后只读上次水位之后的新会话。</span>
       </div>
       <NoticeLine slot="digest-all" />
+    </>
+  )
+}
+
+function MemoryCuratorSection() {
+  const { push } = useNotice()
+  const [st, setSt] = useState<CuratorStatusInfo | null>(null)
+  const [maxProject, setMaxProject] = useState('80')
+  const [maxGlobal, setMaxGlobal] = useState('40')
+  const [globalHours, setGlobalHours] = useState('24')
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const s = await api.curatorStatus()
+      setSt(s)
+      setMaxProject(String(s.maxProject))
+      setMaxGlobal(String(s.maxGlobal))
+      setGlobalHours(String(s.globalEveryHours))
+      setLoadError(null)
+    } catch (e) {
+      setSt(null)
+      setLoadError(String(e))
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+    // 整理成功会发 sessions:changed;设置页也保持最新状态(切页不再需要)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const off = api.onSessionsChanged(() => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => void load(), 1500)
+    })
+    return () => {
+      off()
+      if (timer) clearTimeout(timer)
+    }
+  }, [load])
+
+  if (!st) {
+    return (
+      <p className="hint">
+        {loadError ? '项目记忆自动整理插件未启用(可在「插件」里开启后重启应用)' : '加载中…'}
+      </p>
+    )
+  }
+  const setPluginSetting = (key: string, value: unknown, message: string): void => {
+    void api
+      .hostPluginSetting('memory-curator', key, value)
+      .then(() => {
+        push('curator', message)
+        void load()
+      })
+      .catch((e) => push('curator', `保存失败: ${String(e)}`))
+  }
+
+  return (
+    <>
+      <div className="field-row">
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={st.enabled}
+            onChange={(e) => {
+              const next = e.target.checked
+              setSt((prev) => (prev ? { ...prev, enabled: next } : prev))
+              setPluginSetting('enabled', next, next ? '项目记忆自动整理已开启' : '项目记忆自动整理已关闭')
+            }}
+          />
+          <span className="slider" />
+        </label>
+        <span className="mono-tag">
+          {st.enabled
+            ? `已开启 · ${st.projects.length} 个项目 · 全局 ${st.global.memoryCount} 条记忆`
+            : '已关闭 · 不自动改动记忆'}
+        </span>
+      </div>
+      {!st.llmReady && <p className="hint">LLM 未配置或不可用 —— 自动整理不会执行,现有记忆保持不变。</p>}
+      {!st.digestEnabled && (
+        <p className="hint">项目总结未开启 —— 没有新的总结可整理;请先在上面的「项目总结」中开启并生成一次。</p>
+      )}
+
+      <div className="field-row">
+        <label className="field" style={{ maxWidth: 220 }}>
+          <span>每个项目记忆上限</span>
+          <input value={maxProject} onChange={(e) => setMaxProject(e.target.value.replace(/\D/g, ''))} />
+        </label>
+        <label className="field" style={{ maxWidth: 220 }}>
+          <span>全局记忆上限</span>
+          <input value={maxGlobal} onChange={(e) => setMaxGlobal(e.target.value.replace(/\D/g, ''))} />
+        </label>
+        <label className="field" style={{ maxWidth: 220 }}>
+          <span>全局汇总间隔(小时)</span>
+          <input value={globalHours} onChange={(e) => setGlobalHours(e.target.value.replace(/\D/g, ''))} />
+        </label>
+        <button
+          className="btn btn-small"
+          onClick={() => {
+            setPluginSetting('maxProject', Math.max(10, Number(maxProject) || 80), '项目记忆上限已保存')
+            setPluginSetting('maxGlobal', Math.max(10, Number(maxGlobal) || 40), '全局记忆上限已保存')
+            setPluginSetting('globalEveryHours', Math.max(1, Number(globalHours) || 24), '全局汇总间隔已保存')
+          }}
+        >
+          保存上限
+        </button>
+      </div>
+
+      <div className="field-row">
+        <button
+          className="btn btn-accent btn-small"
+          onClick={() =>
+            void api
+              .curatorRunAll()
+              .then((r) => {
+                push('curator', r.queued ? `已入队 ${r.queued} 个项目` : '没有需要整理的项目')
+                void load()
+              })
+              .catch((e) => push('curator', `整理失败: ${String(e)}`))
+          }
+        >
+          立即整理全部项目
+        </button>
+        <button
+          className="btn btn-small"
+          onClick={() =>
+            void api
+              .curatorRunGlobal()
+              .then((r) => {
+                push('curator', r.queued ? '全局记忆整理已入队' : '全局整理正在运行')
+                void load()
+              })
+              .catch((e) => push('curator', `整理失败: ${String(e)}`))
+          }
+        >
+          整理全局记忆
+        </button>
+        <span className="hint">自动整理在每次项目总结完成后触发;这里用于立即补跑。</span>
+      </div>
+      <NoticeLine slot="curator" />
+
+      <div className="agent-capture">
+        {st.projects.map((p) => (
+          <div key={p.projectId} className="agent-row">
+            <div className="agent-main">
+              <div className="agent-name">
+                {p.name}
+                <span className={`agent-state ${p.lastError ? 'bad' : p.curated ? 'ok' : 'dim'}`}>
+                  {p.lastError
+                    ? `上次失败: ${p.lastError.slice(0, 80)}`
+                    : p.curated
+                      ? `已整理 · ${p.memoryCount} 条记忆`
+                      : `未整理 · ${p.memoryCount} 条记忆`}
+                </span>
+              </div>
+            </div>
+            <button
+              className="btn btn-small"
+              disabled={p.status === 'running'}
+              onClick={() =>
+                void api
+                  .curatorRun(p.projectId)
+                  .then((r) => {
+                    push('curator', r.queued ? `「${p.name}」整理已入队` : '该项目正在整理中')
+                    void load()
+                  })
+                  .catch((e) => push('curator', `整理失败: ${String(e)}`))
+              }
+            >
+              {p.status === 'running' ? '整理中…' : '立即整理'}
+            </button>
+          </div>
+        ))}
+        {st.projects.length === 0 && <p className="hint">还没有带总结的项目。</p>}
+        <div className="agent-row">
+          <div className="agent-main">
+            <div className="agent-name">
+              全局记忆
+              <span className={`agent-state ${st.global.lastError ? 'bad' : st.global.memoryCount > 0 ? 'ok' : 'dim'}`}>
+                {st.global.lastError
+                  ? `上次失败: ${st.global.lastError.slice(0, 80)}`
+                  : st.global.memoryCount > 0
+                    ? `${st.global.memoryCount} 条 · ${st.global.lastRunAt ? `上次 ${new Date(st.global.lastRunAt).toLocaleString('zh-CN')}` : '尚未汇总'}`
+                    : '尚未汇总'}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
     </>
   )
 }

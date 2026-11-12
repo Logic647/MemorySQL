@@ -68,9 +68,9 @@ const plugin: MemorySQLPlugin = {
     `)
     const stmtInsertDigest = sqlite.prepare(`
       INSERT INTO project_digests
-        (project_id, period_start, period_end, summary, per_session, todos, decisions, model, sessions_covered,
+        (project_id, period_start, period_end, summary, recent, per_session, todos, decisions, model, sessions_covered,
          created_at, updated_at, device_id)
-      VALUES (@project_id, @period_start, @period_end, @summary, @per_session, @todos, @decisions, @model, @sessions_covered,
+      VALUES (@project_id, @period_start, @period_end, @summary, @recent, @per_session, @todos, @decisions, @model, @sessions_covered,
               @created_at, @updated_at, 'local')
     `)
     const stmtSessions = sqlite.prepare(`
@@ -92,11 +92,14 @@ const plugin: MemorySQLPlugin = {
     const stmtPendingProgress = sqlite.prepare(`
       SELECT content FROM memories
       WHERE status = 'candidate' AND deleted = 0 AND source LIKE 'agent:mcp:log_progress%'
+        -- 只取本项目的收工汇报:未匹配项目的汇报是 scope=global,混进来会把
+        -- 别的项目/无主项目的进度写进本项目总结(与 devlog 同口径)
+        AND project_id = ?
       ORDER BY updated_at DESC LIMIT 8
     `)
     const stmtInsertCandidate = sqlite.prepare(`
-      INSERT INTO memories (kind, content, source, updated_at, device_id, status, project_id)
-      VALUES (?, ?, ?, ?, 'local', 'candidate', ?)
+      INSERT INTO memories (kind, content, source, updated_at, device_id, status, project_id, scope)
+      VALUES (?, ?, ?, ?, 'local', 'candidate', ?, 'project')
     `)
     const stmtCandidateDup = sqlite.prepare(
       `SELECT 1 FROM memories WHERE deleted = 0 AND source = ? AND content = ?`
@@ -186,6 +189,8 @@ const plugin: MemorySQLPlugin = {
         let lastModel = 'rules'
         let llmError: string | null = null
         let rounds = 0
+        let lastDigestId = 0
+        let recentCarry = ''
         for (; rounds < DIGEST_MAX_ROUNDS_PER_TRIGGER; rounds++) {
           const state = stmtState.get(projectId) as
             | { last_digest_at: number | null; last_covered_ts: number | null }
@@ -235,18 +240,25 @@ const plugin: MemorySQLPlugin = {
               project.name,
               sessions,
               prev,
-              (stmtPendingProgress.all() as Array<{ content: string }>).map((r) => r.content)
+              (stmtPendingProgress.all(projectId) as Array<{ content: string }>).map((r) => r.content)
             )
           }
 
           const now = Date.now()
           const periodStart = coveredBefore > 0 ? coveredBefore : sessions[0].ts
           const periodEnd = sessions[sessions.length - 1].ts
-          stmtInsertDigest.run({
+          // 一次触发可能连续消化多轮;最新一行应保留最近几轮的「最近进展」,
+          // 不能只留最后一轮(否则首次追赶 200 个会话时只剩最后 20 条)
+          recentCarry = [result.recent, recentCarry]
+            .filter((x) => x && x.trim())
+            .join('\n\n')
+            .slice(0, spec.recentCapChars)
+          const inserted = stmtInsertDigest.run({
             project_id: projectId,
             period_start: periodStart,
             period_end: periodEnd,
             summary: result.summary,
+            recent: recentCarry,
             per_session: JSON.stringify(result.perSession),
             todos: JSON.stringify(result.todos),
             decisions: JSON.stringify(result.decisions),
@@ -255,6 +267,7 @@ const plugin: MemorySQLPlugin = {
             created_at: now,
             updated_at: now
           })
+          lastDigestId = Number(inserted.lastInsertRowid)
           // 候选记忆:同源同内容去重后进入现有「候选 → 用户确认」链路
           const source = `project-digest:${projectId}`
           for (const c of result.candidates) {
@@ -287,6 +300,15 @@ const plugin: MemorySQLPlugin = {
           return { ok: true, message: '没有新会话需要总结' }
         }
         notify(projectId)
+        // 一次性通知「本轮总结已完成」——memory-curator 据此整理项目记忆。
+        // 不能每轮都发:多轮消化会触发多次 LLM 整理,成本与 churn 都翻倍。
+        ctx.events.emit('digest:completed', {
+          projectId,
+          digestId: lastDigestId,
+          sessionsCovered: coveredTotal,
+          model: lastModel,
+          manual: opts.manual === true
+        })
         ctx.log.info(
           `digest ok: ${project.name} +${coveredTotal} sessions in ${rounds} round(s) (${lastModel})${llmError ? ` — ${llmError}` : ''}`
         )
@@ -391,6 +413,7 @@ const plugin: MemorySQLPlugin = {
       const d = stmtLatestDigest.get(projectId) as
         | {
             summary: string
+            recent: string
             per_session: string
             todos: string
             decisions: string
@@ -406,6 +429,7 @@ const plugin: MemorySQLPlugin = {
         projectId,
         projectName: project.name,
         summary: d.summary,
+        recent: d.recent ?? '',
         perSession: JSON.parse(d.per_session || '[]') as Array<{ id: number; title: string; note: string }>,
         todos: JSON.parse(d.todos || '[]') as DigestTodo[],
         decisions: JSON.parse(d.decisions || '[]') as string[],
@@ -461,7 +485,7 @@ const plugin: MemorySQLPlugin = {
       name: 'memory_get_project_digest',
       description:
         '【何时调用】接手一个项目的第一件事(成本远低于逐个翻会话);用户问"这个项目最近在做什么/还有什么没做完"时也用它。\n' +
-        '返回项目滚动总结:摘要 + 待办 + 决策,带覆盖时间范围;需要细节再配合 memory_list_sessions / memory_get_session。',
+        '返回项目滚动总结:项目总览 + 最近进展(详细)+ 待办 + 决策,带覆盖时间范围;需要细节再配合 memory_list_sessions / memory_get_session。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -502,6 +526,7 @@ const plugin: MemorySQLPlugin = {
         ) as
           | {
               summary: string
+              recent: string
               per_session: string
               todos: string
               decisions: string
@@ -517,6 +542,7 @@ const plugin: MemorySQLPlugin = {
         return buildDigestMcpText(
           {
             summary: d.summary,
+            recent: d.recent ?? '',
             perSession: JSON.parse(d.per_session || '[]') as Array<{ id: number; title: string; note: string }>,
             todos: JSON.parse(d.todos || '[]') as DigestTodo[],
             decisions: JSON.parse(d.decisions || '[]') as string[],

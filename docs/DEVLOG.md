@@ -4,6 +4,99 @@
 
 ---
 
+## 2026-11-12 · 记忆分层:全局/项目记忆 + 从项目总结自动整理
+
+**背景**:记忆库此前是平的 —— `project_id` 只写不读,注入只取「最近 12 条」;
+项目总结是一大段 summary,「最近做了什么」被埋在总览里。用户要求:记忆按项目由 LLM
+整理,分全局/项目,类型仍为画像/偏好/事实/决策,可由项目总结持续更新,用户可编辑/删除;
+每次调用以「记忆 + 总结」注入,总结整体缩短、只把「最近做了什么」写详细。
+
+**数据模型(迁移)**
+- core v9:`memories` 加 `scope(global|project)`、`locked`、`access_count`、`last_access_at`;
+  旧行按 `project_id IS NOT NULL → project` 回填;新增 `(scope, project_id, kind, status)` 与
+  `last_access_at` 索引。
+- project-digest v3:`project_digests.recent`(最近进展/交接卡)。`summary` 只留项目总览
+  (目标/技术/关键决策/环境命令),`recent` 专门写最近会话做了什么、改了哪些模块、已知问题、
+  下一步;旧行 `recent=''` 时渲染层自动跳过。
+- memory-curator v1:`memory_curation_state`(项目/全局的 last_digest_id、last_run_at、last_error、status)。
+
+**新插件 `memory-curator`(requires core-schema + project-digest)**
+- project-digest 在**整轮消化结束后**发 `digest:completed`(多轮只发一次);curator 入队,
+  每个项目一次 LLM 整理。启动后 5 分钟补跑有未整理 digest 的项目;设置页可手动立即整理。
+- 输入:项目信息 + 最新 digest(summary/recent/todos/decisions)+ 已有项目记忆(带 id/locked)
+  + 已有全局记忆(防重复);输出 `{project:[{op:add|update|retire,...}]}`。
+- **自动生效**:新增/更新/停用直接写 `memories`(source=`llm-curator:project:<id>` / `llm-curator:global`,
+  status=active)。用户编辑过的行 `locked=1`,LLM 的 update/retire 一律跳过;手动新增也默认锁定;
+  记忆页可解锁恢复自动维护。
+- 每个项目/全局有上限(默认 80/40),超限按「锁定 > 画像 > 热度」保留,淘汰低热度未锁定条目;
+  整理成功后会 retire 该项目旧的 `project-digest` 候选(它们已被自动整理取代)。
+- 全局记忆:从所有项目记忆跨项目汇总(默认 24h 一次,首次项目整理后触发),只提炼跨项目稳定的
+  画像/偏好/事实/决策;用户手写全局记忆锁定。
+- 热度:注入/搜索命中时累加 `access_count` + `last_access_at`;排序/淘汰用
+  `e^(-0.5×天数) × (1+ln(1+访问数)) × confidence`(memory-bridge 的简化 TMT),不做热度删除。
+
+**注入与工具**
+- `memory_get_context` 新顺序:全局记忆(画像/偏好/事实/决策)→ 项目记忆 → 项目(路径/栈)→
+  项目总结(短)→ 最近进展(详细)→ 待办 → 最近会话。预算:全局 2200/项目 2600 字符,
+  每 kind 有配额,超限按锁定/热度裁剪;没传 project 也落到最近活跃项目(旧实现此时既无项目记忆
+  也无 digest)。
+- `memory_get_project_brief` 同样先给全局+项目记忆,再总结(含 recent)、会话、tail、待确认进度。
+- `memory_get_project_digest` 增加 `## 最近进展`;`memory_write` 新增 `scope`(带 project 默认项目记忆),
+  `memory_search` 的项目过滤覆盖项目记忆(全局记忆始终保留),结果标注 `memory·全局/项目`。
+- digest 超过 14 天未更新时,注入附「总结最后更新于 N 天前」提示(交接卡语义:最新一份自动取代旧卡)。
+- 记忆分发/项目日志/待确认进度也按 scope 过滤(项目日志不再把别的项目记忆混进来)。
+
+**UI**
+- 记忆页:范围侧栏(全部/全局/全部项目/各项目)、项目筛选、scope 徽标、来源标签(自动整理/手动/规则提取)、
+  锁定徽标;编辑表单可改 kind/scope/项目/内容/锁定;新增跟随当前范围;支持解锁、删除。
+- 记忆页信息层级改为「项目 → 分类」:侧栏只保留范围,选中项目后在项目条目下展开该项目的
+  画像/偏好/事实/决策计数;列表在「全部/全部项目记忆」下先按项目分组、组内再分小节。
+  移除已无意义的 Agent 筛选栏。
+- 工具栏去掉「LLM 精炼候选」与「确认候选」两个旧候选流按钮(自动整理已取代候选确认;
+  个别候选仍可用行内「启用」转正);「生成分发文件」成功后与导出备份一致,自动打开分发目录。
+- 设置 → 智能引擎 → 「项目记忆(LLM 自动整理)」:开关、项目/全局上限、全局汇总间隔、
+  每项目状态与「立即整理」、全局状态与「整理全局记忆」、隐私提示。
+
+**跨功能冲突审查(同日,全部已修)**
+- **收工汇报候选跨项目泄漏**:`project-digest` 规则总结素材、`project-devlog` 的「待确认进度」、
+  `memory_get_project_brief` 的「待确认进度」三处都不带项目过滤(A 项目的总结/日志/简报会混入
+  B 项目甚至无主项目的收工汇报)→ 三处统一收紧为 `project_id = ?`(未匹配项目的汇报是
+  scope=global,不属于任何项目;记忆页里仍可见,可手动启用)。
+- **sync-folder 与记忆分层冲突**:bundle 只带 `kind/content/source/updated_at/device_id` ——
+  项目记忆跨设备会落成 global(分层失效)、retired 会在对端复活成 active、locked 丢失后
+  对端 curator 会覆盖用户锁定条目 → bundle v2 携带 `scope/status/locked/agent_type/project_path/
+  project_name`(旧 bundle 缺字段按旧默认合并,格式向后兼容);合并端项目记忆按 path 落到
+  本地项目,缺失时按 path 兜底建项目行。新增 `test/sync-memory-scope.test.ts`(4 用例)。
+- **distill 候选洪流**:规则提炼「每会话 ≤3 条」,一次批量扫描能灌几十条 candidate,而
+  「确认候选」按钮已移除、curator 只 retire digest 候选 → 现在 curator 项目/全局整理成功后
+  (含"无需变更")把该项目/全局的 `distill:%` 候选一并 retire;`agent:mcp:log_progress`
+  候选不在此列(仍是项目总结的「待确认进度」素材)。测试:`memory-curator-plugin` 补断言。
+- **retired 条目堆积**:自动整理会持续停用旧候选/低热度条目,记忆页默认隐藏 retired,
+  标题栏加「显示已停用」开关;侧栏项目计数(`memories:projects`)同步排除 retired,
+  和默认列表口径一致。
+- **`memory_log_progress` 尾注文案**还在说「用户在 UI 确认后进入活跃记忆」(按钮已移除)
+  → 改为指向记忆页行内「启用」/自动整理吸收。
+- **确认无冲突的部分**:curator 直写 SQL 也走 memories_fts 触发器(检索不漏);语义检索只索引
+  active 且 retired 自动摘除;`touchMemories` 只动 access_count/last_access_at(不推 updated_at,
+  不引发同步 LWW 与语义重嵌);curator 的 update/retire 跳过 locked;headless `--digest` 发出的
+  `digest:completed` 由 curator 异步消费,进程退出前没跑完的部分下次 GUI 启动补跑。
+
+**验证**
+- vitest **665 通过 / 2 跳过(667)**;typecheck 0;`npm run build` 通过。
+- 新增 `test/memory-curator.test.ts`(8:热度/解析/apply/锁定/上限/prompt)、
+  `test/memory-curator-plugin.test.ts`(3:digest 事件→项目整理→全局汇总→锁定不动/distill 候选被接管/status)、
+  `test/memory-core.test.ts`(3:手动默认锁定/项目 scope/编辑加锁+删除)、`test/memory-scope-migration.test.ts`(回填)、
+  `test/memory-e2e.test.ts`(2:总结完成→自动整理→按记忆/总结顺序注入→热度;项目过滤不串项目)、
+  `test/sync-memory-scope.test.ts`(4:项目记忆按 path 落位/兜底建项目/旧 bundle 兼容/内容去重)。
+- 真库副本 + 真实 LLM 端到端:对项目 26 调 `memory-curator:runNow` → 1 秒入 running、约 6 秒完成,
+  `memoryCount=1`,DB 里 source=`llm-curator:project:26`、scope=project、status=active;
+  CDP 设置页/记忆页冒烟通过(自动整理区加载、scope 过滤、编辑保存后自动加锁)。
+- **未做/限制**:首次启动补跑会对所有已有 digest 的项目逐个调 LLM(队列串行,可随时关闭开关);
+  headless `--digest` 不会等 curator 跑完(下次 GUI 启动补跑);RRF 检索融合、产物索引、
+  lint/缺口发现按约定本轮不做。
+
+---
+
 ## 2026-11-12 · Claude Code 桌面版(CCD)并入捕获 + 设置提示改为「就地显示」
 
 **1. Claude Code 桌面版:不单独适配,并入 `capture-claudecode`**

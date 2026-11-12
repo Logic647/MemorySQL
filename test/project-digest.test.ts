@@ -98,6 +98,9 @@ describe('digestLevel(详略随量分档)', () => {
     expect(d).toContain('按会话分类')
     // 目标字数写进了提示词
     expect(d).toContain(String(DIGEST_LEVEL_SPECS.detailed.targetChars))
+    expect(d).toContain('"recent"')
+    expect(d).toContain('最近进展')
+    expect(d).toContain(String(DIGEST_LEVEL_SPECS.detailed.recentTargetChars))
   })
 })
 
@@ -119,7 +122,7 @@ describe('digestLevelFor(只升不降)', () => {
   it('上一份总结比当前档位能容纳的更长时,升档以容纳它', () => {
     // 旧数据上限 6000 字:brief(2000)/standard(4500)都装不下 → detailed
     expect(digestLevelFor(1, 500, 6000).level).toBe('detailed')
-    expect(digestLevelFor(1, 500, 3000).level).toBe('standard')
+    expect(digestLevelFor(1, 500, 2000).level).toBe('standard')
     // 短总结不触发升档
     expect(digestLevelFor(1, 500, 100).level).toBe('brief')
   })
@@ -134,10 +137,11 @@ describe('parseDigestResponse(括号配平容错)', () => {
   const spec = DIGEST_LEVEL_SPECS.standard
   it('严格 JSON 直接过,含 perSession', () => {
     const r = parseDigestResponse(
-      '{"summary":"ok","perSession":[{"id":1,"title":"会话A","note":"做了登录"}],"todos":[{"content":"t","status":"open"}],"decisions":["d"],"candidates":[]}',
+      '{"summary":"ok","recent":"最近修了登录","perSession":[{"id":1,"title":"会话A","note":"做了登录"}],"todos":[{"content":"t","status":"open"}],"decisions":["d"],"candidates":[]}',
       spec
     )
     expect(r?.summary).toBe('ok')
+    expect(r?.recent).toBe('最近修了登录')
     expect(r?.todos[0].status).toBe('open')
     expect(r?.perSession[0]).toEqual({ id: 1, title: '会话A', note: '做了登录' })
   })
@@ -191,8 +195,8 @@ describe('buildRulesDigest(零外发降级)', () => {
       ] as DigestTodo[]
     }
     const r = buildRulesDigest('demo', [sess({ id: 1 }), sess({ id: 2 })], prev, ['agent 收工汇报: 剩收尾'])
-    expect(r.summary).toContain('2 个会话')
-    expect(r.summary).toContain('会话 1')
+    expect(r.recent).toContain('最近 2 个会话')
+    expect(r.recent).toContain('会话 1')
     expect(r.summary).toContain('旧总结')
     expect(r.todos.map((t) => t.content)).toEqual(['旧待办', 'agent 收工汇报: 剩收尾'])
     expect(r.candidates).toEqual([])
@@ -218,6 +222,7 @@ describe('buildDigestMd', () => {
     const md = buildDigestMd(
       {
         summary: 'S1',
+        recent: 'R1',
         perSession: [{ id: 3, title: '会话C', note: '做了 C' }],
         todos: [{ content: 't1', status: 'open' }, { content: 't2', status: 'done' }],
         decisions: ['D1'],
@@ -226,6 +231,8 @@ describe('buildDigestMd', () => {
       { projectName: 'demo', periodStart: 1_760_000_000, periodEnd: 1_760_086_400, model: 'llm:glm-4.7-flash', sessionsCovered: 5, generatedAt: new Date(1_760_086_400_000) }
     )
     expect(md).toContain('# 项目总结: demo')
+    expect(md).toContain('## 最近进展')
+    expect(md).toContain('R1')
     expect(md).toContain('## 按会话')
     expect(md).toContain('#3 会话C — 做了 C')
     expect(md).toContain('- [ ] t1')

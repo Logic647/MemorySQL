@@ -174,6 +174,7 @@ export function createSearchService(sqlite: Database.Database): SearchService {
       if (want('memory')) {
         const where = [`m.deleted = 0`, `m.status != 'retired'`]
         const params: unknown[] = []
+        let skipMemories = false
         if (agent) {
           where.push('(m.agent_type IS NULL OR m.agent_type = ?)')
           params.push(agent)
@@ -182,10 +183,26 @@ export function createSearchService(sqlite: Database.Database): SearchService {
           where.push('m.updated_at >= ?')
           params.push(sinceSec * 1000)
         }
-        if (query.length >= 3) {
+        // 项目过滤:项目记忆限定在该项目,全局记忆始终保留(跨项目画像/偏好)
+        if (pids != null) {
+          if (pids.length === 0) {
+            skipMemories = true
+          } else {
+            where.push(
+              `(m.scope = 'global' OR (m.scope = 'project' AND m.project_id IN (${pids
+                .map(() => '?')
+                .join(',')})))`
+            )
+            params.push(...pids)
+          }
+        } else if (pid != null) {
+          where.push(`(m.scope = 'global' OR m.project_id = ?)`)
+          params.push(pid)
+        }
+        if (!skipMemories && query.length >= 3) {
           const rows = sqlite
             .prepare(
-              `SELECT m.id, m.kind, m.agent_type,
+              `SELECT m.id, m.kind, m.agent_type, m.scope, m.project_id,
                       snippet(memories_fts, 0, '«', '»', '…', 10) AS snip
                FROM memories_fts f JOIN memories m ON m.id = f.rowid
                WHERE memories_fts MATCH ? AND ${where.join(' AND ')}
@@ -197,16 +214,18 @@ export function createSearchService(sqlite: Database.Database): SearchService {
               kind: 'memory',
               id: r.id as number,
               agentType: (r.agent_type ?? undefined) as SearchHit['agentType'],
+              scope: r.scope === 'project' ? 'project' : 'global',
+              projectId: (r.project_id ?? null) as number | null,
               title: `[${r.kind as string}]`,
               snippet: r.snip as string,
               rank: hits.length
             })
           }
-        } else {
+        } else if (!skipMemories) {
           const like = `%${query}%`
           const rows = sqlite
             .prepare(
-              `SELECT m.id, m.kind, m.agent_type, substr(m.content, 1, 120) AS snip FROM memories m
+              `SELECT m.id, m.kind, m.agent_type, m.scope, m.project_id, substr(m.content, 1, 120) AS snip FROM memories m
                WHERE ${where.join(' AND ')} AND m.content LIKE ?
                ORDER BY m.updated_at DESC LIMIT ?`
             )
@@ -216,6 +235,8 @@ export function createSearchService(sqlite: Database.Database): SearchService {
               kind: 'memory',
               id: r.id as number,
               agentType: (r.agent_type ?? undefined) as SearchHit['agentType'],
+              scope: r.scope === 'project' ? 'project' : 'global',
+              projectId: (r.project_id ?? null) as number | null,
               title: `[${r.kind as string}]`,
               snippet: r.snip as string,
               rank: hits.length

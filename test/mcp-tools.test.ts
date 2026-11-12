@@ -159,12 +159,12 @@ describe('memory_get_context', () => {
     insDigest.run(1, '最新总结:项目已完成 M6,下一步做分发', JSON.stringify([{ content: '做分发', status: 'open' }]), 3, 200, 200)
 
     const ctx = await call('memory_get_context', { project: 'MemorySQL' })
-    expect(ctx).toContain('项目滚动总结')
+    expect(ctx).toContain('## 项目总结')
     expect(ctx).toContain('最新总结:项目已完成 M6')
     expect(ctx).not.toContain('过期总结内容') // 只取最新那一份
     expect(ctx).toContain('待办: 做分发')
     // 总结必须排在会话列表之前 —— agent 先读结论,再决定要不要翻会话
-    expect(ctx.indexOf('项目滚动总结')).toBeLessThan(ctx.indexOf('最近会话'))
+    expect(ctx.indexOf('## 项目总结')).toBeLessThan(ctx.indexOf('最近会话'))
 
     // brief 同样带总结,且与 context 取的是同一份
     const brief = await call('memory_get_project_brief', { project: 'MemorySQL' })
@@ -175,7 +175,44 @@ describe('memory_get_context', () => {
     // project-digest 插件被停用 / 从未迁移过 → 不能抛错
     const ctx = await call('memory_get_context', { project: 'MemorySQL' })
     expect(ctx).toContain('## 项目: MemorySQL')
-    expect(ctx).not.toContain('项目滚动总结')
+    expect(ctx).not.toContain('## 项目总结')
+  })
+
+  it('injects global + project memory before the digest and touches access heat', async () => {
+    db.prepare(
+      `INSERT INTO memories (kind, content, source, status, updated_at, device_id, scope, project_id)
+       VALUES ('decision', '项目决策使用 SQLite', 'test', 'active', 4, 'local', 'project', 1)`
+    ).run()
+    const ctx = await call('memory_get_context', { project: 'MemorySQL' })
+    expect(ctx).toContain('## 全局记忆')
+    expect(ctx).toContain('## 项目记忆: MemorySQL')
+    expect(ctx).toContain('全局记忆内容示例部署流程')
+    expect(ctx).toContain('项目决策使用 SQLite')
+    expect(ctx.indexOf('## 全局记忆')).toBeLessThan(ctx.indexOf('## 项目记忆:'))
+    const row = db
+      .prepare(`SELECT access_count, last_access_at FROM memories WHERE content = '项目决策使用 SQLite'`)
+      .get() as { access_count: number; last_access_at: number | null }
+    expect(row.access_count).toBeGreaterThan(0)
+    expect(row.last_access_at).not.toBeNull()
+  })
+
+  it('includes the active project digest and recent progress even without a project keyword', async () => {
+    db.exec(`CREATE TABLE project_digests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, period_start INTEGER, period_end INTEGER,
+      summary TEXT NOT NULL DEFAULT '', recent TEXT NOT NULL DEFAULT '', per_session TEXT NOT NULL DEFAULT '[]',
+      todos TEXT NOT NULL DEFAULT '[]', decisions TEXT NOT NULL DEFAULT '[]', model TEXT NOT NULL DEFAULT '',
+      sessions_covered INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+      device_id TEXT NOT NULL DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0
+    )`)
+    db.prepare(
+      `INSERT INTO project_digests (project_id, summary, recent, model, sessions_covered, created_at, updated_at)
+       VALUES (1, '项目总览内容', '最近进展内容: 修了搜索', 'llm:test', 2, ?, ?)`
+    ).run(Date.now(), Date.now())
+    const ctx = await call('memory_get_context', {})
+    expect(ctx).toContain('## 项目总结')
+    expect(ctx).toContain('项目总览内容')
+    expect(ctx).toContain('最近进展内容: 修了搜索')
+    expect(ctx).toContain('## 项目: MemorySQL')
   })
 
   /**
@@ -376,8 +413,8 @@ describe('memory_write attribution + dedup', () => {
     })
     expect(out).toContain('已写入记忆')
     const row = db
-      .prepare(`SELECT agent_type, project_id, tags FROM memories WHERE content = '偏好中文注释'`)
-      .get() as { agent_type: string | null; project_id: number | null; tags: string | null }
+      .prepare(`SELECT agent_type, project_id, tags, scope FROM memories WHERE content = '偏好中文注释'`)
+      .get() as { agent_type: string | null; project_id: number | null; tags: string | null; scope: string }
     expect(row.agent_type).toBe('codex')
     expect(row.project_id).toBe(1)
     expect(JSON.parse(row.tags ?? '[]')).toEqual(['风格', '注释'])
@@ -412,6 +449,9 @@ describe('memory_log_progress + brief', () => {
     await call('memory_log_progress', { project: 'MemorySQL', done: '写了一半的功能' })
     const brief = await call('memory_get_project_brief', { project: 'MemorySQL' })
     expect(brief).toContain('# 项目交接简报: MemorySQL')
+    expect(brief).toContain('## 全局记忆')
+    expect(brief).toContain('## 项目记忆: MemorySQL')
+    expect(brief).toContain('全局记忆内容示例部署流程')
     expect(brief).toContain('最近会话')
     expect(brief).toContain('#10')
     expect(brief).toContain('上一棒进行到哪')

@@ -170,5 +170,25 @@ ALTER TABLE sessions ADD COLUMN parent_session_id INTEGER;
 CREATE INDEX idx_sessions_subagent ON sessions(is_subagent);
 CREATE INDEX idx_sessions_parent ON sessions(parent_session_id);
 `
+  },
+  {
+    version: 9,
+    up: `
+-- v9: 全局/项目两层记忆 + 用户锁定 + 使用热度.
+--
+-- scope 是显式的,不再用「project_id IS NULL」猜:project_id 可以为空但仍是
+-- 项目记忆(项目尚未解析),反之全局记忆也可能因为旧数据带着 project_id。
+-- 回填规则:已有 project_id 的旧记忆归项目,其余归全局(自动整理只维护
+-- 未锁定行,所以旧数据不会被突然改写)。
+ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'global';
+ALTER TABLE memories ADD COLUMN locked INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE memories ADD COLUMN last_access_at INTEGER;
+
+UPDATE memories SET scope = 'project' WHERE project_id IS NOT NULL;
+
+CREATE INDEX idx_memories_scope ON memories(scope, project_id, kind, status);
+CREATE INDEX idx_memories_access ON memories(last_access_at);
+`
   }
 ]

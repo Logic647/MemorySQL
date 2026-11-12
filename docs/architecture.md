@@ -54,7 +54,12 @@ sessions        id PK · external_id · agent_type · project_id? · cwd
 session_messages id PK · session_id FK · seq · role · content · ts? · meta(JSON)
 memories        id PK · kind(fact|preference|persona|decision) · content
                 · source_session_id? · confidence · status(candidate|active|retired)
+                · agent_type? · tags? · project_id? · scope(global|project)
+                · locked(用户编辑后不被 LLM 覆盖) · access_count · last_access_at
                 · updated_at · device_id · deleted
+project_digests id PK · project_id · summary(总览) · recent(最近进展/交接卡)
+                · per_session · todos · decisions · model · sessions_covered
+                · created_at · updated_at · device_id · deleted
 projects        id PK · path · name · tech_stack · updated_at · device_id · deleted
 notes           id PK · rel_path · title · links(JSON) · tags(JSON)
                 · updated_at · device_id · deleted   ← 文件为事实来源,此处只存索引
@@ -106,6 +111,7 @@ FTS: sessions_fts(title, summary) · messages_fts(content)  — contentless + �
 | D9 | 知识库迁移:归档导入导出 + 增量同步 | 除 LLM 外零服务器依赖,数据目录自包含 |
 | D10 | 开发文档 AGENTS.md 主入口 + docs/ | 本项目自身跨 agent 开发(dogfooding),并写入 agent 全局记忆 |
 | D11 | **2026-10-22 下线笔记与知识图谱**(M4 的笔记/图谱部分回退) | 长期使用后判断实用性不高;图谱的数据源本就是笔记链接关系,笔记没了图谱失去意义。连带移除 CodeMirror + cytoscape,renderer 产物 2.79MB → 0.68MB。`vault/` 保留但语义变为**纯生成文件目录**(devlog/dispatch);`notes`/`notes_fts` 旧表留在库里不删 |
+| D12 | **2026-11-12 记忆分层:全局/项目 + LLM 自动整理** | 用户要求记忆按项目由 LLM 从项目总结提炼,分全局/项目,类型仍是画像/偏好/事实/决策。`memories` 显式加 `scope`/`locked`/热度;新插件 `memory-curator` 在每次 project-digest 完成后自动 add/update/retire,用户编辑过的条目 `locked=1` 不覆盖;全局记忆由项目记忆跨项目汇总。digest 拆成短 `summary` + 详细 `recent`(交接卡),注入顺序为「全局记忆 → 项目记忆 → 总结 → 最近进展」。**偏离 M6 的『不做不经确认的全自动写入』**:仅对 LLM 整理层自动生效,原始会话只读、用户可编辑/删除/解锁,且保留 source 审计 |
 
 ## 8. 里程碑
 

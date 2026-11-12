@@ -5,8 +5,9 @@ import { distill } from './distill'
 import { buildConflictPrompt, parseConflictResponse } from './conflicts'
 import { redactWithCount } from '../../main/core/redact'
 
-/** Memory CRUD for the UI, plus rule-based auto-distillation and LLM refinement. */
+/** Memory CRUD for the UI, plus rule-based auto-distillation and conflict detection. */
 const VALID_KINDS = new Set(['fact', 'preference', 'persona', 'decision'])
+const VALID_SCOPES = new Set(['global', 'project'])
 
 const plugin: MemorySQLPlugin = {
   manifest: {
@@ -18,27 +19,62 @@ const plugin: MemorySQLPlugin = {
 
   init(ctx) {
     ctx.ipc.handle('save', (payload) => {
-      const { id, kind, content } = (payload ?? {}) as {
+      const { id, kind, content, scope, projectId, locked } = (payload ?? {}) as {
         id?: number
         kind?: string
         content?: string
+        scope?: string
+        projectId?: number | null
+        locked?: boolean
       }
       if (kind && !VALID_KINDS.has(kind)) throw new Error(`invalid kind: ${kind}`)
+      if (scope && !VALID_SCOPES.has(scope)) throw new Error(`invalid scope: ${scope}`)
       const text = (content ?? '').trim()
       if (!text) throw new Error('content 不能为空')
       const sqlite = ctx.db.sqlite
       if (id) {
+        const existing = sqlite
+          .prepare('SELECT kind, scope, project_id, locked FROM memories WHERE id = ? AND deleted = 0')
+          .get(id) as { kind: string; scope: string; project_id: number | null; locked: number } | undefined
+        if (!existing) throw new Error('记忆不存在或已删除')
+        const nextScope = scope ?? existing.scope ?? (existing.project_id != null ? 'project' : 'global')
+        const nextProject = nextScope === 'global' ? null : (projectId !== undefined ? projectId : existing.project_id)
+        if (nextScope === 'project' && nextProject == null) throw new Error('项目记忆必须选择项目')
+        // 用户在界面上编辑 = 这条记忆归用户管:默认锁定,自动整理不再覆盖/停用。
+        const nextLocked = locked === undefined ? 1 : locked ? 1 : 0
         sqlite
-          .prepare('UPDATE memories SET kind = ?, content = ?, updated_at = ? WHERE id = ? AND deleted = 0')
-          .run(kind ?? 'fact', text, Date.now(), id)
+          .prepare(
+            `UPDATE memories
+                SET kind = ?, content = ?, scope = ?, project_id = ?, locked = ?, updated_at = ?
+              WHERE id = ? AND deleted = 0`
+          )
+          .run(kind ?? existing.kind, text, nextScope, nextProject, nextLocked, Date.now(), id)
         return { id }
+      }
+      const nextScope = scope ?? (projectId != null ? 'project' : 'global')
+      if (nextScope === 'project' && (projectId == null || projectId <= 0)) {
+        throw new Error('项目记忆必须选择项目')
       }
       const res = ctx.services.use<MemoriesService>('memories').addMemory({
         kind: kind ?? 'fact',
         content: text,
-        source: 'manual'
+        source: 'manual',
+        projectId: nextScope === 'global' ? null : projectId ?? null,
+        scope: nextScope as 'global' | 'project',
+        // 手写记忆默认锁定:它是用户明确给出的结论,LLM 只能读不能改
+        locked: locked === undefined ? true : locked
       })
       return res
+    })
+
+    // 解锁后自动整理可以重新维护这条记忆(用户手动解锁时使用)
+    ctx.ipc.handle('setLocked', (payload) => {
+      const { id, locked } = (payload ?? {}) as { id?: number; locked?: boolean }
+      if (!id) throw new Error('setLocked requires id')
+      ctx.db.sqlite
+        .prepare('UPDATE memories SET locked = ?, updated_at = ? WHERE id = ? AND deleted = 0')
+        .run(locked ? 1 : 0, Date.now(), id)
+      return { ok: true }
     })
 
     ctx.ipc.handle('delete', (payload) => {
@@ -61,31 +97,11 @@ const plugin: MemorySQLPlugin = {
       return { ok: true }
     })
 
-    // batch-confirm candidates (optionally scoped to one agent / one kind)
-    ctx.ipc.handle('confirmAll', (payload) => {
-      const { agentType, kind } = (payload ?? {}) as { agentType?: string; kind?: string }
-      const where: string[] = ["status = 'candidate'", 'deleted = 0']
-      const params: unknown[] = []
-      if (agentType && agentType !== 'all') {
-        where.push(agentType === 'global' ? 'agent_type IS NULL' : 'agent_type = ?')
-        if (agentType !== 'global') params.push(agentType)
-      }
-      if (kind && VALID_KINDS.has(kind)) {
-        where.push('kind = ?')
-        params.push(kind)
-      }
-      const res = ctx.db.sqlite
-        .prepare(`UPDATE memories SET status = 'active', updated_at = ? WHERE ${where.join(' AND ')}`)
-        .run(Date.now(), ...params)
-      ctx.events.emit('sessions:changed')
-      return { confirmed: Number(res.changes) }
-    })
-
     // ---- rule-based distillation: fired after every ingest ----------------
     const distillSession = (sessionId: number): number => {
       const session = ctx.db.sqlite
-        .prepare('SELECT agent_type FROM sessions WHERE id = ? AND deleted = 0')
-        .get(sessionId) as { agent_type: string } | undefined
+        .prepare('SELECT agent_type, project_id FROM sessions WHERE id = ? AND deleted = 0')
+        .get(sessionId) as { agent_type: string; project_id: number | null } | undefined
       if (!session) return 0
       const source = `distill:${session.agent_type}:${sessionId}`
       // already distilled → skip (upsert-by-source semantics would refresh,
@@ -102,7 +118,9 @@ const plugin: MemorySQLPlugin = {
           content: c.content,
           source,
           agentType: session.agent_type,
-          status: 'candidate'
+          status: 'candidate',
+          projectId: session.project_id,
+          scope: session.project_id != null ? 'project' : 'global'
         })
       }
       return candidates.length
@@ -153,70 +171,6 @@ const plugin: MemorySQLPlugin = {
         conflicts,
         message: conflicts.length > 0 ? `发现 ${conflicts.length} 组疑似矛盾记忆` : '未发现互相矛盾的记忆'
       }
-    })
-
-    // ---- LLM refinement of candidates ------------------------------------
-    ctx.ipc.handle('refine', async (payload) => {
-      const { agentType } = (payload ?? {}) as { agentType?: string }
-      let refine: { available(): boolean; refine(prompt: string): Promise<string> }
-      try {
-        refine = ctx.services.use('llm-refine')
-      } catch {
-        return { ok: false as const, message: 'LLM 模块未加载' }
-      }
-      if (!refine.available()) {
-        return { ok: false as const, message: 'LLM 未配置或不可用 — 请先在设置页配置摘要引擎' }
-      }
-      const rows = ctx.db.sqlite
-        .prepare(
-          `SELECT id, kind, content, agent_type FROM memories
-           WHERE status = 'candidate' AND deleted = 0
-             AND (source LIKE 'distill:%' OR source LIKE 'manual:%')
-             ${agentType ? 'AND agent_type = ?' : ''}
-           ORDER BY updated_at DESC LIMIT 60`
-        )
-        .all(...(agentType ? [agentType] : [])) as Array<{ id: number; kind: string; content: string; agent_type: string | null }>
-      if (rows.length === 0) {
-        return { ok: true as const, inserted: 0, message: '没有可精炼的候选记忆' }
-      }
-      const prompt =
-        '下面是若干条自动提取的候选记忆(JSON)。请去重、合并同类项,改写为不超过 15 条精炼、互不重复的记忆。' +
-        'kind 只能是 fact/preference/persona/decision。只输出 JSON 数组,格式 [{"kind":"…","content":"…"}],不要其它文字。\n' +
-        JSON.stringify(rows.map((r) => ({ kind: r.kind, content: r.content })))
-      const text = await refine.refine(redactWithCount(prompt).text)
-      const cleaned = text.replace(/```json|```/g, '').trim()
-      let items: Array<{ kind?: string; content?: string }>
-      try {
-        items = JSON.parse(cleaned) as Array<{ kind?: string; content?: string }>
-      } catch {
-        return { ok: false as const, message: `模型输出无法解析: ${text.slice(0, 120)}` }
-      }
-      const valid = items.filter(
-        (i): i is { kind: string; content: string } =>
-          typeof i.kind === 'string' && VALID_KINDS.has(i.kind) && typeof i.content === 'string' && i.content.trim().length > 0
-      )
-      if (valid.length === 0) return { ok: false as const, message: '模型未返回有效记忆' }
-
-      // retire exactly the rows that went into the prompt (incl. manual), and
-      // refined products stay candidates until the user confirms them
-      const ids = rows.map((r) => r.id)
-      const retire = ctx.db.sqlite.prepare(
-        `UPDATE memories SET status = 'retired', updated_at = ? WHERE id IN (${ids.map(() => '?').join(',')})`
-      )
-      const insert = ctx.db.sqlite.prepare(
-        `INSERT INTO memories (kind, content, source, agent_type, confidence, status, updated_at, device_id)
-         VALUES (?, ?, ?, ?, 0.9, 'candidate', ?, 'local')`
-      )
-      const run = ctx.db.sqlite.transaction(() => {
-        retire.run(Date.now(), ...ids)
-        for (const v of valid.slice(0, 20)) {
-          insert.run(v.kind, v.content.trim(), `refined:${agentType ?? 'global'}`, agentType ?? null, Date.now())
-        }
-      })
-      run()
-      ctx.events.emit('sessions:changed')
-      ctx.log.info(`refined ${rows.length} candidates into ${valid.length} candidates awaiting confirmation`)
-      return { ok: true as const, inserted: valid.length, message: `已精炼为 ${valid.length} 条` }
     })
   }
 }

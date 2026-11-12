@@ -45,5 +45,14 @@ CREATE TABLE IF NOT EXISTS project_digest_state (
 -- v2: 按会话分类(用户 2026-10-26):每个覆盖的会话一条 {id,title,note}
 ALTER TABLE project_digests ADD COLUMN per_session TEXT NOT NULL DEFAULT '[]';
 `
+  },
+  {
+    version: 3,
+    up: `
+-- v3: 把「最近进展」从 summary 大段里拆出来(交接卡语义)。
+-- summary 只留项目总览(目标/技术/决策/命令),recent 专门写最近做了什么,
+-- 注入时优先给 recent 更长预算;老行 recent='' 时渲染层自动跳过该段。
+ALTER TABLE project_digests ADD COLUMN recent TEXT NOT NULL DEFAULT '';
+`
   }
 ]

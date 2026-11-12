@@ -19,12 +19,16 @@ const plugin: MemorySQLPlugin = {
     ctx.ipc.handle('generate', () => {
       const rows = ctx.db.sqlite
         .prepare(
-          `SELECT kind, content, updated_at FROM memories
-           WHERE status = 'active' AND deleted = 0
-           ORDER BY CASE kind WHEN 'persona' THEN 0 WHEN 'preference' THEN 1 ELSE 2 END, updated_at DESC`
+          `SELECT m.kind, m.content, m.updated_at, m.scope, p.name AS projectName
+             FROM memories m
+             LEFT JOIN projects p ON p.id = m.project_id
+            WHERE m.status = 'active' AND m.deleted = 0
+            ORDER BY CASE m.kind WHEN 'persona' THEN 0 WHEN 'preference' THEN 1 ELSE 2 END, m.updated_at DESC`
         )
-        .all() as Array<{ kind: string; content: string; updated_at: number }>
+        .all() as Array<{ kind: string; content: string; updated_at: number; scope: string; projectName: string | null }>
 
+      const tag = (r: { kind: string; scope: string; projectName: string | null }): string =>
+        `${r.kind}·${r.scope === 'project' ? (r.projectName ?? '项目') : '全局'}`
       const persona = rows.filter((r) => r.kind === 'persona').map((r) => r.content)
       const facts = rows.filter((r) => r.kind !== 'persona')
 
@@ -36,7 +40,7 @@ const plugin: MemorySQLPlugin = {
         ...(persona.length > 0 ? persona.map((p) => p.split('\n').map((l) => `- ${l}`).join('\n')) : ['- (暂无)']),
         '',
         '## 长期记忆',
-        ...(facts.length > 0 ? facts.map((f) => `- [${f.kind}] ${f.content.replace(/\n/g, ' ')}`) : ['- (暂无)']),
+        ...(facts.length > 0 ? facts.map((f) => `- [${tag(f)}] ${f.content.replace(/\n/g, ' ')}`) : ['- (暂无)']),
         ''
       ].join('\n')
 
@@ -47,7 +51,7 @@ const plugin: MemorySQLPlugin = {
         ...(persona.length > 0 ? persona.flatMap((p) => p.split('\n')) : ['(见 vault/dispatch/MEMORY.md)']),
         '',
         '## 关键事实与偏好',
-        ...(facts.slice(0, 20).map((f) => `- [${f.kind}] ${f.content.replace(/\n/g, ' ')}`)),
+        ...(facts.slice(0, 20).map((f) => `- [${tag(f)}] ${f.content.replace(/\n/g, ' ')}`)),
         '</memorysql_context>',
         ''
       ].join('\n')

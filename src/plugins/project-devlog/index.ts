@@ -48,16 +48,19 @@ const plugin: MemorySQLPlugin = {
         .prepare(
           `SELECT kind, content FROM memories
            WHERE status = 'active' AND deleted = 0 AND kind IN ('decision','fact','preference')
+             AND (scope = 'global' OR (scope = 'project' AND project_id = ?))
            ORDER BY updated_at DESC LIMIT 15`
         )
-        .all() as DevlogMemory[]
+        .all(projectId) as DevlogMemory[]
       const pendingProgress = sqlite
         .prepare(
           `SELECT kind, content FROM memories
            WHERE status = 'candidate' AND deleted = 0 AND source LIKE 'agent:mcp:log_progress%'
+             -- 只取本项目的收工汇报;未匹配项目(scope=global)的汇报不属于任何项目日志
+             AND project_id = ?
            ORDER BY updated_at DESC LIMIT 8`
         )
-        .all() as DevlogMemory[]
+        .all(projectId) as DevlogMemory[]
       return { project, sessions, activeMemories, pendingProgress }
     }
 

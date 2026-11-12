@@ -48,6 +48,12 @@ function parseSessionId(raw: unknown): number {
 
 export interface DigestResult {
   summary: string
+  /**
+   * 最近进展(交接卡语义):最近一批会话做了什么、改了哪些文件/模块、
+   * 当前状态与已知问题、下一步。summary 只留项目总览,这一段专门写"最近"。
+   * 老 digest 行没有该字段时为空,渲染层自动跳过。
+   */
+  recent: string
   perSession: DigestSessionNote[]
   todos: DigestTodo[]
   decisions: string[]
@@ -72,30 +78,56 @@ export type DigestLevel = 'brief' | 'standard' | 'detailed'
 
 export interface DigestLevelSpec {
   level: DigestLevel
-  /** summary 目标字符数(写进提示词,给模型一个锚) */
+  /** summary 目标字符数(写进提示词,给模型一个锚)—— 项目总览,不含最近进展 */
   targetChars: number
   /** summary 解析截断上限 */
   capChars: number
-  /** 本次 LLM 调用 maxTokens(要容得下 summary + perSession + todos/decisions) */
+  /** recent 目标字符数(最近进展,详细) */
+  recentTargetChars: number
+  /** recent 解析截断上限 */
+  recentCapChars: number
+  /** 本次 LLM 调用 maxTokens(要容得下 summary + recent + perSession + todos/decisions) */
   maxTokens: number
 }
 
 export const DIGEST_LEVEL_SPECS: Record<DigestLevel, DigestLevelSpec> = {
-  brief: { level: 'brief', targetChars: 800, capChars: 2000, maxTokens: 2400 },
-  standard: { level: 'standard', targetChars: 2000, capChars: 4500, maxTokens: 4200 },
-  detailed: { level: 'detailed', targetChars: 4000, capChars: 9000, maxTokens: 8000 }
+  brief: {
+    level: 'brief',
+    targetChars: 500,
+    capChars: 1500,
+    recentTargetChars: 600,
+    recentCapChars: 1800,
+    maxTokens: 3200
+  },
+  standard: {
+    level: 'standard',
+    targetChars: 800,
+    capChars: 2500,
+    recentTargetChars: 1000,
+    recentCapChars: 2500,
+    maxTokens: 5000
+  },
+  detailed: {
+    level: 'detailed',
+    targetChars: 1200,
+    capChars: 3000,
+    recentTargetChars: 1600,
+    recentCapChars: 4000,
+    maxTokens: 8000
+  }
 }
 
 /**
  * 每次输出里 perSession 最多几条。
  *
- * 这个上限是 **maxTokens 预算的一部分**:detailed 档 capChars 9000 字的 summary
- * 加上最多 20 条 perSession(每条 title 80 + note 400)再加 todos/decisions/
- * candidates 与 JSON 结构,很容易把 8000 token 吃穿;一旦被截断,JSON 解析失败,
- * 整份 LLM 答案会被丢弃并回落到规则总结 —— 恰好是最大的项目最受伤。
- * 限到 12 条(≈12×480 字符)后,最坏情况仍留在预算内。
+ * 这个上限是 **maxTokens 预算的一部分**:detailed 档 summary(3000 字符)+ recent
+ * (4000 字符)+ perSession(每条 title 80 + note 400)+ todos/decisions/candidates
+ * 与 JSON 结构,很容易把 maxTokens 吃穿;一旦被截断,JSON 解析失败,整份 LLM
+ * 答案会被丢弃并回落到规则总结 —— 恰好是最大的项目最受伤。
+ * 限到 8 条(≈8×480 字符)后,最坏情况仍留在预算内;按会话定位只是辅助,
+ * 真正要详细的是 recent。
  */
-export const DIGEST_MAX_PER_SESSION = 12
+export const DIGEST_MAX_PER_SESSION = 8
 
 /**
  * 按「累计规模 + 上下文量」选档。
@@ -136,17 +168,17 @@ export function digestLevelFor(
 export function buildDigestSystemPrompt(spec: DigestLevelSpec): string {
   const perSessionReq =
     spec.level === 'detailed'
-      ? '并额外输出 perSession 数组,按会话分类(每个覆盖的会话一条 {id,title,note}),note 用一两句说清"这个会话做了什么/结论是什么",便于按会话定位。'
-      : 'perSession 数组也一并输出(每个覆盖的会话一条 {id,title,note},note 一句话)。'
+      ? '并额外输出 perSession 数组,按会话分类(最多 8 条,优先最近会话),每条 {id,title,note},note 用一两句说清"这个会话做了什么/结论是什么",便于按会话定位。'
+      : 'perSession 数组也一并输出(最多 8 条,优先最近;每条 {id,title,note},note 一句话)。'
   return (
     `你是项目开发日志的滚动总结器。阅读一个项目的既有总结与新增开发会话,输出**更新版总结**,严格 JSON(不要 markdown 代码块,不要多余文字):\n` +
-    `{"summary":"项目的完整交接总结(目标 ${spec.targetChars} 字符左右):写给一个**对该项目一无所知、即将接手继续开发**的 agent,读这一段就能直接开工,不必翻任何历史会话。必须包含:\\n` +
+    `{"summary":"项目总览(目标 ${spec.targetChars} 字符左右):写给一个**对该项目一无所知、即将接手继续开发**的 agent,只放稳定信息:\\n` +
     '1. 项目是什么:目标、给谁用、当前整体状态\\n' +
     '2. 技术要点:语言/框架/关键库、目录与模块划分、数据流向\\n' +
     '3. 已确认的关键决策与原因(避免重蹈覆辙的坑)\\n' +
-    '4. 当前进行到哪:最近在做什么、改了哪些文件/模块、已知问题\\n' +
-    '5. 环境与命令:怎么跑起来、怎么测试、需要注意的本机路径或凭据位置(只写位置,不写值)\\n' +
-    '在上一版基础上滚动更新——过时的信息删掉,新信息并入对应小节,不要只追加一段流水账",\n' +
+    '4. 环境与命令:怎么跑起来、怎么测试、需要注意的本机路径或凭据位置(只写位置,不写值)\\n' +
+    '**不要写最近做了什么/最近改了哪些文件**,这些放进 recent。在上一版基础上滚动更新:过时信息删掉,上一版里属于「最近进展」的流水账请移到 recent 或删掉,不要留在 summary,不要只追加流水账",\n' +
+    `"recent":"最近进展(目标 ${spec.recentTargetChars} 字符,要**详细**):最近这些新会话做了什么、改了哪些文件/模块、当前进行到哪、已知问题、下一步建议。按时间或主题组织,写具体动作与结论(不要只写「继续开发」这种空话)。这是给接手者的交接卡,应能直接据此继续干活",\n` +
     `"perSession":[{"id":会话数字id,"title":"会话标题","note":"这一条会话做了什么/结论"}] — ${perSessionReq}\n` +
     '"todos":[{"content":"待办事项,写清做什么/怎么验收","status":"open或done"}],\n' +
     '"decisions":["本窗口确认的技术决策或事实,短句"],\n' +
@@ -290,6 +322,12 @@ function tryParse(s: string, spec: DigestLevelSpec): DigestResult | null {
   if (typeof o !== 'object' || o === null) return null
   const r = o as Record<string, unknown>
   if (typeof r.summary !== 'string' || !r.summary.trim()) return null
+  // recent 是 v0.8 新字段;老模型/老结果没有时留空,渲染层跳过该段,
+  // 不算解析失败(否则升级后所有旧的 LLM 输出都会回落到规则总结)。
+  const recent =
+    typeof r.recent === 'string' && r.recent.trim()
+      ? r.recent.trim().slice(0, spec.recentCapChars)
+      : ''
   const perSession: DigestSessionNote[] = Array.isArray(r.perSession)
     ? r.perSession
         .filter((p): p is Record<string, unknown> => typeof p === 'object' && p !== null && typeof (p as { note?: unknown }).note === 'string')
@@ -324,6 +362,7 @@ function tryParse(s: string, spec: DigestLevelSpec): DigestResult | null {
     : []
   return {
     summary: r.summary.trim().slice(0, spec.capChars),
+    recent,
     perSession,
     todos,
     decisions,
@@ -356,14 +395,16 @@ export function buildRulesDigest(
   prev: PrevDigest | null,
   pendingProgress: string[]
 ): DigestResult {
-  const lines: string[] = []
+  const recentLines: string[] = []
   const perSession: DigestSessionNote[] = []
   if (sessions.length > 0) {
-    lines.push(`本窗口 ${sessions.length} 个会话(${dateOf(sessions[0].ts)} ~ ${dateOf(sessions[sessions.length - 1].ts)}):`)
+    recentLines.push(
+      `最近 ${sessions.length} 个会话(${dateOf(sessions[0].ts)} ~ ${dateOf(sessions[sessions.length - 1].ts)}):`
+    )
     for (const s of sessions) {
       const oneLine = s.summary ? ` — ${clip(s.summary.split('\n')[0], 160)}` : ''
-      lines.push(`- #${s.id} ${clip(s.title, 80) || '(无标题)'}${oneLine}`)
-      // 规则模式的 summary 已经逐条列了会话,perSession 再抄一遍会让 MCP 文本、
+      recentLines.push(`- #${s.id} ${clip(s.title, 80) || '(无标题)'}${oneLine}`)
+      // 规则模式的 recent 已经逐条列了会话,perSession 再抄一遍会让 MCP 文本、
       // vault markdown、UI 卡片里每行出现两次。这里只补 summary 里没有的正文提炼
       // (会话摘要首行之外的内容);没有可提炼的正文就留空条目,不重复标题行。
       const extra = s.summary ? clip(s.summary.split('\n').slice(1).join(' ').trim(), 300) : ''
@@ -372,13 +413,21 @@ export function buildRulesDigest(
       }
     }
   }
-  if (prev) lines.push(`\n上一版总结(结转):\n${prev.summary}`)
-  else lines.push(`\n(「${projectName}」首次总结;LLM 引擎未配置,当前为规则模式:仅会话清单,不含正文提炼)`)
+  const summary = prev?.summary?.trim()
+    ? prev.summary
+    : `项目「${projectName}」的规则总结(LLM 引擎未配置,未生成项目总览;以下为最近进展与会话清单)。`
   const todos: DigestTodo[] = [
     ...(prev?.todos.filter((t) => t.status === 'open') ?? []),
     ...pendingProgress.map((c) => ({ content: clip(c, 200) ?? '', status: 'open' as const }))
   ].filter((t) => t.content.length > 0)
-  return { summary: lines.join('\n').slice(0, 6000), perSession, todos, decisions: [], candidates: [] }
+  return {
+    summary: summary.slice(0, 3000),
+    recent: recentLines.join('\n').slice(0, 4000),
+    perSession,
+    todos,
+    decisions: [],
+    candidates: []
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +445,9 @@ export interface DigestMeta {
 
 function renderBody(result: DigestResult): string {
   const parts = ['## 摘要', '', result.summary, '']
+  if (result.recent.trim()) {
+    parts.push('## 最近进展', '', result.recent, '')
+  }
   if (result.perSession.length > 0) {
     parts.push('## 按会话', '')
     for (const p of result.perSession) {

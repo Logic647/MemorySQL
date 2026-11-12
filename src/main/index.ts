@@ -65,6 +65,7 @@ import memoryDispatch from '../plugins/memory-dispatch'
 import syncFolder from '../plugins/sync-folder'
 import projectDevlog from '../plugins/project-devlog'
 import projectDigest from '../plugins/project-digest'
+import memoryCurator from '../plugins/memory-curator'
 import semanticSearch from '../plugins/semantic-search'
 import captureWatcher from '../plugins/capture-watcher'
 import importChat from '../plugins/import-chat'
@@ -124,6 +125,7 @@ const BUILTIN_PLUGINS = [
   syncFolder,
   projectDevlog,
   projectDigest,
+  memoryCurator,
   semanticSearch
 ]
 

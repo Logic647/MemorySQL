@@ -6,7 +6,8 @@ import type Database from 'better-sqlite3'
  *   projects  → path
  *   sessions  → (agent_type, external_id), messages follow their session
  *   memories  → content union (a memory is a fact; duplicates by content
- *               are skipped, new ids are assigned locally)
+ *               are skipped, new ids are assigned locally). scope/项目/
+ *               locked/status 随包携带;项目记忆按 path 落到本地项目。
  * Conflicts resolve LWW on updated_at. Deletions do NOT propagate in this
  * MVP (documented limitation — use archive migration for full transfer).
  */
@@ -40,6 +41,14 @@ export interface BundleMemory {
   source: string | null
   updated_at: number
   device_id: string | null
+  // v2 fields (older bundles lack them → merge falls back to the old
+  // global/active/unlocked defaults, which keeps bundle format compatible)
+  scope?: string | null
+  status?: string | null
+  locked?: number | null
+  agent_type?: string | null
+  project_path?: string | null
+  project_name?: string | null
 }
 
 export interface BundleProject {
@@ -208,13 +217,64 @@ export function mergeBundle(db: Database.Database, bundle: SyncBundle): MergeRep
     }
 
     // ---- memories (content union) ---------------------------------------
+    // 记忆分层(2026-11-12)起,bundle 携带 scope/项目/锁定/状态:
+    //   项目记忆在接收端按 path 落到本地项目(找不到就按 path 兜底建一个,
+    //   与 projects 段同口径);否则会全部落成 global,分层直接失效。
+    //   locked 必须携带,否则另一台机器的 curator 会覆盖用户锁定的条目;
+    //   status 必须携带,否则 retired 的条目会在对端复活成 active。
     const memExists = db.prepare('SELECT id FROM memories WHERE deleted = 0 AND content = ?')
-    const memIns = db.prepare(
-      'INSERT INTO memories (kind, content, source, updated_at, device_id) VALUES (?, ?, ?, ?, ?)'
+    const memFindByPath = db.prepare('SELECT id FROM projects WHERE path = ? AND deleted = 0 LIMIT 1')
+    const memProjIns = db.prepare(
+      'INSERT INTO projects (path, name, updated_at, device_id) VALUES (?, ?, ?, ?)'
     )
+    const memIns = db.prepare(
+      `INSERT INTO memories
+         (kind, content, source, status, locked, scope, project_id, agent_type, updated_at, device_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    const basename = (p: string): string => p.split(/[\\/]/).filter(Boolean).pop() || p
     for (const m of bundle.memories) {
       if (memExists.get(m.content)) continue
-      memIns.run(m.kind, m.content, m.source, m.updated_at, m.device_id ?? bundle.device)
+      let projectId: number | null = null
+      let scope = m.scope === 'project' ? 'project' : 'global'
+      if (scope === 'project') {
+        const local = m.project_path
+          ? (memFindByPath.get(m.project_path) as { id: number } | undefined)
+          : undefined
+        if (local) {
+          projectId = local.id
+        } else if (m.project_path) {
+          // bundle.projects 段只带水位内的项目;记忆引用的项目可能不在其中,
+          // 这里按 path 兜底建一行(名字优先取 bundle 里的,再退到目录名)
+          projectId = Number(
+            (
+              memProjIns.run(
+                m.project_path,
+                m.project_name || basename(m.project_path),
+                m.updated_at,
+                bundle.device
+              ) as { lastInsertRowid: number | bigint }
+            ).lastInsertRowid
+          )
+          report.projectsAdded++
+        } else {
+          // 远端是项目记忆但没带项目信息:落成全局而不是丢数据
+          scope = 'global'
+        }
+      }
+      const status = m.status === 'candidate' || m.status === 'retired' ? m.status : 'active'
+      memIns.run(
+        m.kind,
+        m.content,
+        m.source,
+        status,
+        m.locked ? 1 : 0,
+        scope,
+        projectId,
+        m.agent_type ?? null,
+        m.updated_at,
+        m.device_id ?? bundle.device
+      )
       report.memoriesAdded++
     }
   })

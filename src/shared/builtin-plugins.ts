@@ -44,5 +44,6 @@ export const BUILTIN_PLUGIN_IDS = [
   'sync-folder',
   'project-devlog',
   'project-digest',
+  'memory-curator',
   'semantic-search'
 ] as const
