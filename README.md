@@ -20,9 +20,11 @@
 > [!NOTE]
 > **macOS 包未签名**:首次启动 Gatekeeper 会拦下未验证的应用。选「**右键 → 打开**」确认一次即可,之后正常双击启动。
 > 不想每次都这样,可在终端执行一次:
+> 
 > ```bash
 > xattr -dr com.apple.quarantine /Applications/MemorySQL.app
 > ```
+> 
 > Apple Silicon 与 Intel Mac 都有对应安装包,认准文件名里的 `arm64` / `x64`。
 
 你同时用三四个 AI agent(Codex / ZCode / Claude Code / Hermes …),换一个就得重新铺垫背景:项目讲到哪、你有什么偏好、踩过什么坑——全部重来。
@@ -30,13 +32,11 @@
 **MemorySQL 解决这件事**:自动捕获所有 agent 的会话、维护你的记忆画像与项目状态,并在本机起一个 MCP 服务端。任何 agent 连上后一次 `memory_get_context` 调用,即可拿到完整上下文继续干活——连上一个 agent 干到哪、下一步是什么,都内联在返回里。
 
 > **数据 100% 存本机**(SQLite,除 LLM API 外零服务器依赖);任何导出/分享路径强制过脱敏模块;语义检索用本地 ONNX 模型,全程离线。
->
+> 
 > ⚠️ 本机会以**明文**保存全部对话与记忆,并开一个**无鉴权**的本地 MCP 端点(仅绑 `127.0.0.1`)供 agent 读取。
 > 完整的数据流向、信任假设与关闭方式见 **[隐私与安全说明](PRIVACY.md)**。
 
 ## 📸 界面一览
-
-> 截图取自 v0.7.2,内容为**虚构的演示数据**(项目名/路径/记忆全部编造),不含任何真实记录。
 
 ![Agent 终端里的 MCP 续接包](design/screenshots/01-context-handoff.png)
 
@@ -52,7 +52,7 @@
 
 ![记忆库](design/screenshots/04-memories.png)
 
-*画像 / 偏好 / 事实 / 决策分类管理;收工汇报与蒸馏结果先落「候选」,人工确认后才进正式记忆*
+*画像 / 偏好 / 事实 / 决策分类管理*
 
 ![浅色主题](design/screenshots/05-light-mode.png)
 
@@ -64,7 +64,7 @@
 - **最后一次对话时间** —— 每条会话并排显示「开始」与「最后」,一眼分出「上周开始、今早还在聊」和「上周就结束了」
 - **子代理会话折叠** —— 会话里派生的子代理/子任务照常入库可搜,但默认折叠在父会话下(「↳ N 个子代理会话」),不再挤占会话列表
 - **项目滚动总结** —— 每个项目定期把新会话总结成 摘要+待办+决策(hindsight 式),agent 用 `memory_get_project_digest` 读这一份即可接手,不必翻大量历史会话;**默认关闭**,开启后 LLM 素材先脱敏再发送,不配 LLM 也能纯本地规则总结
-- **LLM 引擎聚合** —— 智谱 GLM(免费)/ SiliconFlow 免费档 / DeepSeek / MiMo / 本地反代(OpenCode Zen / CLIProxyAPI)一键预置,任意 OpenAI 兼容端点可自定义;供会话摘要、项目总结、记忆精炼共用,不可用时自动降级本地规则
+- **LLM 引擎聚合** —— 智谱 GLM/ SiliconFlow / DeepSeek / MiMo 一键预置,任意 OpenAI 兼容端点可自定义;供会话摘要、项目总结、记忆精炼共用,不可用时自动降级本地规则
 - **MCP 续接包** —— 全局记忆(画像/偏好/事实/决策)+ 项目记忆 + 项目总结(总览 + 最近进展)+ 最近会话 + **上一棒交接摘要**,一次调用恢复全部上下文
 - **项目/全局记忆自动整理** —— 每次项目总结完成后,LLM 把总结提炼成项目记忆与全局记忆(画像/偏好/事实/决策),自动更新;你编辑过的条目自动锁定不被覆盖,记忆页可按项目筛选、编辑、删除
 - **短总结 + 详细交接** —— 项目总结的 `summary` 只留项目总览,「最近做了什么」单独成段并详细展开;注入时记忆在前、总结在后
@@ -76,30 +76,16 @@
 - **记忆治理** —— 收工汇报候选(行内启用)、LLM 冲突检测、手动改名/归档/续接链管理
 - **深色 / 浅色主题** —— 深色适合长时间阅读,浅色适合白天/投屏/打印;可跟随系统,顶栏右上角一键切换,秒搜窗口同步换肤
 
-> **v0.7.7 变更**:**记忆分层**(全局 / 项目记忆)+ **LLM 自动整理**(项目总结完成后自动提炼记忆,编辑过的条目自动锁定不被覆盖)+ 项目总结拆分「总览 + 最近进展」(交接卡)+ 记忆页重构(项目 → 分类)+ 多机同步修复。详见 [v0.7.7 更新日志](docs/releases/v0.7.7-notes.md)。
->
-> **v0.7.5 变更**:更新体验改为「发现新版先问是否下载、下完再问是否安装」(更新源仍为 GitHub) · **外观默认跟随系统** · 修复「获取模型列表」下拉为空 · 会话 id 提亮 · 设置页「会话捕获」补齐全部 24 家,**未检测到的 agent 默认关闭**(不再在侧栏亮起)。详见 [v0.7.5 更新日志](docs/releases/v0.7.5-notes.md)。
->
-> **v0.7.4 热修**:Linux 导入归档报 `EXDEV`(校验库写 /tmp 后跨设备 rename)——校验库改落数据目录同侧。详见 [v0.7.4 更新日志](docs/releases/v0.7.4-notes.md)。
->
-> **v0.7.3 变更**:**MCP 主动调用**——协议层 `instructions` + 8 个工具描述写明触发时机,agent 不等你开口就查记忆/记决策/做收工汇报;**「写入规则」第二层**——连接向导一键把工作协议写进 agent 自己读的规则文件(13 家的规则文件路径全部实测/源码/文档测定,五级证据);归档会话跟随源库(opencode 2.2.6 `--archived`);dsh 标题取最后一次。详见 [v0.7.3 更新日志](docs/releases/v0.7.3-notes.md)。
->
-> **v0.7.2 变更**:新增 **浅色主题**(深色/浅色/跟随系统,顶栏一键切换,所有窗口同步)+ **子代理会话折叠**(子代理不再挤占列表,折叠到父会话下,可展开;入库/检索/总结口径同步收口);性能上把语义推理搬进 worker(搜索不再卡界面)、会话入库**快 50 倍**(长会话追加一条 1409ms→28ms)、启动扫描**快 30 倍**(水位增量)、插件启动后置、列表分页。详见 [v0.7.2 更新日志](docs/releases/v0.7.2-notes.md)。
->
-> **v0.7.1 变更**:新增 **DeepSeek Harness(dsh)** 会话捕获(捕获矩阵 12 → **13 家**,支持 zstd 拼接帧与多代日志并存);修掉 v0.7.0 项目总结在真机才暴露的三个问题(**总结越滚越小** / **总结串到别的项目** / 按会话显示 `#0`);`memory_get_session` 超长会话改为保留**最新**消息;上游漂移检查不再把子 agent / 空会话误判成格式漂移。详见 [v0.7.1 更新日志](docs/releases/v0.7.1-notes.md)。
->
-> **v0.7.0 变更**:新增 项目滚动总结(默认关闭)/ LLM 引擎聚合(免费 API 预置 + 反代 + 自定义)/ 设置页插件分组折叠 / 会话页按检测数排序;安装包从 105.5MB 瘦身到 **99.5MB**(语义推理组件约 20MB 改为首次启用时下载,模型本就如此);另附 [Tauri 迁移可行性评估](docs/tauri-feasibility.md)。升级不丢数据、自动更新直达。
->
-> **v0.6.0 变更**:下线了「笔记」与「知识图谱」两个功能(长期使用后判断实用性不高),界面收敛为「会话 / 记忆」两栏。连带移除 CodeMirror 与 cytoscape,renderer 产物从 2.79 MB 降到 0.68 MB。升级不会丢数据——旧笔记文件与 `notes` 表都保留在磁盘上,只是不再被读写。
+> 
 
 ## 📦 安装
 
-| 方式 | 命令 / 链接 |
-|---|---|
-| **winget** | `winget install Logic647.MemorySQL` |
-| **scoop** | `scoop bucket add logic647 https://github.com/Logic647/scoop-bucket && scoop install memorysql` |
-| **安装包** | [Releases 最新版](https://github.com/Logic647/MemorySQL/releases/latest) 下载 `MemorySQL-Setup-*.exe` |
-| **免安装** | Release 附件或 CI Artifacts 中的便携版 |
+| 方式         | 命令 / 链接                                                                                          |
+| ---------- | ------------------------------------------------------------------------------------------------ |
+| **winget** | `winget install Logic647.MemorySQL`                                                              |
+| **scoop**  | `scoop bucket add logic647 https://github.com/Logic647/scoop-bucket && scoop install memorysql`  |
+| **安装包**    | [Releases 最新版](https://github.com/Logic647/MemorySQL/releases/latest) 下载 `MemorySQL-Setup-*.exe` |
+| **免安装**    | Release 附件或 CI Artifacts 中的便携版                                                                   |
 
 > 包管理器清单:winget 源版本是 **0.5.6**(装完能在应用内自动更新到最新);scoop bucket 已同步到 **0.7.1**,装的是解包版(直接展开 electron-builder 载荷,不运行安装程序、不写系统卸载项)。
 
@@ -115,16 +101,16 @@
 
 ## 🧩 MCP 工具(8 个)
 
-| 工具 | 用途 |
-|---|---|
-| `memory_get_context` | 续接包:画像 + 记忆(agent 过滤)+ 项目 + 最近会话 + 上一棒摘要 |
-| `memory_get_project_brief` | 项目交接简报(有滚动总结时置顶引用) |
+| 工具                          | 用途                                              |
+| --------------------------- | ----------------------------------------------- |
+| `memory_get_context`        | 续接包:画像 + 记忆(agent 过滤)+ 项目 + 最近会话 + 上一棒摘要        |
+| `memory_get_project_brief`  | 项目交接简报(有滚动总结时置顶引用)                              |
 | `memory_get_project_digest` | 项目滚动总结:总览 + 最近进展(详细)+ 待办 + 决策 + 覆盖范围(需用户在设置中开启) |
-| `memory_list_sessions` | 会话枚举(项目/agent/时间过滤,带 id) |
-| `memory_get_session` | 完整消息时间线回读(full 模式去截断) |
-| `memory_search` | 全文检索会话/消息/记忆 + 本地语义补足 |
-| `memory_write` | 写入长期记忆(全局/项目 scope、agent 归因 / 标签 / 去重) |
-| `memory_log_progress` | 收工汇报 → 候选记忆 → 交接简报可见 |
+| `memory_list_sessions`      | 会话枚举(项目/agent/时间过滤,带 id)                        |
+| `memory_get_session`        | 完整消息时间线回读(full 模式去截断)                           |
+| `memory_search`             | 全文检索会话/消息/记忆 + 本地语义补足                           |
+| `memory_write`              | 写入长期记忆(全局/项目 scope、agent 归因 / 标签 / 去重)          |
+| `memory_log_progress`       | 收工汇报 → 候选记忆 → 交接简报可见                            |
 
 ## 🔌 插件开发规范
 
@@ -165,16 +151,16 @@ module.exports = {
 
 **能力一览**(`init(ctx)` 提供,插件不得绕过它触碰宿主):
 
-| 能力 | 说明 |
-|---|---|
-| `ctx.db.migrate / ctx.db.sqlite` | 命名空间迁移 + better-sqlite3 句柄 |
-| `ctx.settings.get/set` | 持久化键值(键自动加 `<id>:` 前缀) |
-| `ctx.ipc.handle / call` | 注册渲染端通道 / 调用其它插件 |
-| `ctx.mcp.registerTool / list` | 注册 / 列出 MCP 工具 |
-| `ctx.watcher.watch` | chokidar 封装,返回反注册函数 |
-| `ctx.services.provide / use` | 插件间服务定位(靠 `requires` 保证顺序) |
-| `ctx.events.on / emit` | 事件总线(`sessions:changed` 等内置事件) |
-| `ctx.log / ctx.env` | 带前缀日志 / 数据目录布局 |
+| 能力                               | 说明                             |
+| -------------------------------- | ------------------------------ |
+| `ctx.db.migrate / ctx.db.sqlite` | 命名空间迁移 + better-sqlite3 句柄     |
+| `ctx.settings.get/set`           | 持久化键值(键自动加 `<id>:` 前缀)         |
+| `ctx.ipc.handle / call`          | 注册渲染端通道 / 调用其它插件               |
+| `ctx.mcp.registerTool / list`    | 注册 / 列出 MCP 工具                 |
+| `ctx.watcher.watch`              | chokidar 封装,返回反注册函数            |
+| `ctx.services.provide / use`     | 插件间服务定位(靠 `requires` 保证顺序)     |
+| `ctx.events.on / emit`           | 事件总线(`sessions:changed` 等内置事件) |
+| `ctx.log / ctx.env`              | 带前缀日志 / 数据目录布局                 |
 
 **生命周期**:`load → init(依赖序) → start → stop(逆序) → unload`。单个插件 init/start 异常被宿主隔离,不影响其它插件。
 
@@ -198,16 +184,16 @@ npm run upstream:check  # 上游契约黑盒检查:哪家 agent 改了格式导�
 
 ## 📁 文档
 
-| 文档 | 内容 |
-|---|---|
-| [**PRIVACY.md**](PRIVACY.md) | **隐私与安全披露**(数据流向、MCP 端点信任假设、文件夹同步风险) |
-| [docs/architecture.md](docs/architecture.md) | 架构、数据模型、全部决策记录 |
-| [docs/plugins.md](docs/plugins.md) | 插件 API 完整参考 |
-| [docs/DEVLOG.md](docs/DEVLOG.md) | 开发日志(追加式) |
-| [docs/releases/](docs/releases/) | 各版本更新日志(v0.5.3 起) |
-| [docs/RELEASE.md](docs/RELEASE.md) | 发版流程 |
-| [docs/MCP_LISTING.md](docs/MCP_LISTING.md) | MCP 目录登记素材 |
-| [AGENTS.md](AGENTS.md) | agent 接手开发的入口 |
+| 文档                                           | 内容                                   |
+| -------------------------------------------- | ------------------------------------ |
+| [**PRIVACY.md**](PRIVACY.md)                 | **隐私与安全披露**(数据流向、MCP 端点信任假设、文件夹同步风险) |
+| [docs/architecture.md](docs/architecture.md) | 架构、数据模型、全部决策记录                       |
+| [docs/plugins.md](docs/plugins.md)           | 插件 API 完整参考                          |
+| [docs/DEVLOG.md](docs/DEVLOG.md)             | 开发日志(追加式)                            |
+| [docs/releases/](docs/releases/)             | 各版本更新日志(v0.5.3 起)                    |
+| [docs/RELEASE.md](docs/RELEASE.md)           | 发版流程                                 |
+| [docs/MCP_LISTING.md](docs/MCP_LISTING.md)   | MCP 目录登记素材                           |
+| [AGENTS.md](AGENTS.md)                       | agent 接手开发的入口                        |
 
 ## 📄 License
 
