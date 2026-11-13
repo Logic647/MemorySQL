@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-11-13 · v0.7.7 已发版(记忆分层 / LLM 自动整理 / 交接卡总结)
+
+- 版本 0.7.6 → **0.7.7**,commit `ebf50ed`,tag `v0.7.7`;CI tag run `43259134040` **6/6 全绿**
+  (ci ubuntu/windows + package win/linux/mac arm64/mac x64)。
+- 草稿 **20 资产**;mac 双架构清单:两个 job 各产一份 `latest-mac.yml`,用 Range 请求从
+  artifact zip 里定点抽取(263MB 整包在本机链路上反复 `unexpected EOF`),
+  `merge-mac-manifest.mjs` 合并(内置 electron-updater 自己的架构解析校验)后
+  `gh release upload --clobber`,`publish-release.mjs` 转正。
+- 三个更新清单公网 **200**;`latest-mac.yml` 同时含 arm64/x64 的 dmg+zip 条目(Apple Silicon
+  不会被推 x64 包)。
+- 内容见 `docs/releases/v0.7.7-notes.md`;vitest **665/667(2 skip)**、typecheck 0、build 通过。
+- **发版当天 api.github.com 全断约 10 分钟**(github.com 同样 000,连对象存储下载也超时),
+  第 12 次重试后恢复。临时脚本 `out/tmp/finish-mac-manifest.mjs`(未入库):取工件 ID →
+  Range 抽清单 → 合并 → 上传 → 按资产 id 回读校验;下次链路差时可复用这套重试。
+  **注意草稿态不能用公网 URL 校验资产**(发布前 404),要按 asset id 走鉴权 API 回读。
+
+---
+
 ## 2026-11-12 · 记忆分层:全局/项目记忆 + 从项目总结自动整理
 
 **背景**:记忆库此前是平的 —— `project_id` 只写不读,注入只取「最近 12 条」;
