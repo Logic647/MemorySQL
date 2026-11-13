@@ -9,14 +9,30 @@ import {
   parseProjectOps,
   projectSystemPrompt,
   type CuratorMemoryRow,
+  type CuratorOp,
   type ProjectInput
 } from './curate'
 import { CURATOR_MIGRATIONS } from './migrations'
 
 interface RefineService {
   available(): boolean
-  refine(prompt: string, opts?: { system?: string; maxTokens?: number }): Promise<string>
+  refine(prompt: string, opts?: { system?: string; maxTokens?: number; timeoutMs?: number }): Promise<string>
   describe?(): string
+}
+
+const CURATOR_TIMEOUT_MS = 120_000
+// 整理是后台任务:模型慢/本地反代偶发断连时,重试一次的代价远小于
+// 用户第二天在设置页看到「上次失败: This operation was aborted」。
+const isTransientLlmError = (err: unknown): boolean => {
+  const msg = String(err instanceof Error ? err.message : err)
+  return /aborted|abort|timeout|timed out|ECONN|fetch failed|network|socket|429|5\d\d/i.test(msg)
+}
+
+// 模型有时不按 JSON 输出,而是回一句「没有需要变更的记忆」。这不是失败。
+const looksLikeNoChange = (text: string): boolean => {
+  const t = text.replace(/```[\s\S]*?```/g, ' ').trim()
+  if (!t) return false
+  return /(没有|暂无|无需|不需要).{0,16}(变更|更新|新增|整理|记忆)/.test(t) || /(无变更|无需变更|没有变更)/.test(t)
 }
 
 interface CurationState {
@@ -70,6 +86,56 @@ const plugin: MemorySQLPlugin = {
       } catch {
         return null
       }
+    }
+
+    /**
+     * 调 LLM 并解析成记忆操作。两层容错:
+     * 1) 超时/断连(abort、ECONNRESET 等)重试一次;
+     * 2) 输出不是 JSON(常见于模型回了「没有需要变更的记忆」或加了长解释)时:
+     *    先识别"无变更"话术按成功处理,否则用更严格的 system 再问一次。
+     */
+    const requestOps = async (
+      refine: RefineService,
+      prompt: string,
+      system: string,
+      maxTokens: number,
+      key: 'project' | 'global',
+      parse: (text: string) => CuratorOp[]
+    ): Promise<CuratorOp[]> => {
+      const call = async (sys: string): Promise<string> => {
+        const run = (): Promise<string> =>
+          refine.refine(redactWithCount(prompt).text, {
+            system: sys,
+            maxTokens,
+            timeoutMs: CURATOR_TIMEOUT_MS
+          })
+        try {
+          return await run()
+        } catch (err) {
+          if (!isTransientLlmError(err)) throw err
+          ctx.log.warn(`curator LLM transient error, retrying once: ${String(err)}`)
+          await new Promise((r) => setTimeout(r, 1500))
+          return await run()
+        }
+      }
+      const hasKey = (text: string): boolean => new RegExp(`"${key}"\\s*:`).test(text)
+      const strict =
+        system +
+        '\n\n上一次输出无法解析。请只输出一个 JSON 对象,第一个字符必须是 {,最后一个必须是 },不要任何解释或代码块。'
+      let text = await call(system)
+      let ops = parse(text)
+      if (ops.length === 0 && !hasKey(text)) {
+        if (looksLikeNoChange(text)) return []
+        text = await call(strict)
+        ops = parse(text)
+        if (ops.length === 0 && !hasKey(text)) {
+          if (looksLikeNoChange(text)) return []
+          throw new Error(
+            `LLM 输出无法解析为${key === 'project' ? '项目' : '全局'}记忆 JSON(${text.replace(/\s+/g, ' ').slice(0, 80) || '空输出'})`
+          )
+        }
+      }
+      return ops
     }
 
     const stmtProject = sqlite.prepare(
@@ -250,15 +316,10 @@ const plugin: MemorySQLPlugin = {
           projectMemories,
           globalMemories
         })
-        const text = await refine.refine(redactWithCount(prompt).text, {
-          system: projectSystemPrompt(),
-          maxTokens: 3000
-        })
         const allowed = new Set(projectMemories.map((r) => r.id))
-        const ops = parseProjectOps(text, allowed)
-        if (ops.length === 0 && !/"project"\s*:/.test(text)) {
-          throw new Error('LLM 输出无法解析为项目记忆 JSON')
-        }
+        const ops = await requestOps(refine, prompt, projectSystemPrompt(), 5000, 'project', (t) =>
+          parseProjectOps(t, allowed)
+        )
         if (ops.length === 0) {
           setState(projectId, {
             status: 'idle',
@@ -323,15 +384,10 @@ const plugin: MemorySQLPlugin = {
       setState(GLOBAL_STATE_ID, { status: 'running' })
       try {
         const prompt = buildGlobalCurationPrompt({ projectMemories, globalMemories })
-        const text = await refine.refine(redactWithCount(prompt).text, {
-          system: globalSystemPrompt(),
-          maxTokens: 2400
-        })
         const allowed = new Set(globalMemories.map((r) => r.id))
-        const ops = parseGlobalOps(text, allowed)
-        if (ops.length === 0 && !/"global"\s*:/.test(text)) {
-          throw new Error('LLM 输出无法解析为全局记忆 JSON')
-        }
+        const ops = await requestOps(refine, prompt, globalSystemPrompt(), 3500, 'global', (t) =>
+          parseGlobalOps(t, allowed)
+        )
         if (ops.length === 0) {
           setState(GLOBAL_STATE_ID, { status: 'idle', last_run_at: Date.now(), last_error: null })
           if (Number(stmtRetireGlobalDistill.run(Date.now()).changes) > 0) notify()
@@ -384,7 +440,10 @@ const plugin: MemorySQLPlugin = {
       for (const row of stmtProjectsWithDigest.all() as Array<{ id: number; digestId: number | null }>) {
         if (!row.digestId) continue
         const st = getState(row.id)
-        if (st?.last_digest_id !== row.digestId) enqueue(row.id)
+        // digest 变了要补跑;上次失败过的也重试(否则错误会一直挂到有新总结为止)
+        if (st?.last_digest_id !== row.digestId || st?.last_error) {
+          enqueue(row.id, { force: st?.last_digest_id === row.digestId })
+        }
       }
       maybeGlobal()
     }, 5 * 60_000)
@@ -453,8 +512,11 @@ const plugin: MemorySQLPlugin = {
       for (const row of stmtProjectsWithDigest.all() as Array<{ id: number; digestId: number | null }>) {
         if (!row.digestId) continue
         const st = getState(row.id)
-        if (st?.last_digest_id !== row.digestId && !running.has(row.id)) {
-          enqueue(row.id, { manual: true })
+        // 已成功的项目不重复烧 token;但上次失败过的要重试(即使 digest 没变,
+        // 否则「上次失败」会永远挂在设置页)
+        const needsRetry = st?.last_digest_id !== row.digestId || Boolean(st?.last_error)
+        if (needsRetry && !running.has(row.id)) {
+          enqueue(row.id, { manual: true, force: st?.last_digest_id === row.digestId })
           queued++
         }
       }

@@ -131,7 +131,7 @@ const plugin: MemorySQLPlugin = {
     // ---- llm-refine(懒取:summarizer-llm 被停用时消化成规则模式,不炸) ---
     interface RefineService {
       available(): boolean
-      refine(prompt: string, opts?: { system?: string; maxTokens?: number }): Promise<string>
+      refine(prompt: string, opts?: { system?: string; maxTokens?: number; timeoutMs?: number }): Promise<string>
       describe?(): string
     }
     const tryUseRefine = (): RefineService | null => {
@@ -222,7 +222,9 @@ const plugin: MemorySQLPlugin = {
             try {
               const text = await refine.refine(prompt, {
                 system: buildDigestSystemPrompt(spec),
-                maxTokens: spec.maxTokens
+                maxTokens: spec.maxTokens,
+                // 大项目(8K tokens 档)在免费/本地模型上经常超过默认 45s
+                timeoutMs: 120_000
               })
               const parsed = parseDigestResponse(text, spec)
               if (parsed) {

@@ -14,25 +14,42 @@ let handlers: Map<string, (payload: unknown) => unknown>
 let projectMemoryId: number
 let lockedMemoryId: number
 
+let refineCalls: Array<{ prompt: string; opts?: { system?: string; maxTokens?: number; timeoutMs?: number } }> = []
+let refineImpl: (
+  prompt: string,
+  opts?: { system?: string; maxTokens?: number; timeoutMs?: number }
+) => Promise<string>
+
+const defaultRefine = async (
+  _prompt: string,
+  opts?: { system?: string }
+): Promise<string> => {
+  const system = opts?.system ?? ''
+  if (system.includes('项目记忆整理器')) {
+    return JSON.stringify({
+      project: [
+        { op: 'add', kind: 'fact', content: '新项目事实', confidence: 0.8 },
+        { op: 'update', id: projectMemoryId, kind: 'fact', content: '更新后的项目事实', confidence: 0.9 }
+      ]
+    })
+  }
+  if (system.includes('全局记忆整理器')) {
+    return JSON.stringify({
+      global: [{ op: 'add', kind: 'preference', content: '新全局偏好', confidence: 0.8 }]
+    })
+  }
+  return ''
+}
+
 const refine = {
   available: () => true,
   describe: () => 'mock',
-  refine: async (_prompt: string, opts?: { system?: string }): Promise<string> => {
-    const system = opts?.system ?? ''
-    if (system.includes('项目记忆整理器')) {
-      return JSON.stringify({
-        project: [
-          { op: 'add', kind: 'fact', content: '新项目事实', confidence: 0.8 },
-          { op: 'update', id: projectMemoryId, kind: 'fact', content: '更新后的项目事实', confidence: 0.9 }
-        ]
-      })
-    }
-    if (system.includes('全局记忆整理器')) {
-      return JSON.stringify({
-        global: [{ op: 'add', kind: 'preference', content: '新全局偏好', confidence: 0.8 }]
-      })
-    }
-    return ''
+  refine: async (
+    prompt: string,
+    opts?: { system?: string; maxTokens?: number; timeoutMs?: number }
+  ): Promise<string> => {
+    refineCalls.push({ prompt, opts })
+    return refineImpl(prompt, opts)
   }
 }
 
@@ -80,6 +97,8 @@ beforeEach(() => {
     ['globalEveryHours', 24]
   ])
   handlers = new Map<string, (payload: unknown) => unknown>()
+  refineCalls = []
+  refineImpl = defaultRefine
 
   db.prepare(`INSERT INTO projects (id, path, name, updated_at) VALUES (1, 'C:\\demo', 'demo', 1)`).run()
   projectMemoryId = Number(
@@ -174,5 +193,72 @@ describe('memory-curator plugin', () => {
     expect(status.llmReady).toBe(true)
     expect(status.projects[0]).toMatchObject({ projectId: 1, memoryCount: 2 })
     expect(status.global.memoryCount).toBe(1)
+  })
+
+  it('LLM abort/超时自动重试一次,整理带 120s 超时与更大 token 预算', async () => {
+    let first = true
+    refineImpl = async (prompt, opts) => {
+      if ((opts?.system ?? '').includes('项目记忆整理器') && first) {
+        first = false
+        throw new Error('This operation was aborted')
+      }
+      return defaultRefine(prompt, opts)
+    }
+    events.emit('digest:completed', { projectId: 1, digestId: 1 })
+    // 首次失败后 curator 等 1.5s 再重试
+    await wait(2500)
+
+    const added = db.prepare(`SELECT status FROM memories WHERE content = '新项目事实'`).get() as
+      | { status: string }
+      | undefined
+    expect(added?.status).toBe('active')
+    const projectCalls = refineCalls.filter((c) => (c.opts?.system ?? '').includes('项目记忆整理器'))
+    expect(projectCalls.length).toBeGreaterThanOrEqual(2)
+    expect(projectCalls[0].opts?.timeoutMs).toBe(120_000)
+    expect(projectCalls[0].opts?.maxTokens).toBe(5000)
+    const state = db
+      .prepare(`SELECT last_error, status FROM memory_curation_state WHERE project_id = 1`)
+      .get() as { last_error: string | null; status: string }
+    expect(state.last_error).toBeNull()
+    expect(state.status).toBe('idle')
+  })
+
+  it('模型回「没有需要变更的记忆」按无变更处理,不记失败也不重试', async () => {
+    refineImpl = async (_prompt, opts) => {
+      if ((opts?.system ?? '').includes('项目记忆整理器')) return '没有需要变更的记忆。'
+      return JSON.stringify({ global: [] })
+    }
+    events.emit('digest:completed', { projectId: 1, digestId: 1 })
+    await wait(300)
+
+    const projectCalls = refineCalls.filter((c) => (c.opts?.system ?? '').includes('项目记忆整理器'))
+    expect(projectCalls).toHaveLength(1)
+    const state = db
+      .prepare(`SELECT last_error, last_digest_id FROM memory_curation_state WHERE project_id = 1`)
+      .get() as { last_error: string | null; last_digest_id: number | null }
+    expect(state.last_error).toBeNull()
+    expect(state.last_digest_id).toBe(1)
+  })
+
+  it('输出不是 JSON 时用严格提示重试一次', async () => {
+    let n = 0
+    refineImpl = async (_prompt, opts) => {
+      if ((opts?.system ?? '').includes('项目记忆整理器')) {
+        n++
+        if (n === 1) return '好的,我先分析一下这份总结……'
+        return JSON.stringify({ project: [{ op: 'add', kind: 'fact', content: '严格重试后的记忆' }] })
+      }
+      return JSON.stringify({ global: [] })
+    }
+    events.emit('digest:completed', { projectId: 1, digestId: 1 })
+    await wait(500)
+
+    const added = db
+      .prepare(`SELECT status FROM memories WHERE content = '严格重试后的记忆'`)
+      .get() as { status: string } | undefined
+    expect(added?.status).toBe('active')
+    const projectCalls = refineCalls.filter((c) => (c.opts?.system ?? '').includes('项目记忆整理器'))
+    expect(projectCalls).toHaveLength(2)
+    expect(projectCalls[1].opts?.system).toContain('上一次输出无法解析')
   })
 })

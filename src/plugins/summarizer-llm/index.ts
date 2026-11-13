@@ -134,10 +134,16 @@ export function isLlmReady(cfg: LlmConfig): boolean {
   return cfg.ollamaUrl.trim().length > 0
 }
 
-async function callLlm(cfg: LlmConfig, transcript: string, maxTokens = 300, system?: string): Promise<string> {
+async function callLlm(
+  cfg: LlmConfig,
+  transcript: string,
+  maxTokens = 300,
+  system?: string,
+  timeoutMs = 45_000
+): Promise<string> {
   transcript = redactWithCount(transcript).text
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 45_000)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     let url: string
     let headers: Record<string, string>
@@ -233,8 +239,11 @@ const plugin: MemorySQLPlugin = {
     // 其他用途传自己的系统提示词;describe() 给调用方标注产物来源模型。
     ctx.services.provide('llm-refine', {
       available: () => provider.available(),
-      refine: async (prompt: string, opts?: { system?: string; maxTokens?: number }): Promise<string> =>
-        callLlm(getConfig(), prompt, opts?.maxTokens ?? 2000, opts?.system),
+      refine: async (
+        prompt: string,
+        opts?: { system?: string; maxTokens?: number; timeoutMs?: number }
+      ): Promise<string> =>
+        callLlm(getConfig(), prompt, opts?.maxTokens ?? 2000, opts?.system, opts?.timeoutMs),
       describe: (): string => {
         const cfg = getConfig()
         if (cfg.provider === 'openai') return cfg.openaiModel || 'openai-compat'

@@ -235,6 +235,12 @@ export default function App() {
   const [devlogDir, setDevlogDir] = useState<string | null>(null)
   const [mcp, setMcp] = useState<{ port: number; running: boolean; toolCount: number } | null>(null)
   const [kbMsg, setKbMsg] = useState('')
+  // 导出/导入结果提示 6 秒后自动消失,不再常驻侧栏底部
+  useEffect(() => {
+    if (!kbMsg) return
+    const timer = setTimeout(() => setKbMsg(''), 6000)
+    return () => clearTimeout(timer)
+  }, [kbMsg])
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
   const [importTitle, setImportTitle] = useState('')
