@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-11-17 · 项目总结「追着活会话跑」修复(一聊天就总结)
+
+**现象**:刚开始和 agent 对话,会话页就出现「总结中」;真库里一场对话被切成 **8 个 digest**
+(每 45 秒一条、model=rules、sessions_covered 恒为 1),持续约 5 分钟;设置页的项目记忆
+也在后台整理。
+
+**定位**:project 52 的 digest #133–140,`period_end` 每 45 秒推进一次,每次只覆盖 1 个会话。
+根因是 `runDigest` 的多轮消化循环**每轮重新查询未覆盖会话**:同一场仍在写入的会话在上一轮
+结束后又有新消息,`last_message_at` 超过水位 → 下一轮又被选中;而每轮 LLM 调用都等满
+45s 超时后回落规则。触发来源是**启动补跑**(应用启动 3 分钟后),它不判断项目是否正在活跃。
+
+**修复**
+- 会话素材加时间上限 `digestCutoffSec`:自动触发只消化「安静 ≥ quietMinutes」的会话,
+  手动触发(立即总结)留 **2 分钟**宽限 —— 正在写的会话不进总结。
+- 同一次触发内已消化的会话**不再回读**(`processed` 集合 + SQL `NOT IN`),多轮只负责
+  覆盖更多不同会话,不追活会话。
+- 同一触发内 LLM 失败一次即置 `llmBroken`,后续批次直接走规则,不会再逐轮等超时。
+- 启动补跑跳过「quietMinutes 内有会话写入」的项目;curator 启动补跑跳过 10 分钟内有
+  会话写入的项目,交给下一次 `digest:completed` 再整理。
+- `runNow` / `queueAll` 标记为 manual(2 分钟宽限),与 CLI `--digest` 口径一致。
+
+**验证**:vitest **674/676**(2 skip;新增 `test/project-digest-plugin.test.ts` 4 条:
+活会话不进总结、只有活会话不产 digest、LLM 失败多轮只调一次、启动补跑跳过活跃项目;
+`digestCutoffSec` 2 条)、typecheck 0、build 通过。
+
+---
+
 ## 2026-11-13 · LLM 整理稳定性(超时 / 非 JSON)+ 导出提示自动消失
 
 **现象**:设置 → 智能引擎 → 项目记忆里部分项目常驻「上次失败: This operation was aborted」/

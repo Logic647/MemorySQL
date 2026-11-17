@@ -211,6 +211,14 @@ const plugin: MemorySQLPlugin = {
       `SELECT COUNT(*) AS n FROM memories
         WHERE deleted = 0 AND status = 'active' AND scope = 'project' AND project_id = ?`
     )
+    // 启动补跑前的「项目是否还在写」判断:10 分钟内有会话更新就跳过,
+    // 避免用户刚开口聊天时后台开始整理(下次总结完成后会再触发)
+    const STARTUP_HOT_GRACE_SEC = 600
+    const stmtProjectHot = sqlite.prepare(
+      `SELECT 1 AS x FROM sessions
+        WHERE deleted = 0 AND project_id = ? AND is_subagent = 0
+          AND COALESCE(last_message_at, started_at) > ? LIMIT 1`
+    )
     const stmtGlobalMemoryCount = sqlite.prepare(
       `SELECT COUNT(*) AS n FROM memories WHERE deleted = 0 AND status = 'active' AND scope = 'global'`
     )
@@ -439,6 +447,12 @@ const plugin: MemorySQLPlugin = {
       if (!enabled() || !hasDigestTable() || !(await isDigestEnabled())) return
       for (const row of stmtProjectsWithDigest.all() as Array<{ id: number; digestId: number | null }>) {
         if (!row.digestId) continue
+        // 正在写代码/聊天的项目先不动:让下一次 digest:completed 来触发整理
+        const hot = stmtProjectHot.get(
+          row.id,
+          Math.floor(Date.now() / 1000) - STARTUP_HOT_GRACE_SEC
+        )
+        if (hot) continue
         const st = getState(row.id)
         // digest 变了要补跑;上次失败过的也重试(否则错误会一直挂到有新总结为止)
         if (st?.last_digest_id !== row.digestId || st?.last_error) {

@@ -66,6 +66,22 @@ export const DIGEST_MAX_SESSIONS_PER_RUN = 20
 export const DIGEST_MAX_ROUNDS_PER_TRIGGER = 10
 /** prompt 软上限(字符):超限先丢最老会话的正文细节,仍超则截断。 */
 export const DIGEST_SOFT_CHAR_CAP = 24_000
+/** 手动「立即总结」给正在写入的会话留的宽限(2 分钟),避免总结到一半的对话。 */
+export const DIGEST_MANUAL_GRACE_MS = 2 * 60_000
+
+/**
+ * 总结素材的时间上限(秒):只消化「最后一条消息早于此时刻」的会话。
+ * - 自动触发:等满 quietMinutes(用户配置的安静期),和触发语义一致;
+ * - 手动触发:只留 2 分钟宽限,避免把正在说话的那一场也拉进来。
+ * 旧实现没有这个上限,消化循环会追着同一个活跃会话一轮轮重读 —— 实测
+ * 一场对话被切成 8 个 digest(每轮 45s LLM 超时 + 规则回落),用户看到
+ * 的就是「刚开始聊天它就在总结」。
+ */
+export function digestCutoffSec(opts: { manual?: boolean; quietMinutes: number; now?: number }): number {
+  const now = opts.now ?? Date.now()
+  const graceMs = opts.manual ? DIGEST_MANUAL_GRACE_MS : Math.max(1, opts.quietMinutes) * 60_000
+  return Math.floor((now - graceMs) / 1000)
+}
 
 /**
  * 总结详略分档 —— 会话越多、上下文越长,总结越详细(用户 2026-10-26 要求)。

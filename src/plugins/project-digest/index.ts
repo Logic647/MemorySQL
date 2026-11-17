@@ -9,6 +9,7 @@ import {
   buildDigestSystemPrompt,
   buildRulesDigest,
   digestLevelFor,
+  digestCutoffSec,
   DIGEST_MAX_ROUNDS_PER_TRIGGER,
   DIGEST_MAX_SESSIONS_PER_RUN,
   parseDigestResponse,
@@ -73,7 +74,12 @@ const plugin: MemorySQLPlugin = {
       VALUES (@project_id, @period_start, @period_end, @summary, @recent, @per_session, @todos, @decisions, @model, @sessions_covered,
               @created_at, @updated_at, 'local')
     `)
-    const stmtSessions = sqlite.prepare(`
+    // 会话素材的公共 SELECT。两条时间约束:
+    //   > coveredBefore  —— 只看上次总结之后的部分
+    //   <= cutoffSec     —— **不总结仍在写入的会话**。否则一次总结的消化循环
+    //                       会把同一场进行中的对话一轮轮重读(实测 8 轮 × 45s,
+    //                       用户看到的就是「一聊天就开始总结」)
+    const SESSION_SELECT = `
       SELECT s.id, s.agent_type AS agentType, s.title, s.summary,
              s.message_count AS messageCount, s.tool_call_count AS toolCallCount,
              COALESCE(s.last_message_at, s.started_at) AS ts,
@@ -86,9 +92,32 @@ const plugin: MemorySQLPlugin = {
         AND s.is_subagent = 0
         AND COALESCE(s.last_message_at, s.started_at) IS NOT NULL
         AND COALESCE(s.last_message_at, s.started_at) > ?
-      ORDER BY ts ASC
-      LIMIT ${DIGEST_MAX_SESSIONS_PER_RUN}
-    `)
+        AND COALESCE(s.last_message_at, s.started_at) <= ?
+    `
+    const stmtSessions = sqlite.prepare(
+      `${SESSION_SELECT} ORDER BY ts ASC LIMIT ${DIGEST_MAX_SESSIONS_PER_RUN}`
+    )
+    // 同一轮触发里已经消化过的会话不再回读(即使期间又追加了新消息)——
+    // 多轮循环只负责「消化更多不同会话」,不追着活会话跑。
+    const stmtSessionsExcluding = new Map<number, { all: (...params: unknown[]) => unknown[] }>()
+    const loadSessions = (
+      projectId: number,
+      coveredBefore: number,
+      cutoffSec: number,
+      exclude: number[]
+    ): DigestSessionInput[] => {
+      if (exclude.length === 0) {
+        return stmtSessions.all(projectId, coveredBefore, cutoffSec) as DigestSessionInput[]
+      }
+      let stmt = stmtSessionsExcluding.get(exclude.length)
+      if (!stmt) {
+        stmt = sqlite.prepare(
+          `${SESSION_SELECT} AND s.id NOT IN (${exclude.map(() => '?').join(',')}) ORDER BY ts ASC LIMIT ${DIGEST_MAX_SESSIONS_PER_RUN}`
+        ) as unknown as { all: (...params: unknown[]) => unknown[] }
+        stmtSessionsExcluding.set(exclude.length, stmt)
+      }
+      return stmt.all(projectId, coveredBefore, cutoffSec, ...exclude) as DigestSessionInput[]
+    }
     const stmtPendingProgress = sqlite.prepare(`
       SELECT content FROM memories
       WHERE status = 'candidate' AND deleted = 0 AND source LIKE 'agent:mcp:log_progress%'
@@ -188,16 +217,22 @@ const plugin: MemorySQLPlugin = {
         let coveredTotal = 0
         let lastModel = 'rules'
         let llmError: string | null = null
+        let llmBroken = false
         let rounds = 0
         let lastDigestId = 0
         let recentCarry = ''
+        const processed = new Set<number>()
+        // 自动总结只消化「安静了至少 quietMinutes」的会话;手动触发给 2 分钟宽限,
+        // 避免把用户正在说话的那一场也总结进去(它也还会继续变)。
+        const cutoffSec = digestCutoffSec({ manual: opts.manual, quietMinutes: quietMinutes() })
         for (; rounds < DIGEST_MAX_ROUNDS_PER_TRIGGER; rounds++) {
           const state = stmtState.get(projectId) as
             | { last_digest_at: number | null; last_covered_ts: number | null }
             | undefined
           const coveredBefore = state?.last_covered_ts ?? 0
-          const sessions = stmtSessions.all(projectId, coveredBefore) as DigestSessionInput[]
+          const sessions = loadSessions(projectId, coveredBefore, cutoffSec, [...processed])
           if (sessions.length === 0) break
+          for (const s of sessions) processed.add(s.id)
           const prevRow = stmtLatestDigest.get(projectId) as
             | { summary: string; todos: string }
             | undefined
@@ -218,7 +253,9 @@ const plugin: MemorySQLPlugin = {
           )
           let result: DigestResult | null = null
           let model = 'rules'
-          if (refine?.available()) {
+          // 同一轮触发里 LLM 已经失败过就不再逐个批次重试:超时每次 120s,
+          // 多轮会把「总结」拖成十几分钟(旧实现每轮都等满超时再回落规则)
+          if (refine?.available() && !llmBroken) {
             try {
               const text = await refine.refine(prompt, {
                 system: buildDigestSystemPrompt(spec),
@@ -231,9 +268,11 @@ const plugin: MemorySQLPlugin = {
                 result = parsed
                 model = `llm:${refine.describe?.() ?? 'configured'}`
               } else {
+                llmBroken = true
                 llmError = 'LLM 返回无法解析为 JSON,已回落规则总结'
               }
             } catch (err) {
+              llmBroken = true
               llmError = `LLM 调用失败: ${String(err instanceof Error ? err.message : err)}`
             }
           }
@@ -333,8 +372,8 @@ const plugin: MemorySQLPlugin = {
 
     // 串行队列:一次只总结一个项目,防并发把 LLM 配额和库写打满
     let chain: Promise<unknown> = Promise.resolve()
-    const enqueue = (projectId: number): void => {
-      chain = chain.then(() => runDigest(projectId)).catch(() => {})
+    const enqueue = (projectId: number, opts: { manual?: boolean } = {}): void => {
+      chain = chain.then(() => runDigest(projectId, opts)).catch(() => {})
     }
 
     // ---- 自动触发:安静期防抖(监听常挂,开火时才检查开关 —— 开关即时生效) --
@@ -363,11 +402,26 @@ const plugin: MemorySQLPlugin = {
       }
     })
 
-    // 启动补跑:应用常关着会错过安静期;3 分钟后把「有未覆盖会话且 >24h 没总结」的补上
+    // 启动补跑:应用常关着会错过安静期;3 分钟后把「有未覆盖会话且 >24h 没总结」的补上。
+    // 只数「已安静 quietMinutes 的会话」——刚开的对话不算未覆盖,否则一启动就把
+    // 用户正在聊的会话拉进总结。
     const catchup = setTimeout(() => {
       if (!enabled()) return
       const now = Date.now()
+      const cutoffSec = digestCutoffSec({ quietMinutes: quietMinutes(), now })
       for (const { id } of stmtProjectsWithSessions.all() as Array<{ id: number }>) {
+        // 项目还在活跃(quietMinutes 内有任何会话写入)就整体跳过:
+        // 启动补跑不该在用户刚开口时插进来总结
+        const hot = (
+          sqlite
+            .prepare(
+              `SELECT COUNT(*) AS n FROM sessions WHERE deleted = 0 AND project_id = ?
+                 AND is_subagent = 0
+                 AND COALESCE(last_message_at, started_at) > ?`
+            )
+            .get(id, cutoffSec) as { n: number }
+        ).n
+        if (hot > 0) continue
         const state = stmtState.get(id) as { last_digest_at: number | null; last_covered_ts: number | null } | undefined
         const uncovered = (
           sqlite
@@ -375,9 +429,10 @@ const plugin: MemorySQLPlugin = {
               `SELECT COUNT(*) AS n FROM sessions WHERE deleted = 0 AND project_id = ?
                  AND is_subagent = 0
                  AND COALESCE(last_message_at, started_at) IS NOT NULL
-                 AND COALESCE(last_message_at, started_at) > ?`
+                 AND COALESCE(last_message_at, started_at) > ?
+                 AND COALESCE(last_message_at, started_at) <= ?`
             )
-            .get(id, state?.last_covered_ts ?? 0) as { n: number }
+            .get(id, state?.last_covered_ts ?? 0, cutoffSec) as { n: number }
         ).n
         if (shouldRunCatchup(state, uncovered, now)) enqueue(id)
       }
@@ -447,7 +502,7 @@ const plugin: MemorySQLPlugin = {
       const projectId = Number(((payload ?? {}) as { projectId?: number }).projectId)
       if (!Number.isFinite(projectId) || projectId <= 0) throw new Error('runNow requires {projectId}')
       const busy = running.has(projectId)
-      if (!busy) enqueue(projectId)
+      if (!busy) enqueue(projectId, { manual: true })
       return { ok: true, queued: !busy }
     })
 
@@ -463,6 +518,7 @@ const plugin: MemorySQLPlugin = {
     // UI「立即总结全部项目」:入队后台串行跑,立即返回入队数(进度走 push:digest)
     ctx.ipc.handle('queueAll', () => {
       if (!enabled()) return { ok: false as const, message: '项目总结未开启' }
+      const cutoff = digestCutoffSec({ manual: true, quietMinutes: quietMinutes() })
       let queued = 0
       for (const row of sqlite
         .prepare(
@@ -471,11 +527,12 @@ const plugin: MemorySQLPlugin = {
             WHERE p.deleted = 0
               AND EXISTS (SELECT 1 FROM sessions s WHERE s.deleted = 0 AND s.project_id = p.id
                             AND COALESCE(s.last_message_at, s.started_at) IS NOT NULL
-                            AND COALESCE(s.last_message_at, s.started_at) > COALESCE(st.last_covered_ts, 0))`
+                            AND COALESCE(s.last_message_at, s.started_at) > COALESCE(st.last_covered_ts, 0)
+                            AND COALESCE(s.last_message_at, s.started_at) <= ?)`
         )
-        .all() as Array<{ id: number }>) {
+        .all(cutoff) as Array<{ id: number }>) {
         if (!running.has(row.id)) {
-          enqueue(row.id)
+          enqueue(row.id, { manual: true })
           queued++
         }
       }

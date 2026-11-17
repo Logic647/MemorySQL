@@ -10,6 +10,7 @@ import {
   buildDigestPrompt,
   buildDigestSystemPrompt,
   buildRulesDigest,
+  digestCutoffSec,
   digestLevel,
   digestLevelFor,
   DIGEST_LEVEL_SPECS,
@@ -514,5 +515,20 @@ describe('插件接线', () => {
     expect(out).toContain('demo 会话0')
     const miss = tool.handler({ project: '不存在的项目' }) as string
     expect(miss).toContain('未找到')
+  })
+})
+
+describe('digestCutoffSec(只总结已安静的会话)', () => {
+  it('自动触发等满 quietMinutes,手动触发只留 2 分钟宽限', () => {
+    const now = 10_000_000_000
+    expect(digestCutoffSec({ quietMinutes: 120, now })).toBe(Math.floor((now - 7200_000) / 1000))
+    expect(digestCutoffSec({ manual: true, quietMinutes: 120, now })).toBe(
+      Math.floor((now - 120_000) / 1000)
+    )
+  })
+
+  it('quietMinutes 非法时按 1 分钟兜底,不会把 cutoff 推到未来', () => {
+    const now = 10_000_000_000
+    expect(digestCutoffSec({ quietMinutes: 0, now })).toBe(Math.floor((now - 60_000) / 1000))
   })
 })
