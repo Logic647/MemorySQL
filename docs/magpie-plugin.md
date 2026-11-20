@@ -165,6 +165,10 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 - `service.mjs`:Bun 里的本地 HTTP 服务，只绑 127.0.0.1，校验 Host/Origin；
   提供 `/api/status`、`/api/projects`、`/api/sessions`、`/api/search`、
   `/api/context`、`/api/digest`、`/api/session`，全部转给当前后端。
+  **sandbox iframe 的 Origin 是 `null`**：API 响应显式回
+  `Access-Control-Allow-Origin: null` 并处理 `OPTIONS` 预检；每次宿主启动生成
+  随机 token 注入页面 HTML 的 `<meta name="memorysql-token">`，API 必须带
+  `x-memorysql-token`；静态 HTML 不带 CORS（别的 sandbox 页面读不到 token）。
 - `ui/`:状态(内置存储 / MemorySQL 应用)、项目列表、续接包/总结/会话、跨 agent
   搜索；只读。相对路径 + `magpie.service` 兼容 `magpie web`。
 - `magpie.actions` 的 `agent-sessions` 出现在 agent 行菜单，打开页面并带 `?agent=`。

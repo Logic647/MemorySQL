@@ -117,6 +117,11 @@ magpie plugin dump     # 看钩子/选项
 - `?agent=` 过滤（从 agent 行菜单进来时）
 
 页面只读。服务只绑 `127.0.0.1`，校验 Host / Origin，拒绝非本服务的来源。
+magpie 的插件页面是 sandbox iframe，`Origin` 是 `null`：API 响应显式回
+`Access-Control-Allow-Origin: null`（并处理 `OPTIONS` 预检），否则浏览器会把
+同 URL 的 `fetch` 当跨源拦掉。每次宿主启动生成一个随机 token，注入页面 HTML 的
+`<meta name="memorysql-token">`；API 必须带 `x-memorysql-token`。静态 HTML 刻意不带
+CORS，别的站点就算嵌一个 sandbox 也读不到 token，不能直连 loopback 读记忆。
 `magpie web` 下优先使用桥接给的 `magpie.service` 地址；没有时回落到 `127.0.0.1:<pagePort>`。
 
 ---
@@ -158,7 +163,7 @@ magpie plugin dump     # 看钩子/选项
 - 内置库只在本机；插件不向任何外部服务上传记忆/会话。
 - **自动续接会把本地记忆/会话摘要随请求发给模型厂商**（和 magpie 自己的 Memory 注入 instructions 一样）。magpie 的 masking 在请求出口处执行，注入内容也会被一起脱敏。
 - 不想让某个 agent 看到记忆：把它加进 `skipAgents`；不想让远程请求看到：保持 `recallRemote` / `captureRemote` 为 false。
-- 页面只读；服务只绑 loopback。
+- 页面只读；服务只绑 loopback，API 还要每次启动的随机 token（HTML 里注入，别的站点读不到）。
 
 ---
 

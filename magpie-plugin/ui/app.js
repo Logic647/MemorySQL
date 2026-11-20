@@ -8,9 +8,13 @@ const state = {
 }
 
 const $ = (sel) => document.querySelector(sel)
+const TOKEN =
+  document.querySelector('meta[name="memorysql-token"]')?.getAttribute('content') ?? ''
 
 async function api(path) {
-  const res = await fetch(path, { headers: { accept: 'application/json' } })
+  const res = await fetch(path, {
+    headers: { accept: 'application/json', 'x-memorysql-token': TOKEN }
+  })
   let body
   try {
     body = await res.json()

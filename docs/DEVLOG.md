@@ -41,6 +41,15 @@
 - 页面服务改为 `backend.call`,status 显示「内置存储 / MemorySQL vX」;UI 相对路径
   + `magpie.service` 继续兼容 `magpie web`。
 
+**同日修页面「Failed to fetch」**:magpie 的插件页面是 sandbox iframe,`Origin` 是
+`null`;页面服务只做了 Origin 校验、没回 CORS,浏览器把 `/api/*` 当跨源拦掉(实测
+页面能打开但状态/项目都显示「未连接」)。补:API 响应显式
+`Access-Control-Allow-Origin: null` + `OPTIONS` 预检 204;每次宿主启动生成随机
+token 注入页面 HTML 的 `<meta name="memorysql-token">`,API 必须带
+`x-memorysql-token`(静态 HTML 不带 CORS,防任意 sandbox 页面读 token 后直连
+loopback 读记忆)。实测 3488:HTML 带 token、无 token 401、带 token 200、预检
+`ACAO: null`;真实 magpie 里已捕获到 1 场会话(44 条消息)。
+
 **验证**
 - 插件 `node --test` **27 passed**(新增 embedding 导入/追加/短列表/项目解析/
   两字中文检索/收工汇报/全新库空 context/钩子捕获后注入/后端工厂/status)。

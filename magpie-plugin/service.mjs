@@ -6,6 +6,7 @@
 // fetch 自己的 /api/*，再由服务走当前后端（内置 SQLite 或 MemorySQL 应用）。
 import fs from 'node:fs'
 import http from 'node:http'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getBackend } from './lib/backend/index.mjs'
@@ -13,6 +14,11 @@ import { mapAgent } from './lib/agent-map.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const DEFAULT_PORT = 3488
+// 每次宿主启动换一个 token，注入到页面 HTML 的 <meta>；API 必须带它。
+// sandbox iframe 的 Origin 是 null，任何站点都能嵌一个 sandbox 去 fetch
+// loopback——没有 token 的话本地记忆会被任意网页读走。
+const TOKEN = crypto.randomBytes(32).toString('hex')
+const TOKEN_HEADER = 'x-memorysql-token'
 
 let instance = null
 let starting = null
@@ -73,6 +79,25 @@ function originAllowed(req, port) {
   const origin = req.headers.origin
   if (!origin || origin === 'null') return true
   return origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`
+}
+
+/**
+ * API 的 CORS：sandbox iframe 的 Origin 是 null，必须显式回 null 才能读到响应。
+ * 静态 HTML 刻意不加 CORS——token 在 HTML 里，不能让跨源请求读走。
+ */
+function applyCors(req, res, port) {
+  const origin = req.headers.origin
+  const own = origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`
+  res.setHeader('access-control-allow-origin', origin === 'null' ? 'null' : own ? origin : 'null')
+  res.setHeader('access-control-allow-headers', `content-type, accept, ${TOKEN_HEADER}`)
+  res.setHeader('access-control-allow-methods', 'GET, OPTIONS')
+  res.setHeader('vary', 'Origin')
+}
+
+function tokenOK(req) {
+  const got = Buffer.from(String(req.headers[TOKEN_HEADER] ?? ''))
+  const want = Buffer.from(TOKEN)
+  return got.length === want.length && crypto.timingSafeEqual(got, want)
 }
 
 async function api(req, res, url, options, backendPromise) {
@@ -162,8 +187,18 @@ function createServer(port, options, backendPromise) {
       return
     }
     if (url.pathname.startsWith('/api/')) {
+      applyCors(req, res, port)
+      // 带自定义 token 头的 GET 会先发一个不带 token 的 OPTIONS 预检
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, { 'access-control-max-age': '600' }).end()
+        return
+      }
       if (req.method !== 'GET') {
         res.writeHead(405).end()
+        return
+      }
+      if (!tokenOK(req)) {
+        json(res, 401, { ok: false, error: 'unauthorized — reload the MemorySQL page' })
         return
       }
       securityHeaders(res, port)
@@ -176,7 +211,16 @@ function createServer(port, options, backendPromise) {
       return
     }
     try {
-      const body = fs.readFileSync(file.file)
+      let body = fs.readFileSync(file.file)
+      if (file.type.startsWith('text/html')) {
+        // token 只进页面 HTML；静态资源不带 CORS，跨源读不到它
+        body = Buffer.from(
+          body
+            .toString('utf8')
+            .replace('<head>', `<head>\n    <meta name="memorysql-token" content="${TOKEN}">`),
+          'utf8'
+        )
+      }
       securityHeaders(res, port)
       res.writeHead(200, {
         'content-type': file.type,
