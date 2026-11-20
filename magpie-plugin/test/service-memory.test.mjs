@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { startService, stopService } from '../service.mjs'
-import { resetBackend } from '../lib/backend/index.mjs'
+import { resetBackend, getBackend } from '../lib/backend/index.mjs'
 
 const llm = {
   async resolveModel() {
@@ -95,4 +95,58 @@ test('记忆页 API：token + 新增/列表/设置/蒸馏状态', async (t) => {
     body: JSON.stringify({ text: 'x', kind: 'fact' })
   })
   assert.equal(unauthorized.status, 401)
+})
+
+test('页面搜索返回结构化命中；会话可从页面删除', async (t) => {
+  resetBackend()
+  const pagePort = 40000 + Math.floor(Math.random() * 400)
+  const svc = startService({ pagePort, backend: 'embedded', dataDir: ':memory:', llm })
+  t.after(() => {
+    stopService()
+    resetBackend()
+  })
+  const port = await svc.ready
+  const base = `http://127.0.0.1:${port}`
+  const html = await (await fetch(`${base}/`)).text()
+  const token = html.match(/name="memorysql-token" content="([^"]+)"/)?.[1]
+  const auth = { 'x-memorysql-token': token, 'content-type': 'application/json' }
+
+  // 页面服务与测试共用同一个 embedded 后端实例（getBackend 的缓存 key 相同）
+  const backend = await getBackend({ backend: 'embedded', dataDir: ':memory:' })
+  const imported = JSON.parse(
+    await backend.call('memory_import_session', {
+      agent: 'zcode',
+      externalId: 'svc-del',
+      cwd: 'H:/work/demo',
+      title: '页面里的搜索和删除',
+      messages: [
+        { role: 'user', content: '搜索框输入插件没有结果' },
+        { role: 'assistant', content: '因为 token 过期，页面重载即可。' }
+      ]
+    })
+  )
+
+  const search = await (
+    await fetch(`${base}/api/search?q=${encodeURIComponent('搜索')}`, { headers: auth })
+  ).json()
+  assert.equal(search.ok, true)
+  assert.ok(Array.isArray(search.hits))
+  assert.ok(search.hits.some((hit) => hit.sessionId === imported.id && hit.kind === 'message'))
+
+  const removed = await (
+    await fetch(`${base}/api/sessions/remove`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ ids: [imported.id] })
+    })
+  ).json()
+  assert.equal(removed.ok, true)
+  assert.equal(removed.count, 1)
+
+  const sessions = await (await fetch(`${base}/api/sessions?limit=10`, { headers: auth })).json()
+  assert.equal(sessions.sessions.length, 0)
+  const after = await (
+    await fetch(`${base}/api/search?q=${encodeURIComponent('搜索')}`, { headers: auth })
+  ).json()
+  assert.equal(after.hits.length, 0)
 })

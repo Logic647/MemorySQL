@@ -9,6 +9,8 @@ const state = {
   selected: null,
   tab: 'context',
   mem: { status: 'active', scope: '', q: '', open: null, draft: null, data: null, removing: null, timer: 0 },
+  sess: { removing: null },
+  search: { scope: '' },
   distill: null,
   poll: 0
 }
@@ -27,6 +29,21 @@ function el(tag, className, text) {
   return node
 }
 
+// 页面 token 每次宿主启动都会换：旧页面调 API 会 401。自动重载一次拿新 token；
+// fresh 时间戳兼作防循环（<5s 内不再重载，避免服务真不可用时来回刷）。
+function reloadForToken() {
+  try {
+    const url = new URL(location.href)
+    const at = Number(url.searchParams.get('fresh') || 0)
+    if (Date.now() - at < 5000) return false
+    url.searchParams.set('fresh', String(Date.now()))
+    location.replace(url.toString())
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
     method,
@@ -43,7 +60,13 @@ async function api(path, { method = 'GET', body } = {}) {
   } catch {
     throw new Error(`HTTP ${res.status}`)
   }
-  if (!data || data.ok !== true) throw new Error(data?.error || `HTTP ${res.status}`)
+  if (!data || data.ok !== true) {
+    const message = data?.error || `HTTP ${res.status}`
+    if ((res.status === 401 || /unauthorized/i.test(message)) && reloadForToken()) {
+      throw new Error('页面已过期，正在重新载入…')
+    }
+    throw new Error(message)
+  }
   return data
 }
 
@@ -130,7 +153,11 @@ function switchView(view) {
     void loadMemory()
   }
   if (view === 'projects') void loadProjects()
-  if (view === 'search') $('#query').focus()
+  if (view === 'search') {
+    if (!state.projects.length) void loadProjects()
+    renderSearchScope()
+    $('#query').focus()
+  }
 }
 
 // ----- 记忆：控制卡 --------------------------------------------------------
@@ -372,6 +399,7 @@ function memDetail(memory) {
 
   const line = el('div', 'mem-line')
   const kind = el('select', 'field select')
+  kind.title = '记忆类型：画像 / 偏好 / 事实 / 决策'
   for (const value of KIND_OPTIONS) {
     const option = el('option', '', KIND_LABEL[value])
     option.value = value
@@ -383,6 +411,7 @@ function memDetail(memory) {
   })
 
   const scope = el('select', 'field select')
+  scope.title = '全局记忆所有项目都能用；项目记忆只在该项目续接时出现'
   const global = el('option', '', '全局')
   global.value = 'global'
   scope.append(global)
@@ -396,6 +425,7 @@ function memDetail(memory) {
   })
 
   const projectPick = el('select', 'field select')
+  projectPick.title = '项目记忆归属的项目'
   for (const item of projects) {
     const option = el('option', '', item.name)
     option.value = String(item.id)
@@ -410,6 +440,7 @@ function memDetail(memory) {
   const tags = el('input', 'field grow')
   tags.type = 'text'
   tags.placeholder = '标签，用逗号分隔'
+  tags.title = '标签也会进搜索；最多 10 个'
   tags.value = draft.tags
   tags.addEventListener('input', () => {
     draft.tags = tags.value
@@ -421,6 +452,7 @@ function memDetail(memory) {
   const why = el('input', 'field')
   why.type = 'text'
   why.placeholder = '为什么（可选，模型整理时会参考）'
+  why.title = '为什么记这条；模型整理/合并时会参考'
   why.value = draft.why
   why.addEventListener('input', () => {
     draft.why = why.value
@@ -431,17 +463,43 @@ function memDetail(memory) {
   if (memory) {
     if (memory.source !== 'user') {
       acts.append(
-        button(memory.locked ? '取消置顶' : '置顶', async () => {
-          await act('api/memories/pin', { id: memory.id, pinned: !memory.locked })
-        })
+        button(
+          memory.locked ? '取消置顶' : '置顶',
+          async () => {
+            await act('api/memories/pin', { id: memory.id, pinned: !memory.locked })
+          },
+          '',
+          '置顶（锁定）后，模型整理永远不会改动这条'
+        )
       )
     }
     if (memory.status === 'candidate') {
-      acts.append(button('确认', () => act('api/memories/status', { ids: [memory.id], status: 'active' })))
+      acts.append(
+        button(
+          '确认',
+          () => act('api/memories/status', { ids: [memory.id], status: 'active' }),
+          '',
+          '确认这条候选；确认后才会进入续接包'
+        )
+      )
     } else if (memory.status === 'active') {
-      acts.append(button('归档', () => act('api/memories/status', { ids: [memory.id], status: 'archived' })))
+      acts.append(
+        button(
+          '归档',
+          () => act('api/memories/status', { ids: [memory.id], status: 'archived' }),
+          '',
+          '归档后不再进入续接包（可随时恢复）'
+        )
+      )
     } else {
-      acts.append(button('恢复', () => act('api/memories/status', { ids: [memory.id], status: 'active' })))
+      acts.append(
+        button(
+          '恢复',
+          () => act('api/memories/status', { ids: [memory.id], status: 'active' }),
+          '',
+          '恢复为「使用中」，重新进入续接包'
+        )
+      )
     }
     const sure = state.mem.removing === memory.id
     acts.append(
@@ -456,18 +514,24 @@ function memDetail(memory) {
           state.mem.removing = null
           void act('api/memories/remove', { ids: [memory.id] })
         },
-        sure ? 'danger-fill' : 'danger'
+        sure ? 'danger-fill' : 'danger',
+        sure ? '再点一次彻底删除这条记忆' : '删除这条记忆（打 deleted 标记，不再出现在搜索/续接包）'
       )
     )
   }
   acts.append(el('span', 'grow'))
   acts.append(
-    button('取消', () => {
-      state.mem.open = null
-      state.mem.draft = null
-      state.mem.removing = null
-      renderMemList()
-    })
+    button(
+      '取消',
+      () => {
+        state.mem.open = null
+        state.mem.draft = null
+        state.mem.removing = null
+        renderMemList()
+      },
+      '',
+      '放弃这次编辑'
+    )
   )
   acts.append(
     button(
@@ -496,7 +560,8 @@ function memDetail(memory) {
           notice(`保存失败：${err.message}`)
         }
       },
-      'primary'
+      'primary',
+      memory ? '保存修改（这条会标记为手写，整理不会改动）' : '写入本地记忆库（手写记忆，整理不会改动）'
     )
   )
   form.append(acts)
@@ -504,8 +569,9 @@ function memDetail(memory) {
   return box
 }
 
-function button(label, onClick, className = '') {
+function button(label, onClick, className = '', title = '') {
   const node = el('button', className, label)
+  if (title) node.title = title
   node.type = 'button'
   node.addEventListener('click', (event) => {
     event.stopPropagation()
@@ -556,6 +622,7 @@ async function loadProjects() {
     const body = await api('api/projects?limit=100')
     state.projects = Array.isArray(body.projects) ? body.projects : []
     renderProjects()
+    renderSearchScope()
   } catch (err) {
     notice(`项目加载失败：${err.message}`)
   }
@@ -638,34 +705,75 @@ function renderSessions(sessions) {
   const wrap = el('div', 'sessions')
   const list = Array.isArray(sessions) ? sessions : []
   for (const session of list) {
+    const row = el('div', 'session-row')
     const btn = el('button', 'session')
     btn.type = 'button'
-    btn.append(
-      el('strong', '', session.title || `会话 #${session.id}`),
-      el(
-        'span',
-        '',
-        `${session.agent || '?'} · ${fmtDay(session.lastMessageAt || session.startedAt)} · ${
-          session.messageCount ?? 0
-        } 条`
+    btn.title = `打开会话 #${session.id}，看最近 200 条消息`
+    const title = el('strong', '', session.title || `会话 #${session.id}`)
+    const meta = el('span', '')
+    meta.append(
+      el('b', 'sid', `#${session.id}`),
+      ` · ${session.agent || '?'} · ${fmtDay(session.lastMessageAt || session.startedAt)} · ${
+        session.messageCount ?? 0
+      } 条`
+    )
+    btn.append(title, meta)
+    btn.addEventListener('click', () => void openSession(session.id, session.title))
+    row.append(btn)
+
+    const sure = state.sess.removing === session.id
+    row.append(
+      button(
+        sure ? '确认删除' : '删除',
+        () => {
+          if (!sure) {
+            state.sess.removing = session.id
+            renderSessions(list)
+            return
+          }
+          state.sess.removing = null
+          void removeSession(session.id)
+        },
+        `session-del${sure ? ' danger-fill' : ''}`,
+        sure
+          ? '再点一次彻底删除这个会话'
+          : `删除会话 #${session.id}：不再出现在列表/搜索/续接包；同一会话后续回写默认不会恢复`
       )
     )
-    btn.addEventListener('click', () => void openSession(session.id))
-    wrap.append(btn)
+    wrap.append(row)
   }
-  if (list.length === 0) wrap.append(el('p', 'muted', '这个项目还没有会话。'))
+  if (list.length === 0) {
+    wrap.append(
+      el('p', 'muted', '这个项目还没有会话。agent 经 magpie 网关跑一轮后，对话会自动回写到这里。')
+    )
+  }
   body.replaceChildren(wrap)
 }
 
-async function openSession(id) {
+async function removeSession(id) {
+  try {
+    await api('api/sessions/remove', { method: 'POST', body: { ids: [id] } })
+    await loadTab()
+    await loadStatus()
+    void loadProjects()
+    notice(`已删除会话 #${id}：不会再出现在列表、搜索或续接包里。`)
+  } catch (err) {
+    notice(`删除失败：${err.message}`)
+  }
+}
+
+async function openSession(id, title) {
   const body = $('#detailBody')
   body.textContent = '加载中…'
   try {
     const data = await api(`api/session?id=${encodeURIComponent(id)}&tail=200`)
-    const back = el('button', 'back', '← 返回')
+    const back = el('button', 'back', '← 返回会话列表')
     back.type = 'button'
+    back.title = '回到该项目的会话列表'
     back.addEventListener('click', () => void loadTab())
-    body.replaceChildren(back, el('pre', 'result', data.text || '(空会话)'))
+    const head = el('div', 'session-detail-head')
+    head.append(el('strong', '', title || `会话 #${id}`), el('b', 'sid', `#${id}`))
+    body.replaceChildren(back, head, el('pre', 'result', data.text || '(空会话)'))
   } catch (err) {
     body.textContent = `读取失败：${err.message}`
   }
@@ -693,6 +801,151 @@ async function generateDigest() {
 }
 
 // ----- 搜索 ----------------------------------------------------------------
+
+function renderSearchScope() {
+  const pick = $('#searchScope')
+  if (!pick) return
+  pick.replaceChildren()
+  const all = el('option', '', '全部项目')
+  all.value = ''
+  pick.append(all)
+  for (const project of state.projects || []) {
+    const option = el('option', '', project.name || `项目 #${project.id}`)
+    option.value = project.path || project.name
+    pick.append(option)
+  }
+  const values = [...pick.options].map((option) => option.value)
+  pick.value = values.includes(state.search.scope) ? state.search.scope : ''
+  state.search.scope = pick.value
+  pick.hidden = (state.projects || []).length === 0
+}
+
+const HIT_LABEL = { session: '会话', message: '消息', memory: '记忆' }
+
+// 把命中的关键词包成 <mark>（textContent 方式，不拼 innerHTML）。
+function highlighted(text, query) {
+  const frag = document.createDocumentFragment()
+  const raw = String(text ?? '')
+  const needle = String(query ?? '').trim()
+  if (!needle) {
+    frag.append(document.createTextNode(raw))
+    return frag
+  }
+  const lower = raw.toLowerCase()
+  const q = needle.toLowerCase()
+  let at = 0
+  while (at < raw.length) {
+    const idx = lower.indexOf(q, at)
+    if (idx < 0) break
+    if (idx > at) frag.append(document.createTextNode(raw.slice(at, idx)))
+    frag.append(el('mark', '', raw.slice(idx, idx + needle.length)))
+    at = idx + needle.length
+  }
+  if (at < raw.length) frag.append(document.createTextNode(raw.slice(at)))
+  return frag
+}
+
+function renderSearchHits(hits, query, showAll = false) {
+  const pre = $('#searchResult')
+  const box = $('#searchHits')
+  pre.hidden = true
+  pre.textContent = ''
+  box.hidden = false
+  box.replaceChildren()
+  if (!hits.length) {
+    box.append(
+      el(
+        'div',
+        'mem-none',
+        `没有找到「${query}」相关的记录。试试更短的关键词，或把范围改成「全部项目」。`
+      )
+    )
+    return
+  }
+  // 同一场会话的消息最多先展示 3 条，避免 20 条结果全来自同一个长会话。
+  const kept = []
+  const perSession = new Map()
+  let hidden = 0
+  for (const hit of hits) {
+    if (showAll || hit.kind !== 'message' || !hit.sessionId) {
+      kept.push(hit)
+      continue
+    }
+    const seen = perSession.get(hit.sessionId) || 0
+    if (seen >= 3) {
+      hidden += 1
+      continue
+    }
+    perSession.set(hit.sessionId, seen + 1)
+    kept.push(hit)
+  }
+  const head = el('div', 'muted hint')
+  head.append(
+    `共 ${hits.length} 条命中（按相关度排序）` +
+      (hidden ? `，先展示 ${kept.length} 条：同一会话最多 3 条消息` : '')
+  )
+  if (hidden) {
+    head.append(
+      button(
+        '显示全部',
+        () => renderSearchHits(hits, query, true),
+        'ghost small',
+        '展开同一会话里的其余命中'
+      )
+    )
+  }
+  box.append(head)
+  for (const hit of kept) {
+    const card = el('div', `hit hit-${hit.kind}`)
+    const head = el('div', 'hit-head')
+    head.append(el('span', `tag hit-tag ${hit.kind}`, HIT_LABEL[hit.kind] || hit.kind))
+    if (hit.sessionId) head.append(el('b', 'sid', `#${hit.sessionId}`))
+    if (hit.title) head.append(el('strong', 'hit-title', hit.title))
+    const bits = []
+    if (hit.agent) bits.push(`来自 ${hit.agent}`)
+    if (hit.scope) bits.push(hit.scope === 'project' ? '项目记忆' : '全局记忆')
+    if (hit.lastMessageAt) bits.push(fmtDay(hit.lastMessageAt))
+    else if (hit.updatedAt) bits.push(fmtDay(Math.floor(hit.updatedAt / 1000)))
+    if (bits.length) head.append(el('span', 'hit-meta', bits.join(' · ')))
+    card.append(head)
+
+    const snip = el('div', 'hit-snippet')
+    snip.append(highlighted(hit.snippet || '', query))
+    card.append(snip)
+
+    if (hit.sessionId) {
+      const acts = el('div', 'hit-acts')
+      const toggle = button(
+        '看会话',
+        async () => {
+          const shown = card.querySelector('.hit-session')
+          if (shown) {
+            shown.remove()
+            toggle.textContent = '看会话'
+            return
+          }
+          toggle.disabled = true
+          const view = el('pre', 'result hit-session', '读取中…')
+          card.append(view)
+          try {
+            const data = await api(`api/session?id=${encodeURIComponent(hit.sessionId)}&tail=200`)
+            view.textContent = data.text || '(空会话)'
+            toggle.textContent = '收起'
+          } catch (err) {
+            view.textContent = `读取失败：${err.message}`
+          } finally {
+            toggle.disabled = false
+          }
+        },
+        'ghost',
+        `展开会话 #${hit.sessionId} 最近 200 条消息`
+      )
+      acts.append(toggle)
+      card.append(acts)
+    }
+    box.append(card)
+  }
+}
 
 function wire() {
   for (const tab of document.querySelectorAll('.mtab')) {
@@ -765,19 +1018,27 @@ function wire() {
   $('#digestGenerate').addEventListener('click', () => void generateDigest())
 
   // search
+  $('#searchScope').addEventListener('change', (event) => {
+    state.search.scope = event.target.value
+    if ($('#query').value.trim()) $('#searchForm').requestSubmit()
+  })
   $('#searchForm').addEventListener('submit', async (event) => {
     event.preventDefault()
     const query = $('#query').value.trim()
     if (!query) return
     const out = $('#searchResult')
+    const hits = $('#searchHits')
+    hits.hidden = true
+    hits.replaceChildren()
     out.hidden = false
     out.textContent = '搜索中…'
     const qs = new URLSearchParams({ q: query })
     if (state.agent) qs.set('agent', state.agent)
-    if (state.selected) qs.set('project', projectArg())
+    if (state.search.scope) qs.set('project', state.search.scope)
     try {
       const data = await api(`api/search?${qs.toString()}`)
-      out.textContent = data.text || '(没有结果)'
+      if (Array.isArray(data.hits)) renderSearchHits(data.hits, query)
+      else out.textContent = data.text || '(没有结果)'
     } catch (err) {
       out.textContent = `搜索失败：${err.message}`
     }

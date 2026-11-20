@@ -153,6 +153,67 @@ test('网关钩子 + 内置存储：首次空跳过，捕获后下一轮自动�
   assert.match(out.messages[0].content, /登录一直失败/)
 })
 
+test('内置存储：结构化搜索（命中片段/会话 id）+ 删除会话 + 回写不复活', async (t) => {
+  const backend = await fresh()
+  t.after(() => backend.close())
+  const call = (name, args = {}) => backend.call(name, args)
+
+  const imported = JSON.parse(
+    await call('memory_import_session', {
+      agent: 'zcode',
+      externalId: 's-del',
+      cwd: 'H:/work/demo',
+      title: '排查 magpie 插件搜索',
+      endedAt: 1_760_000_100,
+      messages: [
+        { role: 'user', content: 'magpie 插件里搜索为什么不工作？' },
+        { role: 'assistant', content: '页面 token 在服务重启后失效，需要重新载入页面。' }
+      ]
+    })
+  )
+  assert.equal(imported.outcome, 'imported')
+
+  // 结构化命中：片段围绕关键词、带会话 id（页面据此渲染可点的结果）
+  const hits = JSON.parse(await call('memory_search', { query: '搜索', format: 'json' }))
+  assert.ok(hits.length >= 1)
+  const message = hits.find((h) => h.kind === 'message')
+  assert.ok(message)
+  assert.equal(message.sessionId, imported.id)
+  assert.match(message.snippet, /搜索/)
+  assert.equal(message.title, '排查 magpie 插件搜索')
+  assert.ok(message.snippet.length <= 200)
+
+  // 删除：列表 / 深读 / 搜索都看不到
+  const removed = backend.ui.deleteSessions({ ids: [imported.id] })
+  assert.deepEqual(removed, { ok: true, count: 1, ids: [imported.id] })
+  assert.equal(JSON.parse(await call('memory_list_sessions', { format: 'json' })).length, 0)
+  assert.equal(await call('memory_get_session', { id: imported.id }), `未找到会话 #${imported.id}`)
+  assert.equal(JSON.parse(await call('memory_search', { query: '搜索', format: 'json' })).length, 0)
+
+  // 网关回写默认不会把用户删掉的会话复活；显式 revive 才恢复
+  const skipped = JSON.parse(
+    await call('memory_import_session', {
+      agent: 'zcode',
+      externalId: 's-del',
+      messages: [{ role: 'user', content: '又说了一句' }]
+    })
+  )
+  assert.equal(skipped.outcome, 'skipped-deleted')
+  assert.equal(JSON.parse(await call('memory_list_sessions', { format: 'json' })).length, 0)
+
+  const revived = JSON.parse(
+    await call('memory_import_session', {
+      agent: 'zcode',
+      externalId: 's-del',
+      revive: true,
+      replace: true,
+      messages: [{ role: 'user', content: '明确恢复' }]
+    })
+  )
+  assert.equal(revived.outcome, 'updated')
+  assert.equal(JSON.parse(await call('memory_list_sessions', { format: 'json' })).length, 1)
+})
+
 test('后端工厂：默认 embedded，backend=app 走代理', async () => {
   resetBackend()
   const embedded = await getBackend({ dataDir: ':memory:' })

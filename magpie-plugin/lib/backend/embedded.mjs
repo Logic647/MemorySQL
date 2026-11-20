@@ -30,6 +30,18 @@ function clip(text, max) {
   return t.length > max ? `${t.slice(0, max)}…` : t
 }
 
+// 命中片段：以关键词为中心裁一段，给页面显示（否则消息开头往往与查询无关）。
+function snippet(text, query, before = 40, after = 100) {
+  const raw = String(text ?? '').replace(/\s+/g, ' ').trim()
+  if (!raw) return ''
+  const needle = String(query ?? '').trim()
+  const at = needle ? raw.toLowerCase().indexOf(needle.toLowerCase()) : -1
+  if (at < 0) return clip(raw, before + after)
+  const start = Math.max(0, at - before)
+  const end = Math.min(raw.length, at + needle.length + after)
+  return `${start > 0 ? '…' : ''}${raw.slice(start, end)}${end < raw.length ? '…' : ''}`
+}
+
 function fmtDate(seconds) {
   return seconds ? new Date(seconds * 1000).toLocaleDateString('zh-CN') : '未知日期'
 }
@@ -504,7 +516,7 @@ export async function createEmbeddedBackend(options = {}) {
       limit,
       offset
     )
-    if (rows.length === 0) return '没有符合条件的会话。'
+    if (rows.length === 0) return args.format === 'json' ? '[]' : '没有符合条件的会话。'
     if (args.format === 'json') {
       return JSON.stringify(
         rows.map((s) => ({
@@ -667,7 +679,7 @@ export async function createEmbeddedBackend(options = {}) {
 
     if (!kind || kind === 'memory') {
       const rows = searchFts(
-        `SELECT m.id, m.content, m.kind, m.scope, m.agent_type, bm25(memories_fts) AS score
+        `SELECT m.id, m.content, m.kind, m.scope, m.agent_type, m.updated_at, bm25(memories_fts) AS score
            FROM memories_fts JOIN memories m ON m.id = memories_fts.rowid
           WHERE memories_fts MATCH ? AND ${memoryWhere.join(' AND ')}
           ORDER BY score LIMIT ?`,
@@ -678,6 +690,10 @@ export async function createEmbeddedBackend(options = {}) {
           kind: 'memory',
           score: row.score ?? 0,
           memoryId: row.id,
+          agent: row.agent_type ?? null,
+          scope: row.scope ?? null,
+          updatedAt: row.updated_at ?? null,
+          snippet: snippet(row.content, query),
           line: `[memory·${row.scope === 'project' ? '项目' : '全局'}/${row.agent_type ?? '全局'}] [${row.kind}]\n   ${clip(
             row.content,
             160
@@ -687,7 +703,7 @@ export async function createEmbeddedBackend(options = {}) {
     }
     if (!kind || kind === 'session') {
       const rows = searchFts(
-        `SELECT s.id, s.title, s.summary, s.agent_type, bm25(sessions_fts) AS score
+        `SELECT s.id, s.title, s.summary, s.agent_type, s.last_message_at, bm25(sessions_fts) AS score
            FROM sessions_fts JOIN sessions s ON s.id = sessions_fts.rowid
           WHERE sessions_fts MATCH ? AND ${sessionWhere.join(' AND ')}
           ORDER BY score LIMIT ?`,
@@ -698,6 +714,11 @@ export async function createEmbeddedBackend(options = {}) {
         hits.push({
           kind: 'session',
           score: row.score ?? 0,
+          sessionId: row.id,
+          title: row.title ?? '',
+          agent: row.agent_type ?? null,
+          lastMessageAt: row.last_message_at ?? null,
+          snippet: snippet(`${row.title ?? ''}\n${row.summary ?? ''}`, query),
           line: `[session 会话#${row.id}/${row.agent_type}] ${row.title ?? '(无标题)'}${
             first ? ` — ${first}` : ''
           }`
@@ -706,7 +727,8 @@ export async function createEmbeddedBackend(options = {}) {
     }
     if (!kind || kind === 'message') {
       const rows = searchFts(
-        `SELECT m.id, m.session_id, m.content, s.title, s.agent_type, bm25(messages_fts) AS score
+        `SELECT m.id, m.session_id, m.content, s.title, s.agent_type, s.last_message_at,
+                bm25(messages_fts) AS score
            FROM messages_fts JOIN session_messages m ON m.id = messages_fts.rowid
            JOIN sessions s ON s.id = m.session_id
           WHERE messages_fts MATCH ? AND ${messageWhere.join(' AND ')}
@@ -717,6 +739,11 @@ export async function createEmbeddedBackend(options = {}) {
         hits.push({
           kind: 'message',
           score: row.score ?? 0,
+          sessionId: row.session_id,
+          title: row.title ?? '',
+          agent: row.agent_type ?? null,
+          lastMessageAt: row.last_message_at ?? null,
+          snippet: snippet(row.content, query),
           line: `[message 会话#${row.session_id}/${row.agent_type}] ${row.title ?? '(无标题)'}\n   ${clip(
             row.content,
             200
@@ -730,7 +757,7 @@ export async function createEmbeddedBackend(options = {}) {
       const like = `%${escapeLike(query)}%`
       if (!kind || kind === 'memory') {
         const rows = all(
-          `SELECT id, content, kind, scope, agent_type FROM memories
+          `SELECT id, content, kind, scope, agent_type, updated_at FROM memories
             WHERE deleted = 0 AND status IN ('active','candidate') AND content LIKE ? ESCAPE '\\'
               ${agent ? "AND (kind = 'persona' OR agent_type IS NULL OR agent_type = ?)" : ''}
               ${projectIds ? `AND (scope = 'global' OR project_id IN (${projectIds.map(() => '?').join(',')}))` : ''}
@@ -747,6 +774,10 @@ export async function createEmbeddedBackend(options = {}) {
             kind: 'memory',
             score: 0,
             memoryId: row.id,
+            agent: row.agent_type ?? null,
+            scope: row.scope ?? null,
+            updatedAt: row.updated_at ?? null,
+            snippet: snippet(row.content, query),
             line: `[memory·${row.scope === 'project' ? '项目' : '全局'}/${row.agent_type ?? '全局'}] [${
               row.kind
             }]\n   ${clip(row.content, 160)}`
@@ -755,7 +786,7 @@ export async function createEmbeddedBackend(options = {}) {
       }
       if (!kind || kind === 'session') {
         const rows = all(
-          `SELECT s.id, s.title, s.summary, s.agent_type FROM sessions s
+          `SELECT s.id, s.title, s.summary, s.agent_type, s.last_message_at FROM sessions s
             WHERE s.deleted = 0 AND (s.title LIKE ? ESCAPE '\\' OR s.summary LIKE ? ESCAPE '\\')
               ${agent ? 'AND s.agent_type = ?' : ''}
               ${projectIds ? `AND s.project_id IN (${projectIds.map(() => '?').join(',')})` : ''}
@@ -773,6 +804,11 @@ export async function createEmbeddedBackend(options = {}) {
           hits.push({
             kind: 'session',
             score: 0,
+            sessionId: row.id,
+            title: row.title ?? '',
+            agent: row.agent_type ?? null,
+            lastMessageAt: row.last_message_at ?? null,
+            snippet: snippet(`${row.title ?? ''}\n${row.summary ?? ''}`, query),
             line: `[session 会话#${row.id}/${row.agent_type}] ${row.title ?? '(无标题)'}${
               first ? ` — ${first}` : ''
             }`
@@ -781,7 +817,7 @@ export async function createEmbeddedBackend(options = {}) {
       }
       if (!kind || kind === 'message') {
         const rows = all(
-          `SELECT m.session_id, m.content, s.title, s.agent_type FROM session_messages m
+          `SELECT m.session_id, m.content, s.title, s.agent_type, s.last_message_at FROM session_messages m
              JOIN sessions s ON s.id = m.session_id
             WHERE s.deleted = 0 AND m.content LIKE ? ESCAPE '\\'
               ${agent ? 'AND s.agent_type = ?' : ''}
@@ -798,6 +834,11 @@ export async function createEmbeddedBackend(options = {}) {
           hits.push({
             kind: 'message',
             score: 0,
+            sessionId: row.session_id,
+            title: row.title ?? '',
+            agent: row.agent_type ?? null,
+            lastMessageAt: row.last_message_at ?? null,
+            snippet: snippet(row.content, query),
             line: `[message 会话#${row.session_id}/${row.agent_type}] ${row.title ?? '(无标题)'}\n   ${clip(
               row.content,
               200
@@ -807,10 +848,20 @@ export async function createEmbeddedBackend(options = {}) {
       }
     }
 
-    if (hits.length === 0) return `未找到与"${query}"相关的记录。`
+    if (hits.length === 0) {
+      if (args.format === 'json') return '[]'
+      return `未找到与"${query}"相关的记录。`
+    }
     hits.sort((a, b) => a.score - b.score)
     const top = hits.slice(0, limit)
     touchMemories(top.filter((h) => h.memoryId).map((h) => h.memoryId))
+    if (args.format === 'json') {
+      return JSON.stringify(
+        top.map(({ line, ...rest }) => rest),
+        null,
+        2
+      )
+    }
     return top.map((h, i) => `${i + 1}. ${h.line}`).join('\n')
   }
 
@@ -980,10 +1031,13 @@ export async function createEmbeddedBackend(options = {}) {
     if (messages.length === 0) return '导入失败:没有有效消息'
 
     const existing = get(
-      'SELECT id, message_count, raw_path, cwd, project_id FROM sessions WHERE agent_type = ? AND external_id = ?',
+      'SELECT id, message_count, raw_path, cwd, project_id, deleted FROM sessions WHERE agent_type = ? AND external_id = ?',
       agent,
       externalId
     )
+    if (existing && existing.deleted === 1 && args.revive !== true) {
+      return JSON.stringify({ id: existing.id, outcome: 'skipped-deleted', messages: 0 })
+    }
     if (existing && existing.message_count > messages.length) {
       const gatewayOwned = String(existing.raw_path ?? '').startsWith('magpie-gateway:')
       if (!gatewayOwned) {
@@ -1315,6 +1369,19 @@ export async function createEmbeddedBackend(options = {}) {
       id
     )
     return { ok: true }
+  }
+
+  // 页面「删除会话」：打 tombstone（deleted=1），之后不再出现在列表/搜索/续接包。
+  // 网关回写遇到 deleted=1 的会话默认跳过（见 importSession），否则下一轮心跳会把它复活。
+  function deleteSessions(args = {}) {
+    const input = Array.isArray(args.ids) ? args.ids : [args.id]
+    const ids = [...new Set(input.map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 200)
+    if (ids.length === 0) return { ok: false, error: '缺少会话 id' }
+    const marks = ids.map(() => '?').join(',')
+    const rows = all(`SELECT id FROM sessions WHERE id IN (${marks}) AND deleted = 0`, ...ids)
+    if (rows.length === 0) return { ok: false, error: '会话不存在或已删除' }
+    run(`UPDATE sessions SET deleted = 1, updated_at = ? WHERE id IN (${marks})`, Date.now(), ...ids)
+    return { ok: true, count: rows.length, ids: rows.map((r) => r.id) }
   }
 
   function bare(text) {
@@ -1831,6 +1898,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     setMemoryStatus,
     removeMemories,
     pinMemory,
+    deleteSessions,
     distillState,
     setDistill,
     runDistill,
@@ -1872,7 +1940,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
       return {
         ok: true,
         backend: 'embedded',
-        version: '0.3.0',
+        version: '0.4.0',
         port: null,
         tools: Object.keys(handlers).length,
         stats: statsValue

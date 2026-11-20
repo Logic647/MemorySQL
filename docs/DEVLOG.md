@@ -4,6 +4,50 @@
 
 ---
 
+## 2026-11-20 · magpie 插件：搜索修复 + 会话删除/id + 全控件使用提示
+
+**用户反馈**：搜索功能没用；会话要能删除；会话列表要显示 id；所有功能加使用提示。
+
+**搜索没用的两个根因**
+- **页面 token 轮换**：服务每次宿主启动生成新 token，旧页面的 `<meta>` 里还是旧 token，
+  所有 API 返回 401（状态条却仍显示「已连接」）。前端 `api()` 现在识别 401/`unauthorized`，
+  自动 `location.replace` 带 `?fresh=<时间戳>` 重载一次拿新 token；5 秒内不重复，避免服务
+  真不可用时来回刷。
+- **`clamp()` 默认值 bug**：`Number(null) === 0`，`/api/search` 没传 `limit` 时被夹到 min=1，
+  所以永远只返回 1 条（而且常是无关的长消息开头）。`clamp()` 改为 `null/''` 走 fallback；
+  `/api/sessions` 的 `format=json` 空列表也改回 `[]`（原来返回中文句子，删到空会让页面崩）。
+
+**搜索体验**
+- `memory_search` 支持 `format:'json'`：命中带 `sessionId/title/agent/lastMessageAt/snippet`，
+  片段以关键词为中心截取（`snippet()`），不再只显示消息开头。
+- 页面搜索结果改为卡片：kind 标签、`#会话 id`、时间、关键词 `<mark>` 高亮、「看会话」
+  就地展开最近 200 条；同一会话最多先展示 3 条消息，其余用「显示全部」展开。
+- 搜索范围改成显式下拉（全部项目 / 某项目），不再偷偷沿用项目页选中的项目；
+  `切换` 范围会自动重搜。
+
+**会话删除 + id**
+- 项目页会话行显示 `#id`（风格与 MemorySQL 应用一致）；右侧「删除」两步确认。
+- `embedded.ui.deleteSessions` 打 tombstone（`deleted=1`），列表/搜索/续接包/蒸馏候选
+  全部按 `deleted=0` 过滤；回写同一 `(agent, externalId)` 默认返回 `skipped-deleted`，
+  不复活用户删掉的会话（显式 `revive:true` 才恢复，消息变少还要 `replace:true`）。
+- 服务新增 `POST /api/sessions/remove`；删除后刷新会话列表、状态计数与项目会话数。
+
+**使用提示**
+- 顶部三个 tab、刷新、模型/范围下拉、「立即整理」、两个自动开关、记忆搜索/状态分段/
+  作用域/添加、记忆逐条操作（置顶/确认/归档/恢复/删除/取消/保存）、项目筛选/tab/
+  「用模型生成总结」、会话删除、搜索框/范围/按钮都加了 `title` 悬停说明。
+- 三个页面顶部各加一句用法提示（记忆页已有，项目页/搜索页新增）；
+  搜索结果区提示「点『看会话』展开最近 200 条」。
+
+**验证**
+- 插件 `node --test` **37 passed**：新增结构化搜索（片段/会话 id）、删除后列表/深读/搜索
+  均不可见、回写 `skipped-deleted`、`revive` 恢复、服务端 `/api/search` 结构化命中与
+  `/api/sessions/remove`。
+- 临时库副本（不碰真库）浏览器验收：搜索「插件」返回 20 条命中、高亮片段、同一会话
+  折叠为 3 条；两步删除会话后状态 4→3，搜索不再命中该会话；模拟旧 token 请求 401
+  时页面自动重载恢复；会话列表截图确认 `#id` 与删除按钮。
+- `docs/magpie-plugin.md`、插件 README、AGENTS.md 已同步；插件版本 0.4.0。
+
 ## 2026-11-20 · magpie 插件：记忆页 + LLM 蒸馏/整理/项目总结（复用 magpie 模型）
 
 **目标**：页面按 magpie 的 Library → Memory 做；「LLM 会话整理」参考 magpie 的

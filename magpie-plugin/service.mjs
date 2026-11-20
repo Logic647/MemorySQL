@@ -24,6 +24,8 @@ let instance = null
 let starting = null
 
 function clamp(value, fallback, min, max) {
+  // Number(null) === 0：参数没传时必须用 fallback，否则会被夹到 min（搜索只剩 1 条）。
+  if (value == null || value === '') return fallback
   const n = Number(value)
   if (!Number.isFinite(n)) return fallback
   return Math.min(Math.max(Math.floor(n), min), max)
@@ -187,6 +189,10 @@ async function api(req, res, url, options, backendPromise) {
       if (!requireUi()) return
       return json(res, 200, ui.runDream())
     }
+    if (url.pathname === '/api/sessions/remove' && method === 'POST') {
+      if (!requireUi()) return
+      return json(res, 200, ui.deleteSessions(body))
+    }
     if (url.pathname === '/api/digest/generate' && method === 'POST') {
       if (!requireUi()) return
       return json(res, 200, await ui.generateDigest(body))
@@ -223,6 +229,17 @@ async function api(req, res, url, options, backendPromise) {
       if (project) args.project = project
       if (cwd) args.cwd = cwd
       if (agent) args.agent = agent
+      if (backend.kind === 'embedded') {
+        // 页面要结构化命中（会话 id / 命中片段），agent 工具仍用文本输出。
+        const text = await backend.call('memory_search', { ...args, format: 'json' }, { timeoutMs: 12_000 })
+        let hits = []
+        try {
+          hits = JSON.parse(text || '[]')
+        } catch {
+          hits = []
+        }
+        return json(res, 200, { ok: true, hits })
+      }
       const text = await backend.call('memory_search', args, { timeoutMs: 12_000 })
       return json(res, 200, { ok: true, text })
     }

@@ -121,11 +121,11 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 | `memory_list_projects` | 项目 + 会话数 + 最近活跃；`format=json` |
 | `memory_list_sessions` | 项目/agent/时间过滤；`format=json` |
 | `memory_get_session` | tail/full + 4 万字符预算(从最新往回填) |
-| `memory_search` | FTS5 trigram + `LIKE` 兜底(中文 1–2 字词)；会话/消息/记忆三路 |
+| `memory_search` | FTS5 trigram + `LIKE` 兜底(中文 1–2 字词)；会话/消息/记忆三路；`format=json` 给页面(会话 id + 命中片段) |
 | `memory_write` | 去重、scope/项目解析、标签 |
 | `memory_log_progress` | 候选进度记忆(不关联最近活跃项目，只认显式 project/cwd) |
 | `memory_stats` | 会话/项目/消息/记忆数、最近会话、db 大小 |
-| `memory_import_session` | `(agent, externalId)` upsert、消息级 diff、防截短 |
+| `memory_import_session` | `(agent, externalId)` upsert、消息级 diff、防截短；已删除会话默认 `skipped-deleted`，`revive=true` 才恢复 |
 
 项目解析与 MemorySQL 同口径：`cwd` 按最长路径前缀；否则名字 `LIKE` 优先、
 路径 `LIKE` 兜底；写记忆/收工汇报给了 project/cwd 但没命中时**不**回落到最近活跃项目。
@@ -159,23 +159,31 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 默认:embedded **开**(这是内置库会话档案的唯一来源)；app **关**(MemorySQL
 自己会文件捕获，避免双写)。
 
+页面删除会话 = tombstone(`deleted=1`)：列表/搜索/续接包/蒸馏候选都按 `deleted=0`
+过滤；同一 `(agent, externalId)` 的后续回写返回 `skipped-deleted`，不会复活已删会话
+(显式 `revive: true` 才恢复，消息变少还要 `replace: true`)。
+
 ### 3.5 页面与 agent 行菜单
 
 - `page/index.html` + `page/boot.js`:带路页，接 `magpie.onAction({agent})` 后
   导航到 `magpie.service`(magpie web)或 `127.0.0.1:<pagePort>`(桌面)。
 - `service.mjs`:Bun 里的本地 HTTP 服务，只绑 127.0.0.1，校验 Host/Origin；
-  提供 `/api/status`、`/api/projects`、`/api/sessions`、`/api/search`、
-  `/api/context`、`/api/digest`、`/api/session`，以及记忆页的
+  提供 `/api/status`、`/api/projects`、`/api/sessions`、`/api/sessions/remove`、
+  `/api/search`、`/api/context`、`/api/digest`、`/api/session`，以及记忆页的
   `/api/memories`(GET/POST)、`/api/memories/status|remove|pin`、
   `/api/distill`(GET/POST)、`/api/distill/run`、`/api/dream/run`、
-  `/api/digest/generate`，全部转给当前后端。
+  `/api/digest/generate`，全部转给当前后端。`/api/search` 在内置后端用
+  `format:'json'` 拿结构化命中（会话 id + 命中片段 + 时间），app 后端仍返回文本。
   **sandbox iframe 的 Origin 是 `null`**：API 响应显式回
   `Access-Control-Allow-Origin: null` 并处理 `OPTIONS` 预检；每次宿主启动生成
   随机 token 注入页面 HTML 的 `<meta name="memorysql-token">`，API 必须带
   `x-memorysql-token`；静态 HTML 不带 CORS（别的 sandbox 页面读不到 token）。
 - `ui/`:状态(内置存储 / MemorySQL 应用)、记忆页(参考 magpie Memory)、项目列表、
-  续接包/总结/会话、跨 agent 搜索；记忆可编辑，项目/搜索只读。
+  续接包/总结/会话(显示 `#id`、两步确认删除)、跨 agent 搜索(命中片段高亮、可展开会话、
+  同一会话最多先展示 3 条)、所有控件的悬停说明。
   相对路径 + `magpie.service` 兼容 `magpie web`。
+- 页面 token 每次宿主启动轮换：旧页面 API 返回 401 时前端自动 `location.replace`
+  带 `?fresh=<时间戳>` 重载一次（<5 秒内不重复，防循环），不必手动刷新。
 - `magpie.actions` 的 `agent-sessions` 出现在 agent 行菜单，打开页面并带 `?agent=`。
 
 ### 3.6 记忆页与 LLM 蒸馏(参考 magpie memdistill / dream)
@@ -270,9 +278,9 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
 
 2026-11-20:
 
-- 插件:`node --test` **35 passed**：内嵌存储、LLM 蒸馏/整理/项目总结(mock 模型)、
-  记忆页 API、协议注入、钩子召回/捕获、页面服务 token/CORS、迁移自愈；
-  `bun:sqlite`(magpie 自带 Bun 1.4.4)冒烟通过。
+- 插件:`node --test` **37 passed**：内嵌存储、搜索结构化命中、会话删除/回写不复活、
+  LLM 蒸馏/整理/项目总结(mock 模型)、记忆页 API、协议注入、钩子召回/捕获、
+  页面服务 token/CORS、迁移自愈；`bun:sqlite`(magpie 自带 Bun 1.4.4)冒烟通过。
 - 真实模型 E2E(临时库副本，不碰真库)：`workbuddy/glm-5.3-flash` 蒸馏出 **4 条候选**
   (kind/scope/project/why 正确、quote 校验有效)，并生成项目总结；`memory_get_project_digest`
   返回模型总结。
@@ -280,6 +288,10 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
   `no such column: why`；改成每次启动自愈后，真库补列成功，`/api/memories` 正常。
 - 页面：真实 magpie 宿主内打开，浏览器目视确认记忆页(状态分段/模型选择/作用域/
   从对话学习/整理/搜索/添加)与 magpie Memory 布局一致。
+- 页面搜索/删除验收(临时库副本,不碰真库)：`搜索"插件"` 返回 20 条命中、片段围绕关键词
+  高亮、同一会话最多先展示 3 条(可「显示全部」)、会话 id 可见；两步确认删除后列表与
+  状态计数同步(4→3)、搜索不再出现该会话；模拟旧 token 请求 401 时页面自动带
+  `?fresh=` 重载并恢复。
 - MemorySQL:`npm run typecheck` 0;`npm test` **678 passed / 2 skipped**;
   `npm run build` 通过。
 - 真实 magpie 0.1.4594 加载:钩子 `onRequest`、10 个工具、`page MemorySQL` 都识别。
