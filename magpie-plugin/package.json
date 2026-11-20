@@ -28,7 +28,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Logic647/memorysql-magpie.git"
+    "url": "git+https://github.com/Logic647/MemorySQL.git",
+    "directory": "magpie-plugin"
   },
   "engines": {
     "magpie": ">=0.1.1531",
