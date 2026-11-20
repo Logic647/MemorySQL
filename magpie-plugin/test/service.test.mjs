@@ -11,7 +11,7 @@ test('页面服务：状态/项目/静态页/来源校验', async (t) => {
       JSON.stringify([{ id: 1, name: 'Demo', path: 'H:/demo', sessions: 3, lastActive: 1700000000, digest: null }])
   })
   const pagePort = 39000 + Math.floor(Math.random() * 500)
-  const svc = startService({ pagePort, port: fake.port })
+  const svc = startService({ pagePort, port: fake.port, backend: 'app' })
   t.after(async () => {
     stopService()
     await fake.close()

@@ -1,12 +1,13 @@
 // magpie 的异步网关钩子。
 //
-// onRequest：会话第一次经过网关时向 MemorySQL 要一份「续接包」，追加到
+// onRequest：会话第一次经过网关时向知识库要一份「续接包」，追加到
 //   第一条用户消息；之后每条请求复用同一份缓存块（prompt cache 友好）。
-// onResponse：可选地把本轮完整对话回写成 MemorySQL 会话（默认关）。
+// onResponse：把本轮对话回写成会话（内置存储默认开；app 后端默认关，
+// 避免和 MemorySQL 自己的文件捕获双写）。
 //
 // 任何失败都 fail open：请求原样放行，绝不因为知识库不可用而挡住 agent。
 import crypto from 'node:crypto'
-import { callTool, getEndpoint } from './lib/endpoint.mjs'
+import { getBackend } from './lib/backend/index.mjs'
 import { agentTypeOf, mapAgent } from './lib/agent-map.mjs'
 import { conversationTurns, injectContext, replyText } from './lib/protocol.mjs'
 
@@ -33,13 +34,15 @@ function clamp(value, fallback, min, max) {
   return Math.min(Math.max(Math.floor(n), min), max)
 }
 
-function normalize(options = {}) {
+function normalize(options = {}, defaultCapture = false) {
   const gatewayTimeoutMs = clamp(options.gatewayTimeoutMs, DEFAULT_GATEWAY_TIMEOUT, 300, 30_000)
   return {
+    backend: options.backend === 'app' ? 'app' : 'embedded',
     port: clamp(options.port, 8642, 1, 65535),
     endpoint: typeof options.endpoint === 'string' ? options.endpoint : undefined,
+    dataDir: typeof options.dataDir === 'string' ? options.dataDir : undefined,
     recall: options.recall !== false,
-    capture: options.capture === true,
+    capture: options.capture === undefined ? defaultCapture : options.capture === true,
     maxBytes: clamp(options.maxBytes, DEFAULT_MAX_BYTES, 512, 16_000),
     gatewayTimeoutMs,
     // 没显式配置时按 magpie 的 1s 默认预算留 250ms；显式配置时按配置算。
@@ -133,19 +136,16 @@ function bindCapture(body, ctx, options) {
   }
 }
 
-async function contextBlock(ctx, options, key) {
+async function contextBlock(ctx, options, key, backend) {
   const hit = blocks.get(key)
   if (hit && Date.now() - hit.at < BLOCK_TTL) return { text: hit.text }
-  const endpoint = await getEndpoint(options, { scan: false, signal: ctx.signal })
-  if (!endpoint) return { unavailable: true }
-  const text = await callTool(
+  const text = await backend.call(
     'memory_get_context',
     {
       ...(ctx.cwd ? { cwd: ctx.cwd } : {}),
       ...(mapAgent(ctx.agent) ? { agent: mapAgent(ctx.agent) } : {}),
       include_last_session: false
     },
-    options,
     { timeoutMs: options.timeoutMs, signal: ctx.signal }
   )
   if (!text || !text.trim()) return { empty: true }
@@ -154,8 +154,9 @@ async function contextBlock(ctx, options, key) {
 }
 
 export async function onRequest(body, ctx) {
-  const options = normalize(ctx.options)
   try {
+    const backend = await getBackend(ctx.options)
+    const options = normalize(ctx.options, backend.kind === 'embedded')
     // 先按**客户端原始历史**绑定捕获，再注入 —— 回写里不能带续接包
     bindCapture(body, ctx, options)
 
@@ -164,11 +165,7 @@ export async function onRequest(body, ctx) {
       return undefined
     }
     const key = sessionKey(ctx, body)
-    const got = await contextBlock(ctx, options, key)
-    if (got.unavailable) {
-      ctx.report?.('unavailable')
-      return undefined
-    }
+    const got = await contextBlock(ctx, options, key, backend)
     if (!got.text) {
       ctx.report?.('empty')
       return undefined
@@ -182,14 +179,18 @@ export async function onRequest(body, ctx) {
     // 钩子拿到的是请求副本；必须把改动后的 body 返回去，否则原地修改会被丢弃
     return body
   } catch (err) {
-    ctx.report?.(err?.name === 'AbortError' ? 'unavailable' : 'invalid')
+    const message = String(err?.message ?? '')
+    const unavailable =
+      err?.name === 'AbortError' || /未运行|连接中断|ECONNREFUSED|unavailable/i.test(message)
+    ctx.report?.(unavailable ? 'unavailable' : 'invalid')
     return undefined
   }
 }
 
 export async function onResponse(reply, ctx) {
   try {
-    const options = normalize(ctx.options)
+    const backend = await getBackend(ctx.options)
+    const options = normalize(ctx.options, backend.kind === 'embedded')
     const saved = ctx.state?.memorysql
     if (!saved || !options.capture) return
     if (!allowedOrigin(ctx, options, 'capture') || isSkipped(ctx, options)) return
@@ -199,7 +200,7 @@ export async function onResponse(reply, ctx) {
     if (messages.length > MAX_CAPTURE_MESSAGES) {
       messages.splice(0, messages.length - MAX_CAPTURE_MESSAGES)
     }
-    await callTool(
+    await backend.call(
       'memory_import_session',
       {
         agent: saved.agent,
@@ -209,7 +210,6 @@ export async function onResponse(reply, ctx) {
         endedAt: Math.floor(Date.now() / 1000),
         messages
       },
-      options,
       { timeoutMs: 5000 }
     )
   } catch {

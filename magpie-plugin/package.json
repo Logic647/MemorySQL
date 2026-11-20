@@ -1,7 +1,7 @@
 {
   "name": "@logic647/tools-memorysql",
-  "version": "0.1.0",
-  "description": "把本地 MemorySQL 知识库接进 magpie：跨 agent 会话档案、项目交接简报、自动续接与会话回写。MemorySQL as a magpie plugin: cross-agent session archive, project handoff, automatic recall and conversation capture.",
+  "version": "0.2.0",
+  "description": "装进 magpie 就能用的跨 agent 会话档案与项目交接：内置 SQLite 知识库、10 个记忆/会话工具、网关自动续接、会话回写和 MemorySQL 页面。No separate app needed: a built-in SQLite knowledge base, 10 tools, automatic recall, conversation capture and a MemorySQL page.",
   "type": "module",
   "main": "./index.mjs",
   "files": [
@@ -41,16 +41,17 @@
     "name": "MemorySQL",
     "icon": "page/icon.svg",
     "summary": {
-      "en": "Cross-agent session archive and project handoff from your local MemorySQL knowledge base: 10 memory tools, automatic recall at the gateway, optional conversation capture, and a MemorySQL page.",
-      "zh": "把本地 MemorySQL 知识库接进 magpie：10 个记忆/会话工具、网关自动续接、可选的会话回写，以及一个 MemorySQL 页面。"
+      "en": "Cross-agent session archive and project handoff inside magpie, with its own local SQLite knowledge base: 10 memory tools, automatic recall at the gateway, conversation capture, and a MemorySQL page. No separate app needed.",
+      "zh": "装进 magpie 就能用的跨 agent 会话档案与项目交接：插件自带本地 SQLite 知识库，提供 10 个记忆/会话工具、网关自动续接、会话回写和 MemorySQL 页面，不需要另装 MemorySQL 应用。"
     },
     "hooks": "./hooks.mjs",
     "options": {
+      "backend": "embedded",
+      "dataDir": "",
       "port": 8642,
       "endpoint": "",
       "readOnly": false,
       "recall": true,
-      "capture": false,
       "maxBytes": 6000,
       "gatewayTimeoutMs": 1500,
       "skipAgents": [],

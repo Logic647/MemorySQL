@@ -6,6 +6,7 @@ import { fakeMemorySQL } from './helpers.mjs'
 
 function options(port, extra = {}) {
   return {
+    backend: 'app',
     port,
     recall: true,
     capture: false,

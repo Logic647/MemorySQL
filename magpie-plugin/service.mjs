@@ -1,14 +1,14 @@
 // magpie 窗口里的 MemorySQL 页面所依赖的本地服务。
 //
 // magpie 的插件页面跑在 sandbox="allow-scripts" 的 iframe 里，connect-src
-// 'none'，不能直接 fetch MemorySQL。社区做法是「带路页」：page/index.html
-// 只负责把框架导航到本服务（127.0.0.1:<pagePort>），真正的 UI 由这里提供，
-// 同源 fetch 自己的 /api/*，再由服务去调 MemorySQL 的 MCP。
+// 'none'，不能直接 fetch。社区做法是「带路页」：page/index.html 只负责把
+// 框架导航到本服务（127.0.0.1:<pagePort>），真正的 UI 由这里提供，同源
+// fetch 自己的 /api/*，再由服务走当前后端（内置 SQLite 或 MemorySQL 应用）。
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { callTool, getEndpoint } from './lib/endpoint.mjs'
+import { getBackend } from './lib/backend/index.mjs'
 import { mapAgent } from './lib/agent-map.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
@@ -34,8 +34,7 @@ function json(res, status, body) {
 }
 
 function staticFile(name, type) {
-  const file = path.join(ROOT, name)
-  return { file, type }
+  return { file: path.join(ROOT, name), type }
 }
 
 const STATIC = new Map([
@@ -76,37 +75,21 @@ function originAllowed(req, port) {
   return origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`
 }
 
-async function api(req, res, url, options) {
+async function api(req, res, url, options, backendPromise) {
   const q = url.searchParams
   const project = (q.get('project') ?? '').trim()
   const cwd = (q.get('cwd') ?? '').trim()
   const rawAgent = (q.get('agent') ?? '').trim()
   const agent = rawAgent ? (mapAgent(rawAgent) ?? rawAgent) : ''
   try {
+    const backend = await (backendPromise ?? getBackend(options))
     if (url.pathname === '/api/status') {
-      const endpoint = await getEndpoint(options, { scan: true })
-      if (!endpoint) {
-        return json(res, 200, { ok: false, error: 'MemorySQL 未运行（127.0.0.1 上找不到 /health）' })
-      }
-      let stats = endpoint.stats
-      try {
-        stats = JSON.parse(await callTool('memory_stats', {}, options, { timeoutMs: 4000 }))
-      } catch {
-        /* /health 里已经有 stats，MCP 失败就用它 */
-      }
-      return json(res, 200, {
-        ok: true,
-        port: endpoint.port,
-        version: endpoint.version,
-        tools: endpoint.tools,
-        stats
-      })
+      return json(res, 200, await backend.status())
     }
     if (url.pathname === '/api/projects') {
-      const body = await callTool(
+      const body = await backend.call(
         'memory_list_projects',
         { limit: clamp(q.get('limit'), 30, 1, 100), includeEmpty: false, format: 'json' },
-        options,
         { timeoutMs: 8000 }
       )
       return json(res, 200, { ok: true, projects: JSON.parse(body || '[]') })
@@ -121,7 +104,7 @@ async function api(req, res, url, options) {
       if (cwd) args.cwd = cwd
       if (agent) args.agent = agent
       if (q.get('since')) args.since = clamp(q.get('since'), 0, 0, 3650)
-      const body = await callTool('memory_list_sessions', args, options, { timeoutMs: 8000 })
+      const body = await backend.call('memory_list_sessions', args, { timeoutMs: 8000 })
       return json(res, 200, { ok: true, sessions: JSON.parse(body || '[]') })
     }
     if (url.pathname === '/api/search') {
@@ -131,7 +114,7 @@ async function api(req, res, url, options) {
       if (project) args.project = project
       if (cwd) args.cwd = cwd
       if (agent) args.agent = agent
-      const text = await callTool('memory_search', args, options, { timeoutMs: 12_000 })
+      const text = await backend.call('memory_search', args, { timeoutMs: 12_000 })
       return json(res, 200, { ok: true, text })
     }
     if (url.pathname === '/api/context') {
@@ -139,14 +122,13 @@ async function api(req, res, url, options) {
       if (project) args.project = project
       if (cwd) args.cwd = cwd
       if (agent) args.agent = agent
-      const text = await callTool('memory_get_context', args, options, { timeoutMs: 12_000 })
+      const text = await backend.call('memory_get_context', args, { timeoutMs: 12_000 })
       return json(res, 200, { ok: true, text })
     }
     if (url.pathname === '/api/digest') {
-      const text = await callTool(
+      const text = await backend.call(
         'memory_get_project_digest',
         project ? { project } : {},
-        options,
         { timeoutMs: 8000 }
       )
       return json(res, 200, { ok: true, text })
@@ -157,7 +139,7 @@ async function api(req, res, url, options) {
       const args = { id }
       if (q.get('tail')) args.tail = clamp(q.get('tail'), 0, 0, 2000)
       if (q.get('full') === '1') args.full = true
-      const text = await callTool('memory_get_session', args, options, { timeoutMs: 12_000 })
+      const text = await backend.call('memory_get_session', args, { timeoutMs: 12_000 })
       return json(res, 200, { ok: true, text })
     }
     return json(res, 404, { ok: false, error: 'not found' })
@@ -166,7 +148,7 @@ async function api(req, res, url, options) {
   }
 }
 
-function createServer(port, options) {
+function createServer(port, options, backendPromise) {
   return http.createServer((req, res) => {
     const host = String(req.headers.host ?? '')
     const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`])
@@ -185,7 +167,7 @@ function createServer(port, options) {
         return
       }
       securityHeaders(res, port)
-      void api(req, res, url, options)
+      void api(req, res, url, options, backendPromise)
       return
     }
     const file = STATIC.get(url.pathname)
@@ -211,11 +193,12 @@ function createServer(port, options) {
  * 启动页面服务。端口被上一个宿主占用时后台重试，不阻塞插件加载。
  * 返回 {port, ready}：ready 在真正 listen 成功后 resolve 实际端口。
  */
-export function startService(options = {}) {
+export function startService(options = {}, backendPromise = null) {
   if (instance) return instance
   if (starting) return starting
   const port = clamp(options.pagePort, DEFAULT_PORT, 1, 65535)
-  const server = createServer(port, options)
+  const backend = backendPromise ?? getBackend(options)
+  const server = createServer(port, options, backend)
   let attempts = 0
   let settle
   const ready = new Promise((resolve, reject) => {

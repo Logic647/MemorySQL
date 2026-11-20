@@ -41,7 +41,8 @@ async function loadStatus() {
   try {
     const s = await api('api/status')
     const stats = s.stats || {}
-    const bits = [`v${s.version || '?'}`, `:${s.port}`]
+    const bits = [s.backend === 'embedded' ? '内置存储' : `MemorySQL v${s.version || '?'}`]
+    if (s.port) bits.push(`:${s.port}`)
     if (Number.isFinite(stats.sessions)) bits.push(`${stats.sessions} 会话`)
     if (Number.isFinite(stats.memories)) bits.push(`${stats.memories} 记忆`)
     if (Number.isFinite(stats.projects)) bits.push(`${stats.projects} 项目`)
@@ -50,7 +51,7 @@ async function loadStatus() {
     return true
   } catch (err) {
     setStatus('未连接', 'bad')
-    notice(`MemorySQL 未运行或端点不可达：${err.message}。请在托盘启动 MemorySQL 后刷新。`)
+    notice(`知识库不可用：${err.message}。`)
     return false
   }
 }

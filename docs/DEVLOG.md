@@ -4,6 +4,56 @@
 
 ---
 
+## 2026-11-20 · magpie 插件改为内置存储(免安装 MemorySQL)
+
+**目标修正**:用户只装 magpie 插件就能用,**不需要下载/运行 MemorySQL 桌面应用**。
+上一版插件是「代理本机 MemorySQL MCP」,没装应用时工具全报错、钩子空转;这一版
+把知识库搬进插件本身。
+
+**架构**
+- 新增后端抽象 `lib/backend/index.mjs`:`getBackend(options)` 在同一个 Bun 宿主里
+  缓存一份后端;工具/钩子/页面服务统一走 `backend.call(name, args)`。
+- **embedded(默认)**:`lib/backend/embedded.mjs` + `lib/backend/schema.mjs` +
+  `lib/backend/sqlite.mjs`。用 `bun:sqlite`(magpie 宿主)/`node:sqlite`(单测)
+  建 `~/.config/magpie/memorysql/memory.db`(尊重 `XDG_CONFIG_HOME`,可用
+  `dataDir` 改)。
+- **app(可选)**:`lib/backend/app.mjs` 保留原来的 MCP 代理,给已经装了 MemorySQL
+  的用户复用 24+ agent 文件捕获/LLM 项目总结/curator;`backend: "app"` 显式开启。
+- 两套数据不自动合并(避免静默迁移两套 schema/语义)。
+
+**内置存储**
+- 表:`projects / sessions / session_messages / memories` + FTS5 trigram 外部内容表
+  (`sessions_fts / messages_fts / memories_fts`) + 同步触发器;索引覆盖
+  agent/project/scope/status/content。时间口径与 MemorySQL 对齐(sessions 秒,
+  memories/projects.updated_at 毫秒)。
+- 10 个工具全部本地实现:context/brief/digest/list_projects/list_sessions/
+  get_session/search/write/log_progress/stats/import(其中 digest 是规则汇编,
+  不调 LLM;search 走 FTS5 + 2 字中文 LIKE 兜底;context 在全新库返回空串)。
+- `memory_import_session`:按 `(agent, external_id)` upsert、消息级 diff、防截短;
+  **更新时 `project_id/cwd/started/ended/last` 用 COALESCE 保留旧值**——否则
+  第二轮不带 cwd 的回写会把项目/时间清空(实测踩到)。
+- `PRAGMA journal_mode=WAL` + `busy_timeout=5000`:app/CLI 宿主可能同时开着库。
+
+**钩子/页面**
+- `capture` 默认值随后端:embedded **开**(内置库会话档案的唯一来源)、app **关**
+  (MemorySQL 自己文件捕获,避免双写);显式 `true/false` 覆盖。
+- `onRequest` 先绑定 capture(注入前)再注入;空 context 直接跳过;失败 fail open。
+- 页面服务改为 `backend.call`,status 显示「内置存储 / MemorySQL vX」;UI 相对路径
+  + `magpie.service` 继续兼容 `magpie web`。
+
+**验证**
+- 插件 `node --test` **27 passed**(新增 embedding 导入/追加/短列表/项目解析/
+  两字中文检索/收工汇报/全新库空 context/钩子捕获后注入/后端工厂/status)。
+- magpie 自带 Bun 1.4.4 冒烟:建库、导入、context、search、stats 全通过
+  (`bun:sqlite` 与 `node:sqlite` 的 FTS5 trigram 都可用)。
+- MemorySQL 应用侧不变:typecheck 0、vitest 678 passed/2 skipped、build 通过。
+
+**下一步**
+- 真实 agent 跑一次「首轮注入 + 第二轮缓存命中」(embedded/app 各一次);补页面截图;
+  发布 npm + `magpie-plugin` topic。
+
+---
+
 ## 2026-11-20 · magpie 社区插件集成(工具 + 自动续接 + 页面 + 可选回写)
 
 **目标**:把 MemorySQL 作为 magpie 的社区插件接入,让经 magpie 的任意 agent 自动

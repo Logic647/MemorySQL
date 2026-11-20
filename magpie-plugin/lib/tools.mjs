@@ -1,9 +1,9 @@
-// magpie 的工具钩子：把 MemorySQL 的 10 个 MCP 工具代理成 magpie 的
+// magpie 的工具钩子：把 10 个知识库工具暴露成 magpie 的
 // <插件短名>_<工具>（短名 memorysql → memorysql_get_context ...）。
 //
-// args 用纯 JSON Schema，不依赖 zod；execute 在 magpie 的 Bun 宿主里跑，
-// 直接 POST MemorySQL 的 /mcp（无状态 JSON-RPC，不需要 initialize 握手）。
-import { callTool } from './endpoint.mjs'
+// args 用纯 JSON Schema，不依赖 zod；execute 在 magpie 的 Bun 宿主里跑。
+// 默认走内置 SQLite 存储；backend=app 时代理本机 MemorySQL 应用。
+import { getBackend } from './backend/index.mjs'
 import { mapAgent } from './agent-map.mjs'
 
 const TOOL_TIMEOUT = 30_000
@@ -22,10 +22,11 @@ function withAgent(args, ctx) {
   return out
 }
 
-function proxy(tool, options) {
+function proxy(tool, options, backendPromise) {
   return async (args, ctx) => {
     try {
-      return await callTool(`memory_${tool}`, withAgent(args, ctx), options, {
+      const backend = await (backendPromise ?? getBackend(options))
+      return await backend.call(`memory_${tool}`, withAgent(args, ctx), {
         timeoutMs: TOOL_TIMEOUT
       })
     } catch (err) {
@@ -40,7 +41,7 @@ const num = (description) => ({ type: 'number', description })
 const bool = (description) => ({ type: 'boolean', description })
 
 /** 返回 {tool: {name: {description, args, execute}}}，由 magpie 聚合。 */
-export function toolsFor(options = {}) {
+export function toolsFor(options = {}, backendPromise = null) {
   const readOnly = options.readOnly === true
   const tools = {
     get_context: {
@@ -56,7 +57,7 @@ export function toolsFor(options = {}) {
           include_last_session: bool('true 时内联最近一次会话的尾部，作为上一棒交接摘要')
         }
       },
-      execute: proxy('get_context', options)
+      execute: proxy('get_context', options, backendPromise)
     },
     get_project_brief: {
       description:
@@ -70,7 +71,7 @@ export function toolsFor(options = {}) {
           agent: str('按 agent 过滤记忆（全局记忆始终包含）')
         }
       },
-      execute: proxy('get_project_brief', options)
+      execute: proxy('get_project_brief', options, backendPromise)
     },
     get_project_digest: {
       description:
@@ -82,7 +83,7 @@ export function toolsFor(options = {}) {
           project: str('项目名或路径关键词，缺省取最近活跃项目')
         }
       },
-      execute: proxy('get_project_digest', options)
+      execute: proxy('get_project_digest', options, backendPromise)
     },
     list_projects: {
       description:
@@ -95,7 +96,7 @@ export function toolsFor(options = {}) {
           includeEmpty: bool('true 时包含没有会话的项目（默认 false）')
         }
       },
-      execute: proxy('list_projects', options)
+      execute: proxy('list_projects', options, backendPromise)
     },
     list_sessions: {
       description:
@@ -112,7 +113,7 @@ export function toolsFor(options = {}) {
           includeSubagents: bool('是否包含子代理会话（默认 false）')
         }
       },
-      execute: proxy('list_sessions', options)
+      execute: proxy('list_sessions', options, backendPromise)
     },
     get_session: {
       description:
@@ -127,7 +128,7 @@ export function toolsFor(options = {}) {
         },
         required: ['id']
       },
-      execute: proxy('get_session', options)
+      execute: proxy('get_session', options, backendPromise)
     },
     search: {
       description:
@@ -150,14 +151,14 @@ export function toolsFor(options = {}) {
         },
         required: ['query']
       },
-      execute: proxy('search', options)
+      execute: proxy('search', options, backendPromise)
     },
     stats: {
       description:
         '【何时调用】需要判断 MemorySQL 知识库规模、是否已有数据时（状态页/健康检查）；普通 agent 一般不需要。\n' +
         '返回会话/项目/消息/记忆数量、最近会话时间、数据库文件大小。',
       args: { type: 'object', properties: {} },
-      execute: proxy('stats', options)
+      execute: proxy('stats', options, backendPromise)
     }
   }
 
@@ -187,7 +188,7 @@ export function toolsFor(options = {}) {
         },
         required: ['kind', 'content']
       },
-      execute: proxy('write', options)
+      execute: proxy('write', options, backendPromise)
     }
     tools.log_progress = {
       description:
@@ -205,7 +206,7 @@ export function toolsFor(options = {}) {
         },
         required: ['project', 'done']
       },
-      execute: proxy('log_progress', options)
+      execute: proxy('log_progress', options, backendPromise)
     }
   }
 
