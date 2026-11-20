@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-11-20 · v0.7.8 已发版(总结不追活会话 + 整理容错)
+
+- 版本 0.7.7 → **0.7.8**,tag `v0.7.8` → `39d4637`;CI tag run `44712618109` **6/6 全绿**,
+  草稿 **20 资产**,mac 双架构 `latest-mac.yml` 已合并(API 回读校验双架构),三清单公网 **200**。
+- **发版插曲 1(CI 全挂)**:`onnxruntime-node@1.21.0` 的 postinstall 默认下载 CUDA 二进制,
+  微软把 `onnxruntime-linux-x64-gpu-1.21.0.tgz` 从 release 移除(现在 404)→ `npm ci` 直接失败。
+  本项目只用 CPU(fastembed 默认 CPU,安装包已剔除 GPU 后端)→ CI 两个 `npm ci` 都加
+  `ONNXRUNTIME_NODE_INSTALL_CUDA=skip`;ubuntu job 随即转绿。
+- **发版插曲 2(测试偶发)**:`project-digest-plugin.test.ts` 用 `nowSec()` 在会话写入与断言
+  各取一次时间,Windows runner 跨秒时差 1 → 固定成变量。属测试写法问题,不是产品逻辑。
+- **tag 两次移动**:首个 tag 指向坏 CI(`57c8b79`),`git push -f` 走 API `PATCH /git/refs/tags/v0.7.8`
+  移到 `83709a5`,测试修复后再移到 `39d4637`;本地 `git tag -f` 同步,避免本地/远端分叉。
+- 内容:见 `docs/releases/v0.7.8-notes.md`(总结不追活会话、整理 120s/非 JSON 容错、
+  导出提示 6 秒消失)。验证:vitest **674/676**(2 skip)、typecheck 0、build 通过。
+
+---
+
 ## 2026-11-17 · 项目总结「追着活会话跑」修复(一聊天就总结)
 
 **现象**:刚开始和 agent 对话,会话页就出现「总结中」;真库里一场对话被切成 **8 个 digest**
