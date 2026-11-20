@@ -40,7 +40,12 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # onnxruntime-node 的 postinstall 默认下载 CUDA 二进制(~200MB)。本项目只用
+      # CPU(fastembed 默认 CPU,安装包已剔除 GPU 后端),且其 1.21.0 的 GPU 包
+      # 上游已 404(microsoft/onnxruntime release 资产被移除)→ 必须显式跳过。
       - run: npm ci --no-audit --no-fund
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       - run: npm run typecheck
       # Includes test/upstream-contract.test.ts. Note: the drift half of that
       # suite is a no-op on CI runners (no agent data dirs) — CI really guards
@@ -92,7 +97,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # 同 ci job:跳过 CUDA 二进制下载(CPU-only + 上游 1.21.0 GPU 包已 404)
       - run: npm ci --no-audit --no-fund
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       # the packaged app runs under Electron's ABI, not node's
       - run: npx electron-rebuild
       - name: Build and package (Windows)
