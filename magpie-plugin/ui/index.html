@@ -15,43 +15,126 @@
         <span id="status" class="pill">连接中…</span>
         <span id="agentChip" class="chip" hidden></span>
       </div>
-      <button id="refresh" class="ghost" type="button">刷新</button>
+      <div class="top-actions">
+        <nav class="main-tabs" role="tablist">
+          <button class="mtab active" data-view="memory" type="button">记忆</button>
+          <button class="mtab" data-view="projects" type="button">项目</button>
+          <button class="mtab" data-view="search" type="button">搜索</button>
+        </nav>
+        <button id="refresh" class="ghost" type="button">刷新</button>
+      </div>
     </header>
 
     <p id="unavailable" class="notice" hidden></p>
 
-    <main class="layout">
-      <section class="panel projects">
-        <div class="panel-head">
-          <h2>项目 <span id="projectCount" class="muted"></span></h2>
-        </div>
-        <input id="filter" class="field" type="search" placeholder="筛选项目 / 路径…" autocomplete="off" />
-        <ul id="projectList" class="project-list"></ul>
-      </section>
+    <!-- 记忆：参考 magpie 的 Memory 页 -->
+    <main id="view-memory" class="view">
+      <p class="intro">
+        你的 agent 在对话里值得长期记住的东西。内置存储会读安静下来的会话，先放进
+        「待确认」；你确认后它才会进入续接包。
+      </p>
 
-      <section class="panel detail">
-        <div class="detail-head">
-          <h2 id="detailTitle">选择一个项目</h2>
-          <div class="tabs" role="tablist">
-            <button class="tab active" data-tab="context" type="button">续接包</button>
-            <button class="tab" data-tab="digest" type="button">项目总结</button>
-            <button class="tab" data-tab="sessions" type="button">会话</button>
+      <section class="panel controls">
+        <div class="control-row">
+          <div class="who">
+            <strong>从对话学习</strong>
+            <span id="distillLine" class="sub">关闭</span>
+          </div>
+          <div class="control-actions">
+            <select id="modelPick" class="field select" aria-label="模型"></select>
+            <select id="rangePick" class="field select" aria-label="读多久以前的">
+              <option value="7">最近 7 天</option>
+              <option value="30">最近 30 天</option>
+              <option value="90">最近 90 天</option>
+              <option value="365">最近 1 年</option>
+              <option value="-1">全部</option>
+            </select>
+            <button id="distillRun" class="primary" type="button">立即整理</button>
+            <label class="switch" title="从对话学习">
+              <input id="distillOn" type="checkbox" />
+              <span></span>
+            </label>
           </div>
         </div>
-        <div id="detailBody" class="detail-body empty">从左侧选择一个项目。</div>
+        <div class="control-row">
+          <div class="who">
+            <strong>整理记忆</strong>
+            <span id="dreamLine" class="sub">关闭</span>
+          </div>
+          <div class="control-actions">
+            <button id="dreamRun" class="ghost" type="button">立即整理</button>
+            <label class="switch" title="每晚整理">
+              <input id="dreamOn" type="checkbox" />
+              <span></span>
+            </label>
+          </div>
+        </div>
+        <div class="control-row slim">
+          <label class="check"><input id="autoDigest" type="checkbox" /> 整理后更新项目总结</label>
+          <span id="distillHint" class="muted"></span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="mem-bar">
+          <input id="memSearch" class="field" type="search" placeholder="搜索记忆" autocomplete="off" />
+          <div id="memStatus" class="seg">
+            <button type="button" data-status="active" class="active">使用中</button>
+            <button type="button" data-status="candidate">待确认</button>
+            <button type="button" data-status="archived">已归档</button>
+          </div>
+          <select id="memScope" class="field select" aria-label="作用域"></select>
+          <button id="memAdd" class="primary" type="button">+ 添加</button>
+        </div>
+        <div id="memList" class="mem-list"></div>
       </section>
     </main>
 
-    <section class="panel search">
-      <h2>跨 agent 搜索</h2>
-      <form id="searchForm" class="search-form">
-        <input id="query" class="field" type="search" placeholder="上次怎么做的 / 为什么这样定 / 踩过什么坑…" autocomplete="off" />
-        <button class="primary" type="submit">搜索</button>
-      </form>
-      <pre id="searchResult" class="result" hidden></pre>
-    </section>
+    <!-- 项目 -->
+    <main id="view-projects" class="view" hidden>
+      <div class="layout">
+        <section class="panel projects">
+          <div class="panel-head">
+            <h2>项目 <span id="projectCount" class="muted"></span></h2>
+          </div>
+          <input id="filter" class="field" type="search" placeholder="筛选项目 / 路径…" autocomplete="off" />
+          <ul id="projectList" class="project-list"></ul>
+        </section>
 
-    <footer class="foot">数据来自本机知识库 · 页面只读</footer>
+        <section class="panel detail">
+          <div class="detail-head">
+            <h2 id="detailTitle">选择一个项目</h2>
+            <div class="tabs" role="tablist">
+              <button class="tab active" data-tab="context" type="button">续接包</button>
+              <button class="tab" data-tab="digest" type="button">项目总结</button>
+              <button class="tab" data-tab="sessions" type="button">会话</button>
+            </div>
+            <button id="digestGenerate" class="ghost" type="button" hidden>用模型生成总结</button>
+          </div>
+          <div id="detailBody" class="detail-body empty">从左侧选择一个项目。</div>
+        </section>
+      </div>
+    </main>
+
+    <!-- 搜索 -->
+    <main id="view-search" class="view" hidden>
+      <section class="panel search">
+        <h2>跨 agent 搜索</h2>
+        <form id="searchForm" class="search-form">
+          <input
+            id="query"
+            class="field"
+            type="search"
+            placeholder="上次怎么做的 / 为什么这样定 / 踩过什么坑…"
+            autocomplete="off"
+          />
+          <button class="primary" type="submit">搜索</button>
+        </form>
+        <pre id="searchResult" class="result" hidden></pre>
+      </section>
+    </main>
+
+    <footer class="foot">记忆可编辑 · 项目/搜索只读 · 数据在本机</footer>
 
     <script src="app.js" defer></script>
   </body>

@@ -8,7 +8,10 @@
 - **10 个工具**：`memorysql_get_context`、`search`、`list_sessions`、`get_session`、`list_projects`、`get_project_brief`、`get_project_digest`、`write`、`log_progress`、`stats`
 - **网关自动续接**：会话第一次经过 magpie 时，把「续接包」注入第一条用户消息；同一会话后续请求复用同一份，prompt cache 不受影响
 - **会话回写**：内置存储默认把每轮 user/assistant 文本写进本地会话档案（app 后端默认关，避免和 MemorySQL 自己的文件捕获双写）
-- **magpie 窗口里的页面**：状态、项目、续接包、项目总结、会话、跨 agent 搜索
+- **记忆页（参考 magpie 的 Memory）**：从对话学习、待确认、搜索/作用域/状态分段、逐条确认/归档/编辑/删除
+- **LLM 会话蒸馏**：用 magpie 里已配置的模型读安静下来的会话，最多 5 条候选；引用必须是用户原话；你确认后才进续接包
+- **整理 + 项目总结**：合并重复、归档过时（手写/置顶不动）；用模型生成滚动项目总结
+- **magpie 窗口里的页面**：状态、记忆、项目、续接包、项目总结、会话、跨 agent 搜索
 - **agent 行菜单**：「在 MemorySQL 里看会话」
 
 > 定位：magpie 自带的 Memory 记「事实与偏好」；MemorySQL 记「谁在哪个项目做到哪一步」——会话档案、项目交接、收工汇报。两者并存，不互相替代。
@@ -85,7 +88,26 @@ magpie plugin dump     # 看钩子/选项
 
 **默认值**：`backend: "embedded"` 时 **开**（这是会话档案的唯一来源）；`backend: "app"` 时 **关**（MemorySQL 自己会捕获文件）。
 
-### 3. 工具
+### 3. 记忆页、从对话学习、整理
+
+记忆页参考 magpie 的 **Library → Memory**：
+
+- 状态分段（使用中 / 待确认 / 已归档）、搜索、作用域筛选、逐条展开编辑
+- 每条可以确认 / 归档 / 恢复 / 删除；模型整理出来的可以置顶（锁定，之后整理不再动它）
+- 手动添加的记忆标为「手写」，整理不会改
+
+**从对话学习**（LLM 蒸馏）：
+
+- 读「安静 30 分钟、至少 2 条消息、还没读过」的会话，每次最多 20 场；每场最多 5 条候选
+- 引用必须是**用户原话**，对不上的候选直接丢掉；候选进「待确认」，你确认后才进续接包
+- 模型复用 magpie 里配置好的：默认取 magpie 记忆蒸馏上次的 `lastModel`（`~/.config/magpie/distill.json`），页面可以换；请求走本机网关 `POST /v1/chat/completions`（loopback 免 key）
+- 没有可用模型时只走规则，不影响续接/工具
+
+**整理记忆**：每晚 03:00 或点「立即整理」，用同一个模型合并说同一件事的记忆、归档过时记忆；手写/置顶（`locked`）不动。
+
+**项目总结**：勾选「整理后更新项目总结」或到项目页点「用模型生成总结」，模型会写滚动总结（总览 / 最近进展 / 待办）存进 `project_digests`；`memory_get_project_digest` 优先返回它，没有才用规则汇编。
+
+### 4. 工具
 
 工具只在「插件工具」这个内置插件开着时提供（有工具插件时它自动开）。它们也会自动成为 Library 里的一个 MCP 服务器，可按 agent 开关，或走 MCP 路由（名字变成 `memorysql__search` 这种）。
 
@@ -93,7 +115,7 @@ magpie plugin dump     # 看钩子/选项
 |---|---|
 | `get_context` | 续接包：全局/项目记忆 + 最近会话 |
 | `get_project_brief` | 项目交接简报 + 上一棒 tail + 待确认进度 |
-| `get_project_digest` | 项目总结（内置存储是规则汇编；app 后端是 LLM 滚动总结） |
+| `get_project_digest` | 项目总结（LLM 滚动总结优先；没有则规则汇编） |
 | `list_projects` | 项目清单（会话数/最近活跃） |
 | `list_sessions` | 按项目/agent/时间列会话 |
 | `get_session` | 按 id 深读会话（tail/full） |
@@ -104,19 +126,20 @@ magpie plugin dump     # 看钩子/选项
 
 `get_context` / `get_project_brief` / `list_sessions` / `search` / `write` / `log_progress` 都支持 `cwd`（绝对路径）：按最长路径前缀匹配项目，agent 在子目录里启动也能回到项目根。
 
-### 4. 页面
+### 5. 页面
 
 `page/index.html` 是「带路页」：magpie 的插件页面在 sandbox 里（`connect-src 'none'`），
 所以它只负责接住 agent 行菜单的 action，然后把框架导航到插件自己的本地服务
 （`127.0.0.1:<pagePort>`，默认 3488）。真正的 UI 由 `service.mjs` 提供：
 
-- 状态：内置存储 / MemorySQL 应用、会话/记忆/项目数
-- 项目列表 → 续接包 / 项目总结 / 会话
+- 记忆（参考 magpie Memory）：状态分段、搜索、作用域、添加/编辑/确认/归档/删除/置顶
+- 从对话学习 / 整理记忆 / 整理后更新项目总结
+- 项目列表 → 续接包 / 项目总结（可点「用模型生成总结」）/ 会话
 - 会话详情（tail 200）
 - 跨 agent 搜索
 - `?agent=` 过滤（从 agent 行菜单进来时）
 
-页面只读。服务只绑 `127.0.0.1`，校验 Host / Origin，拒绝非本服务的来源。
+记忆页可编辑，项目/搜索只读。服务只绑 `127.0.0.1`，校验 Host / Origin，拒绝非本服务的来源。
 magpie 的插件页面是 sandbox iframe，`Origin` 是 `null`：API 响应显式回
 `Access-Control-Allow-Origin: null`（并处理 `OPTIONS` 预检），否则浏览器会把
 同 URL 的 `fetch` 当跨源拦掉。每次宿主启动生成一个随机 token，注入页面 HTML 的
@@ -132,6 +155,8 @@ CORS，别的站点就算嵌一个 sandbox 也读不到 token，不能直连 loo
 |---|---|---|
 | `backend` | `embedded` | `embedded` = 插件内置 SQLite（不需要装 MemorySQL）；`app` = 代理本机正在运行的 MemorySQL 应用 |
 | `dataDir` | `""` | 内置库目录；空 = `~/.config/magpie/memorysql` |
+| `model` | `""` | 从对话学习/整理/项目总结用的模型；空 = 页面选择 > magpie `distill.json` 的 `lastModel` > `/v1/models` 第一个 |
+| `gateway` | `""` | magpie 网关地址；空 = 读 `~/.config/magpie/gateway.json`，再回落到 `127.0.0.1:3425` |
 | `readOnly` | `false` | 隐藏 `write` / `log_progress`（不影响回写） |
 | `recall` | `true` | 网关自动续接 |
 | `capture` | 随后端 | embedded 默认开，app 默认关；显式 `true/false` 覆盖 |
@@ -149,12 +174,12 @@ CORS，别的站点就算嵌一个 sandbox 也读不到 token，不能直连 loo
 如果你已经装了 MemorySQL 桌面应用，并且想要：
 
 - 它已有的 **24+ agent 文件捕获**（Claude Code / Codex / ZCode / … 的完整历史，含工具调用）
-- **LLM 项目滚动总结**（`memory_get_project_digest`）
-- 记忆分层/curator/语义检索/同步
+- 记忆 curator / 语义检索 / 同步 / 夜间整理
+- 已经在 MemorySQL 应用里积累的会话与记忆
 
 把 `backend` 改成 `app`，并让 MemorySQL 在托盘运行即可。注意两套数据是分开的：
 内置库 `~/.config/magpie/memorysql/memory.db` 与 MemorySQL 的 `memory.db` 不会自动合并；
-切换后页面/工具看到的是 app 的数据。
+切换后页面/工具看到的是 app 的数据。app 模式下记忆页只读（管理在 MemorySQL 应用里）。
 
 ---
 
@@ -162,20 +187,23 @@ CORS，别的站点就算嵌一个 sandbox 也读不到 token，不能直连 loo
 
 - 内置库只在本机；插件不向任何外部服务上传记忆/会话。
 - **自动续接会把本地记忆/会话摘要随请求发给模型厂商**（和 magpie 自己的 Memory 注入 instructions 一样）。magpie 的 masking 在请求出口处执行，注入内容也会被一起脱敏。
+- **从对话学习/整理/项目总结会把会话文本发给 magpie 网关背后的模型厂商**（默认用 magpie 记忆蒸馏的模型）；不想发就关掉这些开关。
 - 不想让某个 agent 看到记忆：把它加进 `skipAgents`；不想让远程请求看到：保持 `recallRemote` / `captureRemote` 为 false。
-- 页面只读；服务只绑 loopback，API 还要每次启动的随机 token（HTML 里注入，别的站点读不到）。
+- 记忆页可编辑；服务只绑 loopback，API 还要每次启动的随机 token（HTML 里注入，别的站点读不到）。
 
 ---
 
 ## 开发
 
 ```sh
-node --test        # 27 项单测：内嵌存储、协议注入、钩子召回/捕获、页面服务
+node --test        # 35 项单测：内嵌存储、LLM 蒸馏/整理/项目总结（mock 模型）、
+                   # 协议注入、钩子召回/捕获、页面服务与 token/CORS、迁移自愈
 magpie plugin add .   # 加载到本机 magpie
 magpie plugin         # 看工具/钩子/页面是否都在
 ```
 
 内嵌存储用 `node:sqlite`（Node 24+）跑单测，magpie 宿主里用 `bun:sqlite`，两边 schema/查询一致。
+LLM 单测注入 mock 模型；真实模型 E2E 用 magpie 网关上的 `workbuddy/glm-5.3-flash` 验证过（4 条候选 + 项目总结）。
 
 ### 发布
 
@@ -187,6 +215,8 @@ magpie plugin         # 看工具/钩子/页面是否都在
 
 ## 限制
 
-- 内置存储不做 LLM 项目总结、不做 24+ agent 的文件捕获；需要这些时用 `backend: "app"`。
+- 内置存储不做 24+ agent 的文件捕获；需要完整历史时用 `backend: "app"`。
+- LLM 蒸馏/整理/项目总结需要 magpie 里至少一个可用模型；没有时只走规则，不影响续接与工具。
+- 从对话学习是串行的，每场会话一次模型请求；一次最多读 20 场。
 - 网关钩子默认只有 1s 预算（`gatewayTimeoutMs` 可调）；内置查询通常毫秒级，app 后端冷启动可能超时，失败开放。
 - 插件以你的权限运行（和 magpie 的其他插件一样）；只安装你信任的代码。

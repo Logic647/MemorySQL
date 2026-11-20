@@ -1,7 +1,7 @@
 {
   "name": "@logic647/tools-memorysql",
-  "version": "0.2.0",
-  "description": "装进 magpie 就能用的跨 agent 会话档案与项目交接：内置 SQLite 知识库、10 个记忆/会话工具、网关自动续接、会话回写和 MemorySQL 页面。No separate app needed: a built-in SQLite knowledge base, 10 tools, automatic recall, conversation capture and a MemorySQL page.",
+  "version": "0.3.0",
+  "description": "装进 magpie 就能用的跨 agent 会话档案与项目交接：内置 SQLite、记忆页、LLM 会话蒸馏（复用 magpie 模型）、网关自动续接与回写。No separate app needed: built-in SQLite, a Memory tab, LLM distillation on models already configured in magpie, automatic recall and capture.",
   "type": "module",
   "main": "./index.mjs",
   "files": [
@@ -49,6 +49,8 @@
     "options": {
       "backend": "embedded",
       "dataDir": "",
+      "model": "",
+      "gateway": "",
       "port": 8642,
       "endpoint": "",
       "readOnly": false,

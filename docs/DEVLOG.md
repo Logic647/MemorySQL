@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-11-20 · magpie 插件：记忆页 + LLM 蒸馏/整理/项目总结（复用 magpie 模型）
+
+**目标**：页面按 magpie 的 Library → Memory 做；「LLM 会话整理」参考 magpie 的
+memdistill / dream；模型直接用 magpie 里已经配置好的，不另配 key。
+
+**后端**
+- `lib/llm.mjs`：本机网关客户端。`POST <gateway>/v1/chat/completions`（loopback 免 key），
+  地址读 `~/.config/magpie/gateway.json`、回落到 3425；模型优先级
+  页面选择 > 插件选项 `model` > magpie `distill.json.lastModel` > `/v1/models` 第一个。
+- schema v2：`memories.source_session_id/why`、`sessions.distilled_at/distilled_count`、
+  `project_digests`。**迁移自愈**：补列/建表每次启动都按 `hasColumn` 检查，不只信
+  `meta.schema_version`（真机被「版本=2 但缺列」的中间代码打开过，记忆页报
+  `no such column: why`；改成自愈后真库补列成功）。
+- 蒸馏（照 magpie prompt 改写）：安静 30 分钟、≥2 条消息、`distilled_at` 未覆盖或
+  `message_count > distilled_count` 的会话，一次最多 20 场；每场最多 5 条候选；
+  `quote` 去标点后必须出现在用户文本里，否则丢弃；候选 `status='candidate'`、
+  `source='llm-distill:<id>'`、带 `why`，确认后才进续接包。状态落 `memorysql/distill.json`。
+- 整理（dream）：每晚 03:00 或手动；只处理 `locked=0` 的 active/candidate，模型返回
+  `{merge,archive}`，合并建新 active + 成员 superseded，归档置 archived；手写/置顶不动。
+- 项目总结：最近 10 场会话 + 已有总结 → `{summary,recent,todos}` 存 `project_digests`；
+  勾选「整理后更新」时蒸馏后最多自动生成 3 个项目；`memory_get_project_digest` 优先返回它。
+- 页面服务新增 POST：`/api/memories`、`/api/memories/status|remove|pin`、`/api/distill`、
+  `/api/distill/run`、`/api/dream/run`、`/api/digest/generate`；全部过启动 token。
+
+**页面**（参考 magpie Memory）
+- 顶部分「记忆 / 项目 / 搜索」；记忆页：状态分段（使用中/待确认/已归档）、搜索、
+  作用域、逐行展开编辑（文本/kind/scope/项目/标签/why）、确认/归档/恢复/删除/置顶。
+- 控制卡：从对话学习（模型下拉、7/30/90/365/全部、立即整理、开关）、整理记忆
+  （立即整理、每晚开关）、整理后更新项目总结；状态行显示进度/上次结果/错误。
+- 项目页加「用模型生成总结」；搜索页保留跨 agent 检索。
+
+**验证**
+- 插件 `node --test` **35 passed**（新增蒸馏/整理/项目总结 mock、记忆页 API、
+  迁移自愈、token/CORS）。
+- 真实模型 E2E（临时库副本，不碰真库）：`workbuddy/glm-5.3-flash` 蒸馏出 **4 条候选**
+  （kind/scope/project/why 正确、quote 校验生效），并生成项目总结。
+- 真实 magpie 0.1.4594 + 浏览器目视：记忆页布局与 magpie Memory 一致；
+  真库 `/api/memories`、`/api/distill` 正常；真机已捕获 4 场会话。
+
+**下一步**
+- 真实 agent 跑一次「首轮注入 + 第二轮缓存命中」；`magpie web` 页面人工验收；
+  蒸馏/整理的取消与 Undo；发布 npm + `magpie-plugin` topic。
+
+---
+
 ## 2026-11-20 · magpie 插件改为内置存储(免安装 MemorySQL)
 
 **目标修正**:用户只装 magpie 插件就能用,**不需要下载/运行 MemorySQL 桌面应用**。

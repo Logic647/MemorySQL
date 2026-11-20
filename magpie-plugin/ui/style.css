@@ -376,3 +376,305 @@ button {
   font-size: 11.5px;
   text-align: center;
 }
+
+/* --- top tabs / views --------------------------------------------------- */
+.top {
+  flex-wrap: wrap;
+}
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.main-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.mtab {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.mtab.active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.view[hidden] {
+  display: none;
+}
+.intro {
+  margin: 0 2px 12px;
+  color: var(--muted);
+  max-width: 760px;
+}
+
+/* --- memory controls ---------------------------------------------------- */
+.controls {
+  padding: 4px 14px;
+  margin-bottom: 12px;
+}
+.control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+.control-row:last-child {
+  border-bottom: 0;
+}
+.control-row.slim {
+  padding: 8px 0;
+}
+.control-row .who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.control-row strong {
+  font-size: 13.5px;
+}
+.control-row .sub {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.control-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.select {
+  width: auto;
+  min-width: 120px;
+  max-width: 230px;
+}
+.control-actions .primary,
+.control-actions .ghost {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.switch {
+  position: relative;
+  display: inline-flex;
+  width: 38px;
+  height: 22px;
+  flex: none;
+}
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch span {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--line);
+  transition: 0.15s;
+  cursor: pointer;
+}
+.switch span::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  top: 3px;
+  border-radius: 50%;
+  background: #fff;
+  transition: 0.15s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.switch input:checked + span {
+  background: var(--accent);
+}
+.switch input:checked + span::after {
+  transform: translateX(16px);
+}
+
+/* --- memory list -------------------------------------------------------- */
+.mem-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.mem-bar .field {
+  flex: 1 1 160px;
+  width: auto;
+}
+.mem-bar .select {
+  flex: 0 0 auto;
+}
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.seg button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.seg button.active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.mem-list {
+  display: grid;
+  gap: 6px;
+}
+.mem {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.mem.open {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+.mem-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.mem-head:hover {
+  background: var(--panel-2);
+}
+.mem-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.mem-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mem-sub {
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mem-tags {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.tag.lock {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.chev {
+  color: var(--muted);
+  transition: 0.15s;
+}
+.mem.open .chev {
+  transform: rotate(90deg);
+}
+.mem-detail {
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-2) 45%, var(--panel));
+}
+.mem-form {
+  display: grid;
+  gap: 8px;
+}
+.mem-form textarea.field {
+  min-height: 64px;
+  resize: vertical;
+  line-height: 1.5;
+  font: inherit;
+}
+.mem-line {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.mem-line .field {
+  width: auto;
+}
+.mem-line .grow {
+  flex: 1 1 160px;
+}
+.acts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.acts .grow {
+  flex: 1;
+}
+.acts button {
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+}
+.acts button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.acts button.danger {
+  border-color: color-mix(in srgb, var(--bad) 40%, var(--line));
+  color: var(--bad);
+}
+.acts button.danger-fill {
+  border-color: var(--bad);
+  background: var(--bad);
+  color: #fff;
+}
+.mem-none {
+  padding: 18px;
+  text-align: center;
+  color: var(--muted);
+}

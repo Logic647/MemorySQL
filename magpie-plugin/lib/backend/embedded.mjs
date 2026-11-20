@@ -11,6 +11,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { openDatabase } from './sqlite.mjs'
 import { migrate } from './schema.mjs'
+import {
+  chat as llmChat,
+  jsonFrom,
+  listModels as llmListModels,
+  magpieMemoryModel,
+  resolveModel as llmResolveModel
+} from '../llm.mjs'
 
 const KIND_ORDER = ['persona', 'preference', 'fact', 'decision']
 const KIND_LABEL = { persona: '画像', preference: '偏好', fact: '事实', decision: '决策' }
@@ -384,6 +391,29 @@ export async function createEmbeddedBackend(options = {}) {
   function digest(args = {}) {
     const project = findProject({ project: args.project, cwd: args.cwd })
     if (!project) return '(库中还没有项目)'
+    // LLM 滚动总结优先；没有就退回规则汇编
+    const saved = latestDigest(project.id)
+    if (saved) {
+      const todos = (() => {
+        try {
+          const a = JSON.parse(saved.todos || '[]')
+          return Array.isArray(a) ? a : []
+        } catch {
+          return []
+        }
+      })()
+      const parts = [
+        `# 项目总结: ${project.name}(${saved.model || '模型'} · ${fmtDate(
+          Math.floor((saved.created_at || 0) / 1000)
+        )})`,
+        project.path ? `- 路径: ${project.path}` : '',
+        `- 覆盖 ${saved.sessions_covered} 个会话`,
+        saved.summary || '',
+        saved.recent ? `\n## 最近进展\n${saved.recent}` : '',
+        todos.length ? `\n## 待办\n${todos.map((t) => `- ${t}`).join('\n')}` : ''
+      ].filter(Boolean)
+      return parts.join('\n')
+    }
     const sessions = recentSessions([project.id], 8)
     const total = (
       get('SELECT count(*) AS n FROM sessions WHERE project_id = ? AND deleted = 0', project.id) ?? { n: 0 }
@@ -1044,6 +1074,770 @@ export async function createEmbeddedBackend(options = {}) {
     return JSON.stringify({ id: row?.id ?? null, outcome, messages: messages.length })
   }
 
+  // ----- LLM 整理（参考 magpie memdistill / dream）-----------------------
+  //
+  // 模型走 magpie 网关（loopback 免 key）：默认用 magpie 记忆蒸馏上次的
+  // lastModel，页面上可以改。蒸馏/整理都在后台跑，页面轮询进度，不占工具
+  // 调用的 55s 超时。
+  const llm = {
+    chat: (messages, opts) =>
+      options.llm?.chat ? options.llm.chat(messages, opts) : llmChat(options, messages, opts),
+    models: () => (options.llm?.models ? options.llm.models() : llmListModels(options)),
+    resolveModel: (preferred) =>
+      options.llm?.resolveModel ? options.llm.resolveModel(preferred) : llmResolveModel(options, preferred)
+  }
+
+  const UI_KINDS = ['persona', 'preference', 'fact', 'decision']
+  const statePath = inMemory ? null : path.join(dataDir, 'distill.json')
+  const defaultState = () => ({
+    on: false,
+    model: typeof options.model === 'string' ? options.model.trim() : '',
+    days: 7,
+    autoDigest: false,
+    dream: false,
+    last: 0,
+    lastModel: '',
+    added: 0,
+    error: '',
+    dreamt: 0,
+    dreamError: '',
+    changes: []
+  })
+  function loadState() {
+    const base = defaultState()
+    if (!statePath) return base
+    try {
+      return { ...base, ...JSON.parse(fs.readFileSync(statePath, 'utf8')) }
+    } catch {
+      return base
+    }
+  }
+  const distill = loadState()
+  distill.running = false
+  distill.job = ''
+  distill.doing = 0
+  distill.of = 0
+  distill.left = 0
+  if (!distill.model) distill.model = magpieMemoryModel() || ''
+
+  function saveState() {
+    if (!statePath) return
+    const data = { ...distill }
+    delete data.running
+    delete data.job
+    delete data.doing
+    delete data.of
+    delete data.left
+    try {
+      const tmp = `${statePath}.tmp`
+      fs.writeFileSync(tmp, JSON.stringify(data, null, 2))
+      fs.renameSync(tmp, statePath)
+    } catch {
+      /* 状态文件只是展示用 */
+    }
+  }
+
+  function tagList(value) {
+    try {
+      const arr = JSON.parse(value || '[]')
+      return Array.isArray(arr) ? arr : []
+    } catch {
+      return []
+    }
+  }
+
+  function projectNameOf(id) {
+    if (!id) return null
+    return get('SELECT name FROM projects WHERE id = ?', id)?.name ?? null
+  }
+
+  function memoryRow(row) {
+    return {
+      id: row.id,
+      kind: row.kind,
+      text: row.content,
+      scope: row.scope,
+      projectId: row.project_id ?? null,
+      project: projectNameOf(row.project_id),
+      agent: row.agent_type ?? null,
+      status: row.status,
+      tags: tagList(row.tags),
+      locked: row.locked === 1,
+      why: row.why ?? '',
+      source: row.source ?? '',
+      sourceSessionId: row.source_session_id ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      accessCount: row.access_count ?? 0
+    }
+  }
+
+  function listMemories(args = {}) {
+    const status = args.status === 'candidate' ? 'candidate' : args.status === 'archived' ? 'archived' : 'active'
+    const statusSql =
+      status === 'archived' ? "status IN ('archived','superseded')" : `status = '${status}'`
+    const where = ['deleted = 0', statusSql]
+    const params = []
+    const scope = typeof args.scope === 'string' ? args.scope : ''
+    if (scope === 'global') where.push("scope = 'global'")
+    else if (scope === 'project') where.push("scope = 'project'")
+    else if (scope.startsWith('project:')) {
+      const id = Number(scope.slice('project:'.length))
+      if (Number.isInteger(id)) {
+        where.push('project_id = ?')
+        params.push(id)
+      }
+    }
+    const q = String(args.q ?? '').trim()
+    if (q) {
+      where.push("(content LIKE ? ESCAPE '\\' OR why LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')")
+      const like = `%${escapeLike(q)}%`
+      params.push(like, like, like)
+    }
+    const limit = Math.min(Math.max(Number(args.limit) || 200, 1), 500)
+    const rows = all(
+      `SELECT id, kind, content, scope, project_id, agent_type, status, tags, locked, why, source,
+              source_session_id, created_at, updated_at, access_count
+         FROM memories WHERE ${where.join(' AND ')}
+        ORDER BY locked DESC, updated_at DESC LIMIT ?`,
+      ...params,
+      limit
+    )
+    const count = (sql) => Number(get(sql)?.n ?? 0)
+    return {
+      memories: rows.map(memoryRow),
+      counts: {
+        active: count("SELECT count(*) AS n FROM memories WHERE deleted = 0 AND status = 'active'"),
+        candidate: count("SELECT count(*) AS n FROM memories WHERE deleted = 0 AND status = 'candidate'"),
+        archived: count(
+          "SELECT count(*) AS n FROM memories WHERE deleted = 0 AND status IN ('archived','superseded')"
+        )
+      },
+      projects: all('SELECT id, name FROM projects WHERE deleted = 0 ORDER BY updated_at DESC'),
+      status,
+      scope
+    }
+  }
+
+  function saveMemory(args = {}) {
+    const id = Number(args.id)
+    const text = String(args.text ?? '').trim()
+    if (!text) return { ok: false, error: '内容不能为空' }
+    if (text.length > 4000) return { ok: false, error: '内容太长（最多 4000 字）' }
+    const kind = UI_KINDS.includes(args.kind) ? args.kind : 'fact'
+    const scope = args.scope === 'project' ? 'project' : 'global'
+    let projectId = null
+    if (scope === 'project') {
+      projectId = Number(args.projectId)
+      if (!Number.isInteger(projectId) || !get('SELECT id FROM projects WHERE id = ? AND deleted = 0', projectId)) {
+        return { ok: false, error: '项目记忆需要选择一个项目' }
+      }
+    }
+    const tags = (Array.isArray(args.tags) ? args.tags : [])
+      .map((t) => String(t).trim())
+      .filter(Boolean)
+      .slice(0, 10)
+    const why = String(args.why ?? '').trim().slice(0, 500)
+    const now = Date.now()
+    if (id) {
+      if (!get('SELECT id FROM memories WHERE id = ? AND deleted = 0', id)) {
+        return { ok: false, error: '记忆不存在' }
+      }
+      run(
+        `UPDATE memories SET content=?, kind=?, scope=?, project_id=?, tags=?, why=?, locked=1, updated_at=?
+          WHERE id=?`,
+        text,
+        kind,
+        scope,
+        projectId,
+        tags.length ? JSON.stringify(tags) : null,
+        why || null,
+        now,
+        id
+      )
+      return { ok: true, id }
+    }
+    const dup = get('SELECT id FROM memories WHERE content = ? AND deleted = 0 LIMIT 1', text)
+    if (dup) return { ok: false, error: `已存在相同内容的记忆 #${dup.id}` }
+    const newId = Number(
+      run(
+        `INSERT INTO memories (kind, content, source, agent_type, status, scope, project_id, tags,
+                               locked, confidence, access_count, why, created_at, updated_at, deleted)
+         VALUES (?, ?, 'user', NULL, 'active', ?, ?, ?, 1, 1.0, 0, ?, ?, ?, 0)`,
+        kind,
+        text,
+        scope,
+        projectId,
+        tags.length ? JSON.stringify(tags) : null,
+        why || null,
+        now,
+        now
+      ).lastInsertRowid
+    )
+    return { ok: true, id: newId }
+  }
+
+  function setMemoryStatus(args = {}) {
+    const ids = (Array.isArray(args.ids) ? args.ids : [])
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n > 0)
+    const status = ['active', 'candidate', 'archived'].includes(args.status) ? args.status : ''
+    if (ids.length === 0 || !status) return { ok: false, error: '参数错误' }
+    const res = run(
+      `UPDATE memories SET status=?, updated_at=? WHERE id IN (${ids.map(() => '?').join(',')}) AND deleted=0`,
+      status,
+      Date.now(),
+      ...ids
+    )
+    return { ok: true, count: Number(res.changes ?? ids.length) }
+  }
+
+  function removeMemories(args = {}) {
+    const ids = (Array.isArray(args.ids) ? args.ids : [])
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n > 0)
+    if (ids.length === 0) return { ok: false, error: '参数错误' }
+    const res = run(
+      `UPDATE memories SET deleted=1, updated_at=? WHERE id IN (${ids.map(() => '?').join(',')})`,
+      Date.now(),
+      ...ids
+    )
+    return { ok: true, count: Number(res.changes ?? ids.length) }
+  }
+
+  function pinMemory(args = {}) {
+    const id = Number(args.id)
+    if (!Number.isInteger(id) || id <= 0) return { ok: false, error: '参数错误' }
+    run(
+      'UPDATE memories SET locked = ?, updated_at = ? WHERE id = ? AND deleted = 0',
+      args.pinned ? 1 : 0,
+      Date.now(),
+      id
+    )
+    return { ok: true }
+  }
+
+  function bare(text) {
+    return String(text ?? '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, '')
+  }
+
+  function cut(text, max) {
+    const s = String(text ?? '')
+    return s.length > max ? `${s.slice(0, max)}…` : s
+  }
+
+  function sessionTranscript(sessionId) {
+    const rows = all(
+      'SELECT role, content FROM session_messages WHERE session_id = ? ORDER BY seq',
+      sessionId
+    )
+    const lines = []
+    let userText = ''
+    let turns = 0
+    for (const row of rows) {
+      if (row.role !== 'user' && row.role !== 'assistant') continue
+      const content = String(row.content ?? '').trim()
+      if (!content) continue
+      if (row.role === 'user') {
+        turns += 1
+        userText += `\n${content}`
+        lines.push(`User: ${cut(content, 4000)}`)
+      } else {
+        lines.push(`Assistant: ${cut(content, 1200)}`)
+      }
+    }
+    let text = lines.join('\n\n')
+    if (text.length > 24_000) {
+      text = `${text.slice(0, 8000)}\n\n[…]\n\n${text.slice(-16_000)}`
+    }
+    return { text, userText, turns }
+  }
+
+  function knownMemories(session) {
+    const rows = all(
+      `SELECT content FROM memories
+        WHERE deleted = 0 AND status IN ('active','candidate')
+          AND (scope = 'global' OR project_id = ?)
+        ORDER BY updated_at DESC LIMIT 40`,
+      session.project_id ?? null
+    )
+    return rows.map((r) => `- ${clip(r.content, 160)}`)
+  }
+
+  function distillRequest(session, text, known) {
+    const project = session.project_id
+      ? get('SELECT name FROM projects WHERE id = ?', session.project_id)?.name
+      : null
+    const parts = []
+    if (project) parts.push(`Project: ${project}`)
+    parts.push('Already known:')
+    parts.push(known.length ? known.join('\n') : '(nothing)')
+    parts.push('\nConversation:\n')
+    parts.push(text)
+    return parts.join('\n')
+  }
+
+  const DISTILL_PROMPT = `You read a conversation between a user and a coding assistant and write down what is worth remembering in later conversations, with this user or in this project.
+
+Keep only what stays true beyond this conversation and that a later assistant couldn't learn by reading the code:
+- persona: who the user is (role, languages they speak, what they know)
+- preference: how the user wants things done, stated or shown by a correction
+- decision: a decision that was made, and why
+- fact: something true of the project that the code doesn't say
+
+Each item rests on words the user wrote in this conversation: quote them exactly. Leave out what only the assistant said, such as rules it follows from its own instructions or notes.
+A rule or convention of one project belongs in the project's own instruction files and docs: leave it out unless it is about how this user works everywhere. Never keep an item that disagrees with what the project's files say in the conversation.
+Leave out: the task itself and its progress, anything about this conversation alone, code details visible in the repository, what the project's instruction files or docs say, secrets (keys, tokens, passwords), and anything already in "Already known". When nothing is worth keeping, answer [].
+
+Answer with a JSON array alone, at most 5 items:
+[{"text":"one short sentence, in the language the user wrote in","kind":"persona|preference|decision|fact","scope":"global or project","why":"what in the conversation shows it","quote":"the user's own words that show it, copied exactly, short"}]
+scope is "project" when it holds only in this project, "global" when it holds for the user everywhere.`
+
+  const DIGEST_PROMPT = `You maintain a rolling handoff summary for a coding project, so another assistant can take over without reading every conversation. Write in the language the user writes in.
+
+Answer with a JSON object alone:
+{"summary":"at most 1200 characters: what the project is, its current state and the key decisions","recent":"at most 800 characters: what was done recently, and why","todos":["short next steps, at most 12"]}
+
+Use only the conversations. No secrets, no invented facts. If nothing changed, keep the existing summary.`
+
+  const DREAM_PROMPT = `You tidy a list of memories. Merge memories that say the same thing, and set aside ones that are no longer true. Never merge unrelated memories. Only the memories listed may be changed; their numbers are given.
+
+Answer with a JSON object alone:
+{"merge":[{"ids":[1,2],"text":"the one memory kept","kind":"persona|preference|decision|fact"}],"archive":[{"id":3,"why":"why it is no longer true"}]}
+
+Leave out anything you would not change. If nothing should change, answer {}.`
+
+  function dueSessions() {
+    const quiet = Math.floor(Date.now() / 1000) - 30 * 60
+    const days = Number(distill.days)
+    const since = days > 0 ? Math.floor(Date.now() / 1000) - days * 86400 : 0
+    const where = [
+      'deleted = 0',
+      '(distilled_at IS NULL OR message_count > COALESCE(distilled_count, 0))',
+      'last_message_at IS NOT NULL',
+      'last_message_at <= ?',
+      'message_count >= 2'
+    ]
+    const params = [quiet]
+    if (since) {
+      where.push('last_message_at >= ?')
+      params.push(since)
+    }
+    return all(
+      `SELECT id, agent_type, project_id, cwd, title, message_count
+         FROM sessions WHERE ${where.join(' AND ')}
+        ORDER BY last_message_at ASC LIMIT 20`,
+      ...params
+    )
+  }
+
+  const KIND_MAP = {
+    persona: 'persona',
+    profile: 'persona',
+    preference: 'preference',
+    rule: 'fact',
+    procedure: 'fact',
+    reference: 'fact',
+    fact: 'fact',
+    decision: 'decision',
+    episode: 'decision'
+  }
+
+  function parseDistilled(content, userText) {
+    let items = jsonFrom(content, 'array')
+    if (!items) {
+      const obj = jsonFrom(content, 'object')
+      if (obj && Array.isArray(obj.memories)) items = obj.memories
+    }
+    if (!Array.isArray(items)) return []
+    const said = bare(userText)
+    const seen = new Set()
+    const out = []
+    for (const raw of items.slice(0, 5)) {
+      if (!raw || typeof raw !== 'object') continue
+      const text = String(raw.text ?? '').trim().slice(0, 500)
+      if (!text || seen.has(text)) continue
+      const quote = String(raw.quote ?? '').trim()
+      const q = bare(quote)
+      if (q.length < 2 || !said.includes(q)) continue
+      const kind = KIND_MAP[String(raw.kind ?? '').toLowerCase()] ?? 'fact'
+      const scope = String(raw.scope ?? '').toLowerCase() === 'project' ? 'project' : 'global'
+      out.push({
+        text,
+        kind,
+        scope,
+        why: String(raw.why ?? '').trim().slice(0, 300) || quote.slice(0, 300)
+      })
+      seen.add(text)
+    }
+    return out
+  }
+
+  function insertCandidate(session, item) {
+    const projectId = item.scope === 'project' && session.project_id ? session.project_id : null
+    const scope = projectId ? 'project' : 'global'
+    const dup = get(
+      'SELECT id FROM memories WHERE content = ? AND deleted = 0 AND scope = ? AND project_id IS ?',
+      item.text,
+      scope,
+      projectId
+    )
+    if (dup) return 0
+    const now = Date.now()
+    run(
+      `INSERT INTO memories (kind, content, source, agent_type, status, scope, project_id, tags,
+                             locked, confidence, access_count, source_session_id, why,
+                             created_at, updated_at, deleted)
+       VALUES (?, ?, ?, ?, 'candidate', ?, ?, NULL, 0, 1.0, 0, ?, ?, ?, ?, 0)`,
+      item.kind,
+      item.text,
+      `llm-distill:${session.id}`,
+      session.agent_type,
+      scope,
+      projectId,
+      session.id,
+      item.why,
+      now,
+      now
+    )
+    return 1
+  }
+
+  function markDistilled(session) {
+    run(
+      'UPDATE sessions SET distilled_at = ?, distilled_count = message_count WHERE id = ?',
+      Date.now(),
+      session.id
+    )
+  }
+
+  async function runDistillJob() {
+    if (distill.running) return
+    const due = dueSessions()
+    distill.running = true
+    distill.job = 'distill'
+    distill.of = due.length
+    distill.doing = 0
+    distill.left = due.length
+    distill.added = 0
+    distill.error = ''
+    saveState()
+    const touched = new Set()
+    try {
+      const model = await llm.resolveModel(distill.model)
+      if (!model) throw new Error('没有可用模型：请先在 magpie 里配置模型')
+      distill.model = model
+      for (const session of due) {
+        const { text, userText, turns } = sessionTranscript(session.id)
+        if (turns < 1 || !text.trim()) {
+          markDistilled(session)
+          distill.doing += 1
+          distill.left -= 1
+          saveState()
+          continue
+        }
+        const known = knownMemories(session)
+        const reply = await llm.chat(
+          [
+            { role: 'system', content: DISTILL_PROMPT },
+            { role: 'user', content: distillRequest(session, text, known) }
+          ],
+          { model, maxTokens: 1400 }
+        )
+        const items = parseDistilled(reply.content, userText)
+        for (const item of items) {
+          distill.added += insertCandidate(session, item)
+        }
+        distill.lastModel = reply.model || model
+        if (session.project_id) touched.add(session.project_id)
+        markDistilled(session)
+        distill.doing += 1
+        distill.left -= 1
+        saveState()
+      }
+      distill.last = Date.now()
+      if (distill.autoDigest && touched.size > 0) {
+        let n = 0
+        for (const projectId of touched) {
+          if (n >= 3) break
+          try {
+            await generateDigestById(projectId)
+          } catch {
+            /* 一个项目的总结失败不影响蒸馏结果 */
+          }
+          n += 1
+        }
+      }
+    } catch (err) {
+      distill.error = String(err?.message ?? err).slice(0, 400)
+      distill.left = Math.max(0, distill.of - distill.doing)
+    } finally {
+      distill.running = false
+      distill.job = ''
+      distill.doing = 0
+      saveState()
+    }
+  }
+
+  function latestDigest(projectId) {
+    return get(
+      `SELECT id, summary, recent, todos, model, sessions_covered, created_at, updated_at
+         FROM project_digests WHERE project_id = ? AND deleted = 0
+        ORDER BY created_at DESC LIMIT 1`,
+      projectId
+    )
+  }
+
+  async function generateDigestById(projectId) {
+    const project = get('SELECT id, name, path FROM projects WHERE id = ? AND deleted = 0', projectId)
+    if (!project) throw new Error('项目不存在')
+    const sessions = all(
+      `SELECT id, title, summary, last_message_at FROM sessions
+        WHERE project_id = ? AND deleted = 0
+        ORDER BY COALESCE(last_message_at, started_at, updated_at) DESC LIMIT 10`,
+      projectId
+    )
+    if (sessions.length === 0) return { ok: false, error: '项目还没有会话' }
+    const total = Number(
+      get('SELECT count(*) AS n FROM sessions WHERE project_id = ? AND deleted = 0', projectId)?.n ??
+        sessions.length
+    )
+    const existing = latestDigest(projectId)
+    let text = sessions
+      .map((s) => {
+        const t = sessionTranscript(s.id)
+        return `## ${s.title || `会话 #${s.id}`}\n${t.text}`
+      })
+      .join('\n\n')
+    if (text.length > 20_000) {
+      text = `${text.slice(0, 6600)}\n\n[…]\n\n${text.slice(-13_400)}`
+    }
+    const model = await llm.resolveModel(distill.model)
+    if (!model) throw new Error('没有可用模型')
+    const reply = await llm.chat(
+      [
+        { role: 'system', content: DIGEST_PROMPT },
+        {
+          role: 'user',
+          content: `Project: ${project.name}\nPath: ${project.path || ''}\n\nExisting summary:\n${
+            existing?.summary || '(none)'
+          }\n\nExisting recent:\n${existing?.recent || '(none)'}\n\nConversations:\n\n${text}`
+        }
+      ],
+      { model, maxTokens: 1600 }
+    )
+    const obj = jsonFrom(reply.content, 'object')
+    if (!obj) throw new Error('模型输出无法解析为项目总结 JSON')
+    const summary = String(obj.summary ?? '').trim()
+    if (!summary) throw new Error('模型没有给出 summary')
+    const recent = String(obj.recent ?? '').trim()
+    const todos = Array.isArray(obj.todos)
+      ? obj.todos.map((x) => String(x).trim()).filter(Boolean).slice(0, 12)
+      : []
+    const now = Date.now()
+    run(
+      `INSERT INTO project_digests (project_id, summary, recent, todos, model, sessions_covered,
+                                    created_at, updated_at, deleted)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+      projectId,
+      summary,
+      recent,
+      JSON.stringify(todos),
+      reply.model || model,
+      total,
+      now,
+      now
+    )
+    return { ok: true, summary, recent, todos, model: reply.model || model }
+  }
+
+  async function generateDigest(args = {}) {
+    const project = findProject({ project: args.project, cwd: args.cwd })
+    if (!project) return { ok: false, error: '没有匹配的项目' }
+    return generateDigestById(project.id)
+  }
+
+  async function runDreamJob() {
+    if (distill.running) return
+    distill.running = true
+    distill.job = 'dream'
+    distill.dreamError = ''
+    saveState()
+    try {
+      const model = await llm.resolveModel(distill.model)
+      if (!model) throw new Error('没有可用模型')
+      const scopes = [{ scope: 'global', projectId: null, name: '全局' }]
+      for (const p of all('SELECT id, name FROM projects WHERE deleted = 0 ORDER BY updated_at DESC LIMIT 3')) {
+        scopes.push({ scope: 'project', projectId: p.id, name: p.name })
+      }
+      const changes = []
+      for (const sc of scopes) {
+        const rows = all(
+          `SELECT id, kind, content, created_at FROM memories
+            WHERE deleted = 0 AND status IN ('active','candidate') AND locked = 0 AND scope = ?
+              ${sc.scope === 'project' ? 'AND project_id = ?' : ''}
+            ORDER BY updated_at DESC LIMIT 120`,
+          ...(sc.scope === 'project' ? [sc.scope, sc.projectId] : [sc.scope])
+        )
+        if (rows.length < 2) continue
+        const list = rows
+          .map(
+            (r, i) =>
+              `${i + 1} | ${r.kind} | ${fmtDate(Math.floor((r.created_at || 0) / 1000))} | ${clip(
+                r.content,
+                180
+              )}`
+          )
+          .join('\n')
+        const reply = await llm.chat(
+          [
+            { role: 'system', content: DREAM_PROMPT },
+            { role: 'user', content: `Scope: ${sc.name}\n\nMemories:\n${list}` }
+          ],
+          { model, maxTokens: 1400 }
+        )
+        const obj = jsonFrom(reply.content, 'object')
+        if (!obj) continue
+        const byNum = new Map(rows.map((r, i) => [i + 1, r]))
+        const merges = Array.isArray(obj.merge) ? obj.merge : []
+        const archives = Array.isArray(obj.archive) ? obj.archive : []
+        db.tx(() => {
+          for (const m of merges) {
+            const ids = (Array.isArray(m.ids) ? m.ids : []).map(Number).filter((n) => byNum.has(n))
+            if (ids.length < 2) continue
+            const text = String(m.text ?? '').trim()
+            if (!text) continue
+            const kind = UI_KINDS.includes(m.kind) ? m.kind : 'fact'
+            const now = Date.now()
+            const newId = Number(
+              run(
+                `INSERT INTO memories (kind, content, source, status, scope, project_id, locked,
+                                       confidence, access_count, created_at, updated_at, deleted)
+                 VALUES (?, ?, 'llm-tidy', 'active', ?, ?, 0, 1.0, 0, ?, ?, 0)`,
+                kind,
+                text,
+                sc.scope,
+                sc.projectId,
+                now,
+                now
+              ).lastInsertRowid
+            )
+            for (const n of ids) {
+              run(
+                "UPDATE memories SET status='superseded', updated_at=? WHERE id=? AND locked=0",
+                now,
+                byNum.get(n).id
+              )
+            }
+            changes.push({ action: 'merge', ids: ids.map((n) => byNum.get(n).id), text, newId })
+          }
+          for (const a of archives) {
+            const n = Number(a.id)
+            const row = byNum.get(n)
+            if (!row) continue
+            run(
+              "UPDATE memories SET status='archived', updated_at=? WHERE id=? AND locked=0",
+              Date.now(),
+              row.id
+            )
+            changes.push({ action: 'archive', id: row.id, why: String(a.why ?? '').slice(0, 300) })
+          }
+        })
+      }
+      distill.changes = changes.slice(0, 200)
+      distill.dreamt = Date.now()
+    } catch (err) {
+      distill.dreamError = String(err?.message ?? err).slice(0, 400)
+    } finally {
+      distill.running = false
+      distill.job = ''
+      saveState()
+    }
+  }
+
+  async function distillState() {
+    let models = []
+    try {
+      models = await llm.models()
+    } catch {
+      /* 网关没起来：返回空列表，页面仍能看状态 */
+    }
+    return {
+      ...distill,
+      models,
+      defaultModel: distill.model || magpieMemoryModel() || ''
+    }
+  }
+
+  async function setDistill(args = {}) {
+    if (typeof args.on === 'boolean') distill.on = args.on
+    if (typeof args.dream === 'boolean') distill.dream = args.dream
+    if (typeof args.autoDigest === 'boolean') distill.autoDigest = args.autoDigest
+    if (typeof args.model === 'string') distill.model = args.model.trim()
+    if (args.days !== undefined) {
+      const days = Number(args.days)
+      if ([7, 30, 90, 365, -1].includes(days)) distill.days = days
+    }
+    if (distill.on && !distill.model) {
+      distill.model = (await llm.resolveModel('')) || ''
+    }
+    saveState()
+    return distillState()
+  }
+
+  function runDistill() {
+    if (distill.running) return { ok: false, running: true }
+    void runDistillJob()
+    return { ok: true, started: true }
+  }
+
+  function runDream() {
+    if (distill.running) return { ok: false, running: true }
+    void runDreamJob()
+    return { ok: true, started: true }
+  }
+
+  function dueDream() {
+    if (!distill.dream) return false
+    const now = new Date()
+    const three = new Date(now)
+    three.setHours(3, 0, 0, 0)
+    if (now < three) three.setDate(three.getDate() - 1)
+    return (distill.dreamt || 0) < three.getTime()
+  }
+
+  if (!inMemory) {
+    const tick = () => {
+      try {
+        if (distill.running) return
+        if (distill.on && Date.now() - (distill.last || 0) > 3600_000) {
+          void runDistillJob()
+          return
+        }
+        if (dueDream()) void runDreamJob()
+      } catch {
+        /* 定时器不能把宿主带崩 */
+      }
+    }
+    setTimeout(tick, 60_000).unref?.()
+    setInterval(tick, 10 * 60_000).unref?.()
+  }
+
+  const ui = {
+    listMemories,
+    saveMemory,
+    setMemoryStatus,
+    removeMemories,
+    pinMemory,
+    distillState,
+    setDistill,
+    runDistill,
+    runDream,
+    generateDigest
+  }
+
   const handlers = {
     memory_get_context: context,
     memory_get_project_brief: brief,
@@ -1062,6 +1856,7 @@ export async function createEmbeddedBackend(options = {}) {
     kind: 'embedded',
     dataDir,
     file,
+    ui,
     async call(name, args = {}) {
       const handler = handlers[name]
       if (!handler) throw new Error(`内置存储不支持工具 ${name}`)
@@ -1077,7 +1872,7 @@ export async function createEmbeddedBackend(options = {}) {
       return {
         ok: true,
         backend: 'embedded',
-        version: '0.2.0',
+        version: '0.3.0',
         port: null,
         tools: Object.keys(handlers).length,
         stats: statsValue

@@ -90,7 +90,7 @@ function applyCors(req, res, port) {
   const own = origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`
   res.setHeader('access-control-allow-origin', origin === 'null' ? 'null' : own ? origin : 'null')
   res.setHeader('access-control-allow-headers', `content-type, accept, ${TOKEN_HEADER}`)
-  res.setHeader('access-control-allow-methods', 'GET, OPTIONS')
+  res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS')
   res.setHeader('vary', 'Origin')
 }
 
@@ -100,17 +100,101 @@ function tokenOK(req) {
   return got.length === want.length && crypto.timingSafeEqual(got, want)
 }
 
+function readJson(req, limit = 1 << 20) {
+  return new Promise((resolve, reject) => {
+    let bytes = 0
+    const chunks = []
+    req.on('data', (chunk) => {
+      bytes += chunk.length
+      if (bytes > limit) {
+        reject(new Error('请求体过大'))
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      try {
+        resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {})
+      } catch {
+        reject(new Error('请求体不是 JSON'))
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
 async function api(req, res, url, options, backendPromise) {
   const q = url.searchParams
+  const method = req.method
   const project = (q.get('project') ?? '').trim()
   const cwd = (q.get('cwd') ?? '').trim()
   const rawAgent = (q.get('agent') ?? '').trim()
   const agent = rawAgent ? (mapAgent(rawAgent) ?? rawAgent) : ''
   try {
     const backend = await (backendPromise ?? getBackend(options))
+    const body = method === 'POST' ? await readJson(req) : {}
+    const ui = backend.ui
+    const requireUi = () => {
+      if (ui) return true
+      json(res, 200, {
+        ok: false,
+        error: '记忆管理仅在内置存储后端可用（app 后端请在 MemorySQL 应用里操作）'
+      })
+      return false
+    }
+
     if (url.pathname === '/api/status') {
       return json(res, 200, await backend.status())
     }
+    if (url.pathname === '/api/memories') {
+      if (!requireUi()) return
+      if (method === 'GET') {
+        return json(res, 200, {
+          ok: true,
+          ...ui.listMemories({
+            status: q.get('status'),
+            scope: q.get('scope'),
+            q: q.get('q'),
+            limit: q.get('limit')
+          })
+        })
+      }
+      return json(res, 200, ui.saveMemory(body))
+    }
+    if (url.pathname === '/api/memories/status' && method === 'POST') {
+      if (!requireUi()) return
+      return json(res, 200, ui.setMemoryStatus(body))
+    }
+    if (url.pathname === '/api/memories/remove' && method === 'POST') {
+      if (!requireUi()) return
+      return json(res, 200, ui.removeMemories(body))
+    }
+    if (url.pathname === '/api/memories/pin' && method === 'POST') {
+      if (!requireUi()) return
+      return json(res, 200, ui.pinMemory(body))
+    }
+    if (url.pathname === '/api/distill') {
+      if (!requireUi()) return
+      if (method === 'GET') return json(res, 200, { ok: true, ...(await ui.distillState()) })
+      return json(res, 200, { ok: true, ...(await ui.setDistill(body)) })
+    }
+    if (url.pathname === '/api/distill/run' && method === 'POST') {
+      if (!requireUi()) return
+      return json(res, 200, ui.runDistill())
+    }
+    if (url.pathname === '/api/dream/run' && method === 'POST') {
+      if (!requireUi()) return
+      return json(res, 200, ui.runDream())
+    }
+    if (url.pathname === '/api/digest/generate' && method === 'POST') {
+      if (!requireUi()) return
+      return json(res, 200, await ui.generateDigest(body))
+    }
+    if (method !== 'GET') {
+      return json(res, 405, { ok: false, error: 'method not allowed' })
+    }
+
     if (url.pathname === '/api/projects') {
       const body = await backend.call(
         'memory_list_projects',
@@ -193,7 +277,7 @@ function createServer(port, options, backendPromise) {
         res.writeHead(204, { 'access-control-max-age': '600' }).end()
         return
       }
-      if (req.method !== 'GET') {
+      if (req.method !== 'GET' && req.method !== 'POST') {
         res.writeHead(405).end()
         return
       }

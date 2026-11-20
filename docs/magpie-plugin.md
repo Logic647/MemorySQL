@@ -104,7 +104,8 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 `lib/backend/schema.mjs` 建 MemorySQL 核心表的一个子集：
 
 - `projects` / `sessions` / `session_messages` / `memories`(字段与 MemorySQL 对齐；
-  sessions 时间是**秒**，memories/projects.updated_at 是**毫秒**)
+  sessions 时间是**秒**，memories/projects.updated_at 是**毫秒**)；
+  v2 加 `source_session_id` / `why` / `distilled_at` / `distilled_count` 与 `project_digests`
 - FTS5 trigram 外部内容表：`sessions_fts` / `messages_fts` / `memories_fts`，
   配 `AFTER INSERT/UPDATE/DELETE` 触发器同步
 - 索引：agent/project/scope/status/content
@@ -116,7 +117,7 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 |---|---|
 | `memory_get_context` | 全局/项目记忆 + 最近会话；**全新库返回空串**(钩子据此不注入) |
 | `memory_get_project_brief` | 记忆 + 会话 + 上一棒 tail + 收工汇报候选 |
-| `memory_get_project_digest` | **规则汇编**(项目信息 + 最近会话 + 从收工汇报提取的待办)，不调 LLM |
+| `memory_get_project_digest` | **LLM 滚动总结优先**；没有则规则汇编(项目信息 + 最近会话 + 收工汇报待办) |
 | `memory_list_projects` | 项目 + 会话数 + 最近活跃；`format=json` |
 | `memory_list_sessions` | 项目/agent/时间过滤；`format=json` |
 | `memory_get_session` | tail/full + 4 万字符预算(从最新往回填) |
@@ -164,14 +165,73 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
   导航到 `magpie.service`(magpie web)或 `127.0.0.1:<pagePort>`(桌面)。
 - `service.mjs`:Bun 里的本地 HTTP 服务，只绑 127.0.0.1，校验 Host/Origin；
   提供 `/api/status`、`/api/projects`、`/api/sessions`、`/api/search`、
-  `/api/context`、`/api/digest`、`/api/session`，全部转给当前后端。
+  `/api/context`、`/api/digest`、`/api/session`，以及记忆页的
+  `/api/memories`(GET/POST)、`/api/memories/status|remove|pin`、
+  `/api/distill`(GET/POST)、`/api/distill/run`、`/api/dream/run`、
+  `/api/digest/generate`，全部转给当前后端。
   **sandbox iframe 的 Origin 是 `null`**：API 响应显式回
   `Access-Control-Allow-Origin: null` 并处理 `OPTIONS` 预检；每次宿主启动生成
   随机 token 注入页面 HTML 的 `<meta name="memorysql-token">`，API 必须带
   `x-memorysql-token`；静态 HTML 不带 CORS（别的 sandbox 页面读不到 token）。
-- `ui/`:状态(内置存储 / MemorySQL 应用)、项目列表、续接包/总结/会话、跨 agent
-  搜索；只读。相对路径 + `magpie.service` 兼容 `magpie web`。
+- `ui/`:状态(内置存储 / MemorySQL 应用)、记忆页(参考 magpie Memory)、项目列表、
+  续接包/总结/会话、跨 agent 搜索；记忆可编辑，项目/搜索只读。
+  相对路径 + `magpie.service` 兼容 `magpie web`。
 - `magpie.actions` 的 `agent-sessions` 出现在 agent 行菜单，打开页面并带 `?agent=`。
+
+### 3.6 记忆页与 LLM 蒸馏(参考 magpie memdistill / dream)
+
+**记忆页**(`ui/` 的「记忆」标签)照 magpie 的 Library → Memory 做：
+
+- 状态分段(使用中 / 待确认 / 已归档；已归档含 superseded)、搜索、作用域筛选
+- 每行显示首行、作用域/标签/来源、kind 标签、锁定标记；展开可编辑文本/kind/
+  scope/项目/标签/why，确认/归档/恢复/删除/置顶
+- 手动添加/编辑的记忆 `source='user'`、`locked=1`，整理永不改动
+
+**模型**：插件在 magpie 的 Bun 宿主里，直接请求本机网关
+`POST <gateway>/v1/chat/completions`(loopback 免 key)。模型优先级：
+页面选择(`distill.json.model`) > 插件选项 `model` > magpie 记忆蒸馏的
+`lastModel`(`~/.config/magpie/distill.json`) > 网关 `/v1/models` 第一个。
+没有可用模型时只走规则，不影响续接/工具。
+
+**从对话学习**(`runDistillJob`)：
+
+- 候选会话：`deleted=0`、`message_count>=2`、`last_message_at` 安静 30 分钟、
+  `distilled_at IS NULL OR message_count > distilled_count`(追加过才重读)，
+  按最后消息升序，一次最多 20 场；`days` 控制回看范围(7/30/90/365/全部)
+- 输入：只有 user/assistant 文本(user 4000 字、assistant 1200 字，总 24k，
+  超了保留头尾)+ 已有记忆(最多 40 条)；prompt 照 magpie 的蒸馏 prompt 改写，
+  明确「引用必须是用户原话、不要任务过程/密钥/项目文件已有的内容」
+- 输出：JSON 数组，最多 5 条；`kind` 映射到 persona/preference/decision/fact；
+  `quote` 去标点后必须出现在用户文本里，否则丢弃
+- 落库：`status='candidate'`、`source='llm-distill:<sessionId>'`、
+  `source_session_id`、`why`、`scope`(项目/全局)；同 scope+project 同文本去重；
+  候选要用户在记忆页确认(`active`)后才进入续接包
+- 进度：`distill.json` 的 `running/doing/of/left/added/error/last/lastModel`；
+  页面轮询；一轮失败留下错误和未读数量，下一轮重试
+
+**整理记忆**(`runDreamJob`)：
+
+- 每晚 03:00 后一次，或页面「立即整理」；每个作用域最多 120 条
+  active/candidate、`locked=0` 的记忆
+- prompt 要求模型只做「合并说同一件事」和「归档不再成立」，返回
+  `{merge:[{ids,text,kind}],archive:[{id,why}]}`；id 是列表序号，后端校验存在且未锁定
+- 合并：插一条 `source='llm-tidy'` 的 active 记忆，成员置 `superseded`；
+  归档：置 `archived`；手写/置顶(`locked=1`)永不参与
+- 变更记在 `distill.json.changes` 供页面显示(暂不支持 Undo)
+
+**项目总结**(`generateDigestById`)：
+
+- 项目最近 10 场会话 + 已有总结 → 模型返回
+  `{summary,recent,todos}`，写 `project_digests`(历史保留，取最新)
+- 勾选「整理后更新项目总结」时，蒸馏后有新记忆的项目最多自动生成 3 个；
+  项目页「用模型生成总结」可随时手动生成
+- `memory_get_project_digest` 优先返回最新 LLM 总结，没有才退回规则汇编
+
+**迁移自愈**：schema v2 的补列/建表**每次启动都检查**，不只信
+`meta.schema_version`。真机踩过：中间版本把版本写成 2 却没有执行 ALTER，
+之后按版本号跳过迁移，真库缺 `why/source_session_id/distilled_at`，
+记忆页报 `no such column: why`。现在 `hasColumn` 每次补齐，测试
+`test/schema.test.mjs` 锁住「版本=2 但缺列也能自愈」。
 
 ## 4. MemorySQL 应用侧改动(给 `backend: "app"` 用)
 
@@ -196,9 +256,11 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
 | 决策 | 理由 |
 |---|---|
 | 默认内置 SQLite,而不是要求装 MemorySQL | 用户要的是「装 magpie 插件即用」;零外部依赖是社区插件的基本盘 |
-| app 后端保留为可选 | 已经有 MemorySQL 的用户能复用 24+ agent 文件捕获、LLM 总结、curator |
+| app 后端保留为可选 | 已经有 MemorySQL 的用户能复用 24+ agent 文件捕获、curator、语义检索 |
 | 两种后端数据不自动合并 | 静默合并两套 schema/语义风险高;先让用户显式选择 |
-| 内置不做 LLM 总结 | 插件里没有模型网关凭据;规则汇编足够支撑「续接」,LLM 交给 app |
+| 内置的 LLM 走 magpie 网关 | 插件没有自己的 key;复用 magpie 已配置模型(默认用 magpie 记忆蒸馏的 lastModel),用户不用再配一遍 |
+| 蒸馏候选先待确认 | 模型会编;引用必须是用户原话，候选要用户确认后才进续接包 |
+| 迁移自愈 | 中间版本把版本号写成 2 却没 ALTER，真库缺列；每次启动按 `hasColumn` 补齐，不信版本号 |
 | 捕获默认随后端 | embedded 没有文件捕获，回写是唯一来源；app 有文件捕获，回写会双写 |
 | 注入第一条用户消息 | 客户端历史里始终存在 → 后续请求前缀稳定;系统提示改动面更小 |
 | 页面用带路页 + 本地服务 | magpie 页面 sandbox 的 `connect-src 'none'` 决定了不能直连 |
@@ -208,20 +270,29 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
 
 2026-11-20:
 
-- 插件:`node --test` **27 passed**(内嵌存储、协议注入、钩子召回/捕获、页面服务);
-  `bun:sqlite`(magpie 自带 Bun 1.4.4)冒烟通过(建库/导入/context/search/stats)。
+- 插件:`node --test` **35 passed**：内嵌存储、LLM 蒸馏/整理/项目总结(mock 模型)、
+  记忆页 API、协议注入、钩子召回/捕获、页面服务 token/CORS、迁移自愈；
+  `bun:sqlite`(magpie 自带 Bun 1.4.4)冒烟通过。
+- 真实模型 E2E(临时库副本，不碰真库)：`workbuddy/glm-5.3-flash` 蒸馏出 **4 条候选**
+  (kind/scope/project/why 正确、quote 校验有效)，并生成项目总结；`memory_get_project_digest`
+  返回模型总结。
+- 真机踩坑+修复：live 库被「版本=2 但缺 v2 列」的中间代码打开过，记忆页报
+  `no such column: why`；改成每次启动自愈后，真库补列成功，`/api/memories` 正常。
+- 页面：真实 magpie 宿主内打开，浏览器目视确认记忆页(状态分段/模型选择/作用域/
+  从对话学习/整理/搜索/添加)与 magpie Memory 布局一致。
 - MemorySQL:`npm run typecheck` 0;`npm test` **678 passed / 2 skipped**;
   `npm run build` 通过。
 - 真实 magpie 0.1.4594 加载:钩子 `onRequest`、10 个工具、`page MemorySQL` 都识别。
 - app 后端真实库副本(294MB / 444 会话 / 614 记忆)E2E:`/health` stats、
   `tools/list` 11、`memory_get_context({cwd})` 命中项目、`memory_import_session`
   2→3、短列表跳过、`memory_list_sessions(format=json)`。
-- 未做:真实模型请求经 magpie 网关心跳的 E2E;`magpie web` 页面反代人工验收。
+- 未做:真实 agent 经 magpie 网关心跳的 E2E;`magpie web` 页面反代人工验收。
 
 ## 7. 待办
 
 - 用真实 agent 跑一次「首轮注入 + 第二轮缓存命中」的网关 E2E(embedded + app 各一次)。
 - 内置存储的检索排序(现在是 bm25/LIKE + 最近时间，没有 MemorySQL 的语义检索)。
+- 蒸馏/整理的取消与 Undo(现在关掉开关不会中断在途的一轮)。
 - 视反馈决定是否把 embedded 的 `capture` 做成可配置的「只捕获某些 agent」。
 - 发布 npm(`@logic647/tools-memorysql` 或 `@magpie-community/tools-memorysql`)；
   打 `magpie-plugin` topic / 提 community registry PR。

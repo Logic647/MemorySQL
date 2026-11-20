@@ -3,7 +3,7 @@
 //
 // 时间口径与 MemorySQL 保持一致：sessions 的时间是 **unix 秒**，
 // projects/memories.updated_at 是 **毫秒**。
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 const TABLES = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   raw_path        TEXT,
   message_count   INTEGER NOT NULL DEFAULT 0,
   tool_call_count INTEGER NOT NULL DEFAULT 0,
+  distilled_at    INTEGER,
+  distilled_count INTEGER,
   updated_at      INTEGER NOT NULL,
   deleted         INTEGER NOT NULL DEFAULT 0,
   UNIQUE (agent_type, external_id)
@@ -59,10 +61,13 @@ CREATE TABLE IF NOT EXISTS memories (
   confidence     REAL NOT NULL DEFAULT 1.0,
   access_count   INTEGER NOT NULL DEFAULT 0,
   last_access_at INTEGER,
+  source_session_id INTEGER,
+  why            TEXT,
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL,
   deleted        INTEGER NOT NULL DEFAULT 0
 );
+
 CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_type, last_message_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, last_message_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON session_messages(session_id, seq);
@@ -117,17 +122,58 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
 END;
 `
 
+const DIGESTS = `
+CREATE TABLE IF NOT EXISTS project_digests (
+  id               INTEGER PRIMARY KEY,
+  project_id       INTEGER NOT NULL REFERENCES projects(id),
+  summary          TEXT NOT NULL DEFAULT '',
+  recent           TEXT NOT NULL DEFAULT '',
+  todos            TEXT NOT NULL DEFAULT '[]',
+  model            TEXT NOT NULL DEFAULT '',
+  sessions_covered INTEGER NOT NULL DEFAULT 0,
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL,
+  deleted          INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_digests_project ON project_digests(project_id, created_at DESC);
+`
+
+function hasColumn(db, table, column) {
+  return db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .some((row) => row.name === column)
+}
+
 export function migrate(db) {
   db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
   const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()
-  const current = row ? Number(row.value) : 0
-  if (current >= SCHEMA_VERSION) return
-  db.exec(TABLES)
-  createFts(db, 'sessions_fts', 'title, summary', 'sessions')
-  createFts(db, 'messages_fts', 'content', 'session_messages')
-  createFts(db, 'memories_fts', 'content', 'memories')
-  db.exec(TRIGGERS)
-  db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)").run(
-    String(SCHEMA_VERSION)
-  )
+  let current = row ? Number(row.value) : 0
+  if (current < 1) {
+    db.exec(TABLES)
+    createFts(db, 'sessions_fts', 'title, summary', 'sessions')
+    createFts(db, 'messages_fts', 'content', 'session_messages')
+    createFts(db, 'memories_fts', 'content', 'memories')
+    db.exec(TRIGGERS)
+    current = 1
+    db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '1')").run()
+  }
+  // v2 的补列/建表每次都检查（不只看版本号）：曾经有中间版本把版本写成 2
+  // 却没有 ALTER，真库因此缺列；自愈比相信版本号可靠。
+  if (!hasColumn(db, 'sessions', 'distilled_at')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN distilled_at INTEGER')
+  }
+  if (!hasColumn(db, 'sessions', 'distilled_count')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN distilled_count INTEGER')
+  }
+  if (!hasColumn(db, 'memories', 'source_session_id')) {
+    db.exec('ALTER TABLE memories ADD COLUMN source_session_id INTEGER')
+  }
+  if (!hasColumn(db, 'memories', 'why')) {
+    db.exec('ALTER TABLE memories ADD COLUMN why TEXT')
+  }
+  db.exec(DIGESTS)
+  if (current < 2) {
+    db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '2')").run()
+  }
 }
