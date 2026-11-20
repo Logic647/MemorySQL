@@ -125,8 +125,11 @@ const runNow = async (projectId: number): Promise<void> => {
 describe('project-digest 触发逻辑', () => {
   it('手动立即总结只消化已安静的会话,不总结正在写入的那一场', async () => {
     addProject(1, 'demo')
-    addSession(1, 1, nowSec() - 3600) // 旧会话:可总结
-    addSession(2, 1, nowSec() - 30) // 正在聊:不应进总结
+    // 固定时间戳,避免测试跑到秒边界时 nowSec() 变化导致差 1 秒
+    const oldTs = nowSec() - 3600
+    const liveTs = nowSec() - 30
+    addSession(1, 1, oldTs) // 旧会话:可总结
+    addSession(2, 1, liveTs) // 正在聊:不应进总结
     initPlugin()
 
     await runNow(1)
@@ -136,7 +139,7 @@ describe('project-digest 触发逻辑', () => {
       .all() as Array<{ sessions_covered: number; period_end: number }>
     expect(digests).toHaveLength(1)
     expect(digests[0].sessions_covered).toBe(1)
-    expect(digests[0].period_end).toBe(nowSec() - 3600)
+    expect(digests[0].period_end).toBe(oldTs)
   })
 
   it('只有活会话时立即总结不会生成 digest', async () => {
