@@ -41,7 +41,7 @@ function normalize(options = {}, defaultCapture = false) {
     port: clamp(options.port, 8642, 1, 65535),
     endpoint: typeof options.endpoint === 'string' ? options.endpoint : undefined,
     dataDir: typeof options.dataDir === 'string' ? options.dataDir : undefined,
-    recall: options.recall !== false,
+    recall: options.recall === true,
     capture: options.capture === undefined ? defaultCapture : options.capture === true,
     maxBytes: clamp(options.maxBytes, DEFAULT_MAX_BYTES, 512, 16_000),
     gatewayTimeoutMs,
@@ -157,10 +157,19 @@ export async function onRequest(body, ctx) {
   try {
     const backend = await getBackend(ctx.options)
     const options = normalize(ctx.options, backend.kind === 'embedded')
+    // 内置存储的「记忆注入」开关在页面上（distill.json）：默认关，
+    // 开了可以只注入指定的 agent（存的是 agent_type，空 = 全部）。
+    const rule = typeof backend.recallConfig === 'function' ? backend.recallConfig() : null
+    const recallOn = rule ? rule.inject === true : options.recall
+    const targets = rule && Array.isArray(rule.agents) ? rule.agents : []
     // 先按**客户端原始历史**绑定捕获，再注入 —— 回写里不能带续接包
     bindCapture(body, ctx, options)
 
-    if (!options.recall || !allowedOrigin(ctx, options, 'recall') || isSkipped(ctx, options)) {
+    if (!recallOn || !allowedOrigin(ctx, options, 'recall') || isSkipped(ctx, options)) {
+      ctx.report?.('skipped')
+      return undefined
+    }
+    if (targets.length > 0 && !targets.includes(agentTypeOf(ctx.agent))) {
       ctx.report?.('skipped')
       return undefined
     }

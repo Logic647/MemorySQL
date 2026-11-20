@@ -110,20 +110,20 @@ test('内置存储：全新库的 context 为空（钩子据此不注入）', as
   assert.equal(await backend.call('memory_get_context', {}), '')
 })
 
-test('网关钩子 + 内置存储：首次空跳过，捕获后下一轮自动注入', async (t) => {
+test('网关钩子 + 内置存储：注入默认关，开启后捕获的下一轮才注入；可按 agent 过滤', async (t) => {
   resetHooks()
   resetBackend()
   t.after(() => {
     resetBackend()
     resetHooks()
   })
-  const ctx = (session, state = {}) => ({
+  const ctx = (session, state = {}, agent = 'Claude Code') => ({
     protocol: 'chat',
-    agent: 'Claude Code',
+    agent,
     session,
     cwd: 'H:/work/demo',
     origin: 'local',
-    options: { backend: 'embedded', dataDir: ':memory:', recall: true, gatewayTimeoutMs: 1500 },
+    options: { backend: 'embedded', dataDir: ':memory:', gatewayTimeoutMs: 1500 },
     signal: new AbortController().signal,
     state,
     report: () => {}
@@ -138,19 +138,32 @@ test('网关钩子 + 内置存储：首次空跳过，捕获后下一轮自动�
     first
   )
 
-  // 同一场对话的新请求（新 state），现在库里已有会话 → 注入
-  const second = ctx('s1', {})
-  const body2 = {
+  const body2 = () => ({
     messages: [
       { role: 'user', content: '登录一直失败怎么办？' },
       { role: 'assistant', content: '先看 session 过期时间，再查 cookie。' },
       { role: 'user', content: 'cookie 也没问题' }
     ]
-  }
-  const out = await onRequest(body2, second)
+  })
+  // 记忆注入默认关：即使插件选项 recall=true，也以页面开关为准
+  const backend = await getBackend({ backend: 'embedded', dataDir: ':memory:' })
+  assert.deepEqual(backend.recallConfig(), { inject: false, agents: [] })
+  assert.equal(await onRequest(body2(), ctx('s1', {})), undefined)
+
+  // 打开注入（全部 agent）→ 下一轮注入
+  await backend.ui.setDistill({ inject: true, injectAgents: [] })
+  assert.deepEqual(backend.recallConfig(), { inject: true, agents: [] })
+  const out = await onRequest(body2(), ctx('s1', {}))
   assert.ok(out)
   assert.match(out.messages[0].content, /<memorysql-context>/)
   assert.match(out.messages[0].content, /登录一直失败/)
+
+  // 只注入指定 agent：Claude Code 被挡，ZCode 放行
+  await backend.ui.setDistill({ injectAgents: ['zcode'] })
+  assert.equal(await onRequest(body2(), ctx('s2')), undefined)
+  const z = await onRequest(body2(), ctx('s3', {}, 'ZCode'))
+  assert.ok(z)
+  assert.match(z.messages[0].content, /<memorysql-context>/)
 })
 
 test('内置存储：结构化搜索（命中片段/会话 id）+ 删除会话 + 回写不复活', async (t) => {
@@ -212,6 +225,50 @@ test('内置存储：结构化搜索（命中片段/会话 id）+ 删除会话 +
   )
   assert.equal(revived.outcome, 'updated')
   assert.equal(JSON.parse(await call('memory_list_sessions', { format: 'json' })).length, 1)
+})
+
+test('内置存储：记忆注入默认关，开关与目标 agent 可保存', async (t) => {
+  const llm = {
+    async resolveModel() {
+      return 'test/model'
+    },
+    async models() {
+      return []
+    },
+    async chat() {
+      return { model: 'test/model', content: '{}' }
+    }
+  }
+  const backend = await createEmbeddedBackend({ memory: true, llm })
+  t.after(() => backend.close())
+  const call = (name, args = {}) => backend.call(name, args)
+
+  assert.deepEqual(backend.recallConfig(), { inject: false, agents: [] })
+
+  await call('memory_import_session', {
+    agent: 'zcode',
+    externalId: 'agent-list',
+    cwd: 'H:/work/demo',
+    messages: [{ role: 'user', content: '你好' }]
+  })
+  const saved = await backend.ui.setDistill({
+    inject: true,
+    injectAgents: ['ZCode', 'zcode', ' ', 'claudecode']
+  })
+  assert.equal(saved.inject, true)
+  assert.deepEqual(saved.injectAgents, ['zcode', 'claudecode'])
+  assert.deepEqual(backend.recallConfig(), { inject: true, agents: ['zcode', 'claudecode'] })
+  assert.ok(saved.agents.some((agent) => agent.id === 'zcode' && agent.sessions === 1))
+
+  // 空列表 = 注入全部 agent
+  const all = await backend.ui.setDistill({ injectAgents: [] })
+  assert.deepEqual(all.injectAgents, [])
+  assert.deepEqual(backend.recallConfig(), { inject: true, agents: [] })
+
+  // 关掉注入
+  const off = await backend.ui.setDistill({ inject: false })
+  assert.equal(off.inject, false)
+  assert.deepEqual(backend.recallConfig(), { inject: false, agents: [] })
 })
 
 test('后端工厂：默认 embedded，backend=app 走代理', async () => {

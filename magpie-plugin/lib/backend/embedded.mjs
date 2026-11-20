@@ -11,6 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { openDatabase } from './sqlite.mjs'
 import { migrate } from './schema.mjs'
+import { agentTypeOf } from '../agent-map.mjs'
 import {
   chat as llmChat,
   jsonFrom,
@@ -1149,6 +1150,9 @@ export async function createEmbeddedBackend(options = {}) {
     days: 7,
     autoDigest: false,
     dream: false,
+    // 记忆注入：默认关；injectAgents 为空 = 注入到全部 agent
+    inject: false,
+    injectAgents: [],
     last: 0,
     lastModel: '',
     added: 0,
@@ -1161,7 +1165,12 @@ export async function createEmbeddedBackend(options = {}) {
     const base = defaultState()
     if (!statePath) return base
     try {
-      return { ...base, ...JSON.parse(fs.readFileSync(statePath, 'utf8')) }
+      const loaded = { ...base, ...JSON.parse(fs.readFileSync(statePath, 'utf8')) }
+      loaded.inject = loaded.inject === true
+      loaded.injectAgents = Array.isArray(loaded.injectAgents)
+        ? loaded.injectAgents.map((v) => String(v).trim().toLowerCase()).filter(Boolean)
+        : []
+      return loaded
     } catch {
       return base
     }
@@ -1831,9 +1840,17 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     } catch {
       /* 网关没起来：返回空列表，页面仍能看状态 */
     }
+    const agents = all(
+      `SELECT agent_type AS id, count(*) AS sessions,
+              max(COALESCE(last_message_at, started_at)) AS lastAt
+         FROM sessions WHERE deleted = 0
+        GROUP BY agent_type
+        ORDER BY lastAt DESC, sessions DESC`
+    )
     return {
       ...distill,
       models,
+      agents,
       defaultModel: distill.model || magpieMemoryModel() || ''
     }
   }
@@ -1842,6 +1859,19 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     if (typeof args.on === 'boolean') distill.on = args.on
     if (typeof args.dream === 'boolean') distill.dream = args.dream
     if (typeof args.autoDigest === 'boolean') distill.autoDigest = args.autoDigest
+    if (typeof args.inject === 'boolean') distill.inject = args.inject
+    if (Array.isArray(args.injectAgents)) {
+      const picked = []
+      for (const value of args.injectAgents) {
+        const raw = String(value ?? '').trim()
+        if (!raw) continue
+        // 允许页面/API 传 magpie 显示名（Claude Code）或 agent_type（claudecode）
+        const id = agentTypeOf(raw)
+        if (!id || picked.includes(id)) continue
+        picked.push(id)
+      }
+      distill.injectAgents = picked.slice(0, 100)
+    }
     if (typeof args.model === 'string') distill.model = args.model.trim()
     if (args.days !== undefined) {
       const days = Number(args.days)
@@ -1873,6 +1903,15 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     three.setHours(3, 0, 0, 0)
     if (now < three) three.setDate(three.getDate() - 1)
     return (distill.dreamt || 0) < three.getTime()
+  }
+
+  // 网关钩子每次请求问一次：是否注入、注入到哪些 agent（空 = 全部）。
+  // 状态在内存里，setDistill 已经更新，不需要读文件。
+  function recallConfig() {
+    return {
+      inject: distill.inject === true,
+      agents: Array.isArray(distill.injectAgents) ? [...distill.injectAgents] : []
+    }
   }
 
   if (!inMemory) {
@@ -1925,6 +1964,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     dataDir,
     file,
     ui,
+    recallConfig,
     async call(name, args = {}) {
       const handler = handlers[name]
       if (!handler) throw new Error(`内置存储不支持工具 ${name}`)
@@ -1940,7 +1980,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
       return {
         ok: true,
         backend: 'embedded',
-        version: '0.4.0',
+        version: '0.5.0',
         port: null,
         tools: Object.keys(handlers).length,
         stats: statsValue

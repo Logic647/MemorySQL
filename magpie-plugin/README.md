@@ -6,7 +6,8 @@
 如果你已经在用 MemorySQL，也可以把后端切到 `app`，复用它的完整会话捕获与 LLM 项目总结。
 
 - **10 个工具**：`memorysql_get_context`、`search`、`list_sessions`、`get_session`、`list_projects`、`get_project_brief`、`get_project_digest`、`write`、`log_progress`、`stats`
-- **网关自动续接**：会话第一次经过 magpie 时，把「续接包」注入第一条用户消息；同一会话后续请求复用同一份，prompt cache 不受影响
+- **网关自动续接**：会话第一次经过 magpie 时，把「续接包」注入第一条用户消息；同一会话后续请求复用同一份，prompt cache 不受影响。**默认关闭**，在记忆页打开「记忆注入」后才生效
+- **记忆注入按 agent 选**：打开后可以注入到全部 agent，也可以只选某几个（默认全部）
 - **会话回写**：内置存储默认把每轮 user/assistant 文本写进本地会话档案（app 后端默认关，避免和 MemorySQL 自己的文件捕获双写）
 - **记忆页（参考 magpie 的 Memory）**：从对话学习、待确认、搜索/作用域/状态分段、逐条确认/归档/编辑/删除
 - **LLM 会话蒸馏**：用 magpie 里已配置的模型读安静下来的会话，最多 5 条候选；引用必须是用户原话；你确认后才进续接包
@@ -68,11 +69,12 @@ magpie plugin dump     # 看钩子/选项
 `hooks.mjs` 的 `onRequest`：
 
 1. 只对本机请求（`origin` 为 `local` / `magpie-key`）生效；远程默认关。
-2. 按 `ctx.session`（没有就用 `cwd + 第一条用户消息` 的哈希）缓存续接包。
-3. 调 `memory_get_context({ cwd, agent })`，裁剪到 `maxBytes`，包在
+2. **记忆注入默认关**：记忆页的「记忆注入」开关打开后才注入；可以只注入指定的 agent（空列表 = 全部）。
+3. 按 `ctx.session`（没有就用 `cwd + 第一条用户消息` 的哈希）缓存续接包。
+4. 调 `memory_get_context({ cwd, agent })`，裁剪到 `maxBytes`，包在
    `<memorysql-context>…</memorysql-context>` 里，追加到**第一条用户消息**。
-4. 同一 session 后续请求复用缓存块；首条用户消息在客户端历史里始终存在，前缀稳定。
-5. 任何失败/超时/空结果都 **fail open**：请求原样放行；全新库没有内容时直接跳过。
+5. 同一 session 后续请求复用缓存块；首条用户消息在客户端历史里始终存在，前缀稳定。
+6. 任何失败/超时/空结果都 **fail open**：请求原样放行；全新库没有内容时直接跳过。
 
 跳过：`skipAgents` 里的 agent、子代理请求（`skipSubagents`，默认 true）、magpie 内部请求（`memory` / `title` / `classifier` 等）。
 
@@ -107,7 +109,7 @@ magpie plugin dump     # 看钩子/选项
 - 模型复用 magpie 里配置好的：默认取 magpie 记忆蒸馏上次的 `lastModel`（`~/.config/magpie/distill.json`），页面可以换；请求走本机网关 `POST /v1/chat/completions`（loopback 免 key）
 - 没有可用模型时只走规则，不影响续接/工具
 
-**整理记忆**：每晚 03:00 或点「立即整理」，用同一个模型合并说同一件事的记忆、归档过时记忆；手写/置顶（`locked`）不动。
+**整理记忆**：每晚 03:00 后一次（与 magpie 记忆整理同周期）或点「立即整理」，用同一个模型合并说同一件事的记忆、归档过时记忆；手写/置顶（`locked`）不动。状态行始终显示**上一次整理时间**（关闭时也显示），例如「关闭 · 上次整理 3 小时前 · 合并 1 条 / 归档 2 条」。
 
 **项目总结**：勾选「整理后更新项目总结」或到项目页点「用模型生成总结」，模型会写滚动总结（总览 / 最近进展 / 待办）存进 `project_digests`；`memory_get_project_digest` 优先返回它，没有才用规则汇编。
 
@@ -137,7 +139,10 @@ magpie plugin dump     # 看钩子/选项
 （`127.0.0.1:<pagePort>`，默认 3488）。真正的 UI 由 `service.mjs` 提供：
 
 - 记忆（参考 magpie Memory）：状态分段、搜索、作用域、添加/编辑/确认/归档/删除/置顶
-- 从对话学习 / 整理记忆 / 整理后更新项目总结
+- 从对话学习 / 整理记忆 / 记忆注入 / 整理后更新项目总结
+- **记忆注入**：默认关；打开后选「全部 agent」或逐个勾选要注入的 agent
+- 整理状态行显示上一次整理时间（关闭时也显示）；周期与 magpie 记忆整理一致（每天 03:00 后一次）
+- 图标沿用 MemorySQL 应用图标（`page/icon.png`；`magpie.icon` 里是可离线用的 data URI）
 - 项目列表 → 续接包 / 项目总结（可点「用模型生成总结」）/ 会话
 - 会话列表显示 `#id`，可点开看最近 200 条，也可两步确认删除（tombstone：不再出现在列表/搜索/续接包；同一会话后续回写默认不复活）
 - 跨 agent 搜索：会话标题、消息、记忆一起搜；结果带命中片段高亮与「看会话」，同一会话最多先展示 3 条消息（可「显示全部」），范围可选项目
@@ -163,7 +168,7 @@ CORS，别的站点就算嵌一个 sandbox 也读不到 token，不能直连 loo
 | `model` | `""` | 从对话学习/整理/项目总结用的模型；空 = 页面选择 > magpie `distill.json` 的 `lastModel` > `/v1/models` 第一个 |
 | `gateway` | `""` | magpie 网关地址；空 = 读 `~/.config/magpie/gateway.json`，再回落到 `127.0.0.1:3425` |
 | `readOnly` | `false` | 隐藏 `write` / `log_progress`（不影响回写） |
-| `recall` | `true` | 网关自动续接 |
+| `recall` | `false` | 网关自动续接的兜底默认值；内置存储以记忆页「记忆注入」开关为准，app 后端用这个选项 |
 | `capture` | 随后端 | embedded 默认开，app 默认关；显式 `true/false` 覆盖 |
 | `maxBytes` | `6000` | 注入块上限（字符） |
 | `gatewayTimeoutMs` | `1500` | magpie 给钩子的预算；内部查询留 250ms 余量 |
@@ -191,7 +196,7 @@ CORS，别的站点就算嵌一个 sandbox 也读不到 token，不能直连 loo
 ## 隐私
 
 - 内置库只在本机；插件不向任何外部服务上传记忆/会话。
-- **自动续接会把本地记忆/会话摘要随请求发给模型厂商**（和 magpie 自己的 Memory 注入 instructions 一样）。magpie 的 masking 在请求出口处执行，注入内容也会被一起脱敏。
+- **自动续接会把本地记忆/会话摘要随请求发给模型厂商**（和 magpie 自己的 Memory 注入 instructions 一样），但**默认关闭**，要在记忆页打开「记忆注入」并选择 agent 后才会发生。magpie 的 masking 在请求出口处执行，注入内容也会被一起脱敏。
 - **从对话学习/整理/项目总结会把会话文本发给 magpie 网关背后的模型厂商**（默认用 magpie 记忆蒸馏的模型）；不想发就关掉这些开关。
 - 不想让某个 agent 看到记忆：把它加进 `skipAgents`；不想让远程请求看到：保持 `recallRemote` / `captureRemote` 为 false。
 - 记忆页可编辑；服务只绑 loopback，API 还要每次启动的随机 token（HTML 里注入，别的站点读不到）。
@@ -201,9 +206,9 @@ CORS，别的站点就算嵌一个 sandbox 也读不到 token，不能直连 loo
 ## 开发
 
 ```sh
-node --test        # 37 项单测：内嵌存储、搜索结构化命中、会话删除/回写不复活、
-                   # LLM 蒸馏/整理/项目总结（mock 模型）、协议注入、钩子召回/捕获、
-                   # 页面服务与 token/CORS、迁移自愈
+node --test        # 38 项单测：内嵌存储、搜索结构化命中、会话删除/回写不复活、
+                   # 记忆注入开关/目标 agent、LLM 蒸馏/整理/项目总结（mock 模型）、
+                   # 协议注入、钩子召回/捕获、页面服务与 token/CORS、迁移自愈
 magpie plugin add .   # 加载到本机 magpie
 magpie plugin         # 看工具/钩子/页面是否都在
 ```

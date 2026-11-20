@@ -202,19 +202,19 @@ function renderDistill() {
   const dreamRunning = d.running && d.job === 'dream'
   let line
   let bad = false
-  if (!d.on && !distillRunning) line = '关闭'
-  else if (distillRunning) {
+  if (distillRunning) {
     line = d.of ? `正在读取会话… ${d.doing || 0}/${d.of}` : '正在读取会话…'
     if (d.left) line += ` · 还剩 ${d.left} 条`
   } else if (d.error) {
     line = `上次失败：${d.error}`
     bad = true
   } else if (d.last) {
-    line = `上次 ${ago(d.last)} · 新增 ${d.added || 0} 条`
+    line = `上次读会话 ${ago(d.last)} · 新增 ${d.added || 0} 条`
     if (d.left) line += ` · 还有 ${d.left} 条未读`
   } else {
-    line = '读取安静 30 分钟的会话，每小时一次'
+    line = '还没读过会话'
   }
+  if (!d.on && !distillRunning) line = `关闭 · ${line}`
   const distillLine = $('#distillLine')
   distillLine.textContent = line
   distillLine.className = `sub${bad ? ' err' : ''}`
@@ -224,19 +224,23 @@ function renderDistill() {
   const archived = changes.length - merged
   let dreamLine
   let dreamBad = false
-  if (!d.dream && !dreamRunning) dreamLine = '关闭'
-  else if (dreamRunning) dreamLine = '整理中…'
+  if (dreamRunning) dreamLine = '整理中…'
   else if (d.dreamError) {
     dreamLine = `上次失败：${d.dreamError}`
     dreamBad = true
   } else if (d.dreamt) {
-    dreamLine = `上次 ${ago(d.dreamt)} · 合并 ${merged} 条 / 归档 ${archived} 条`
+    dreamLine = `上次整理 ${ago(d.dreamt)}${
+      merged || archived ? ` · 合并 ${merged} 条 / 归档 ${archived} 条` : ' · 没有需要变更的记忆'
+    }`
   } else {
-    dreamLine = '每晚 03:00 合并重复、归档过时'
+    dreamLine = d.dream ? '每天 03:00 后一次（与 magpie 记忆整理同周期）' : '还没整理过'
   }
+  if (!d.dream && !dreamRunning) dreamLine = `关闭 · ${dreamLine}`
   const dreamEl = $('#dreamLine')
   dreamEl.textContent = dreamLine
   dreamEl.className = `sub${dreamBad ? ' err' : ''}`
+
+  renderInject()
 
   const hint = $('#distillHint')
   if ((d.models || []).length === 0) {
@@ -248,6 +252,78 @@ function renderDistill() {
   } else {
     hint.textContent = ''
   }
+}
+
+const AGENT_LABEL = {
+  claudecode: 'Claude Code',
+  codex: 'Codex',
+  zcode: 'ZCode',
+  opencode: 'OpenCode',
+  gemini: 'Gemini CLI',
+  qwencode: 'Qwen Code',
+  kimicli: 'Kimi CLI',
+  codebuddy: 'CodeBuddy',
+  workbuddy: 'WorkBuddy',
+  qoder: 'Qoder',
+  dsh: 'DeepSeek Harness',
+  hermes: 'Hermes',
+  goose: 'Goose',
+  droid: 'Droid',
+  cline: 'Cline',
+  pi: 'Pi',
+  omp: 'omp',
+  omo: 'OmO',
+  grok: 'Grok Build',
+  minimax: 'MiniMax',
+  deveco: 'DevEco',
+  mimocode: 'MiMo',
+  copilot: 'Copilot',
+  cursor: 'Cursor',
+  node: 'Node',
+  bun: 'Bun',
+  magpie: 'magpie'
+}
+
+// 「记忆注入」：开关 + 注入到哪些 agent（空列表 = 全部）。
+function renderInject() {
+  const d = state.distill
+  if (!d) return
+  const on = d.inject === true
+  $('#injectOn').checked = on
+  $('#injectPick').hidden = !on
+  const agents = Array.isArray(d.agents) ? d.agents : []
+  const picked = Array.isArray(d.injectAgents) ? d.injectAgents : []
+  const all = picked.length === 0
+  $('#injectAll').checked = all
+  const box = $('#injectAgents')
+  box.replaceChildren()
+  for (const agent of agents) {
+    const label = el('label', 'check agent-pick')
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.checked = all || picked.includes(agent.id)
+    input.addEventListener('change', () => {
+      // 在「全部」状态下取消某个 agent：先展开成完整列表再减掉它
+      const base = all ? agents.map((item) => item.id) : [...picked]
+      const next = new Set(base)
+      if (input.checked) next.add(agent.id)
+      else next.delete(agent.id)
+      const ids = [...next]
+      void saveDistill({ injectAgents: ids.length === agents.length ? [] : ids })
+    })
+    label.title = `${AGENT_LABEL[agent.id] || agent.id} · ${agent.sessions || 0} 场会话${
+      agent.lastAt ? ` · ${fmtDay(agent.lastAt)}` : ''
+    }`
+    label.append(input, AGENT_LABEL[agent.id] || agent.id)
+    box.append(label)
+  }
+  if (!agents.length) box.append(el('span', 'muted', '还没有会话；先让 agent 跑一轮再选'))
+  $('#injectLine').textContent = !on
+    ? '关闭（默认）'
+    : all
+      ? '开启 · 全部 agent'
+      : `开启 · ${picked.length} 个 agent`
+  $('#injectLine').className = 'sub'
 }
 
 async function loadDistill() {
@@ -968,6 +1044,14 @@ function wire() {
   })
   $('#dreamOn').addEventListener('change', (event) => {
     void saveDistill({ dream: event.target.checked })
+  })
+  $('#injectOn').addEventListener('change', (event) => {
+    void saveDistill({ inject: event.target.checked })
+  })
+  $('#injectAll').addEventListener('change', (event) => {
+    const agents = state.distill?.agents || []
+    // 勾「全部」= 空列表；取消后展开成逐个 agent，便于再取消某几个
+    void saveDistill({ injectAgents: event.target.checked ? [] : agents.map((agent) => agent.id) })
   })
   $('#autoDigest').addEventListener('change', (event) => {
     void saveDistill({ autoDigest: event.target.checked })

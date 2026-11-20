@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MemorySQL</title>
     <link rel="stylesheet" href="style.css" />
-    <link rel="icon" href="icon.svg" />
+    <link rel="icon" href="icon.png" />
   </head>
   <body>
     <header class="top">
       <div class="brand">
-        <img src="icon.svg" alt="" width="28" height="28" />
+        <img src="icon.png" alt="" width="28" height="28" />
         <h1>MemorySQL</h1>
         <span id="status" class="pill">连接中…</span>
         <span id="agentChip" class="chip" hidden></span>
@@ -63,11 +63,31 @@
           </div>
           <div class="control-actions">
             <button id="dreamRun" class="ghost" type="button" title="合并说同一件事的记忆、归档过时记忆（手写/置顶不动）">立即整理</button>
-            <label class="switch" title="打开后每晚 03:00 整理一次记忆">
+            <label class="switch" title="打开后每天 03:00 后整理一次（与 magpie 记忆整理同周期）">
               <input id="dreamOn" type="checkbox" />
               <span></span>
             </label>
           </div>
+        </div>
+        <div class="control-row">
+          <div class="who">
+            <strong>记忆注入</strong>
+            <span id="injectLine" class="sub">关闭（默认）</span>
+          </div>
+          <div class="control-actions">
+            <label
+              class="switch"
+              title="开启后把记忆与最近会话注入 agent 的第一条用户消息；只对本机请求生效，默认关闭"
+            >
+              <input id="injectOn" type="checkbox" />
+              <span></span>
+            </label>
+          </div>
+        </div>
+        <div id="injectPick" class="control-row slim inject-pick" hidden>
+          <span class="muted" title="不选具体 agent 时默认注入全部">注入到</span>
+          <label class="check" title="全部 agent；取消勾选后可以逐个选择"><input id="injectAll" type="checkbox" /> 全部 agent</label>
+          <div id="injectAgents" class="agent-picks"></div>
         </div>
         <div class="control-row slim">
           <label class="check" title="整理记忆后，用模型更新有新记忆的项目总结"><input id="autoDigest" type="checkbox" /> 整理后更新项目总结</label>

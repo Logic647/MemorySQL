@@ -50,7 +50,7 @@ const STATIC = new Map([
   ['/index.html', staticFile('ui/index.html', 'text/html; charset=utf-8')],
   ['/app.js', staticFile('ui/app.js', 'text/javascript; charset=utf-8')],
   ['/style.css', staticFile('ui/style.css', 'text/css; charset=utf-8')],
-  ['/icon.svg', staticFile('page/icon.svg', 'image/svg+xml')]
+  ['/icon.png', staticFile('page/icon.png', 'image/png')]
 ])
 
 function securityHeaders(res, port) {

@@ -135,14 +135,17 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 `hooks.mjs` 的 `onRequest`:
 
 1. `getBackend(options)` 决定后端；`capture` 默认值随后端(embedded 开 / app 关)。
-2. 先按**客户端原始历史**绑定 capture(注入前)，再注入。
-3. 只对本机(`local` / `magpie-key`)生效；`skipAgents`、子代理、magpie 内部请求
+2. **记忆注入默认关**：embedded 读页面状态(`distill.json` 的 `inject`/`injectAgents`)；
+   `inject=false` 时不注入；`injectAgents` 非空时只注入这些 `agent_type`(空 = 全部)。
+   app 后端没有页面状态，回落到插件选项 `recall`(默认 false)。
+3. 先按**客户端原始历史**绑定 capture(注入前)，再注入。
+4. 只对本机(`local` / `magpie-key`)生效；`skipAgents`、子代理、magpie 内部请求
    (`memory` / `title` / `classifier`)跳过。
-4. 缓存键:`ctx.session`,没有则 `cwd + 第一条用户消息` 的哈希。
-5. 调 `memory_get_context({ cwd, agent })`；裁剪到 `maxBytes`，包
+5. 缓存键:`ctx.session`,没有则 `cwd + 第一条用户消息` 的哈希。
+6. 调 `memory_get_context({ cwd, agent })`；裁剪到 `maxBytes`，包
    `<memorysql-context>` 后追加到**第一条用户消息**；同一 session 后续请求复用
    缓存块，前缀稳定，prompt cache 不碎。
-6. 失败/超时/空结果 → `ctx.report('unavailable'/'empty')` + 返回 `undefined`，
+7. 失败/超时/空结果 → `ctx.report('unavailable'/'empty')` + 返回 `undefined`，
    请求原样放行。内置后端是本地同步查询，通常毫秒级。
 
 ### 3.4 会话回写
@@ -180,8 +183,10 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
   `x-memorysql-token`；静态 HTML 不带 CORS（别的 sandbox 页面读不到 token）。
 - `ui/`:状态(内置存储 / MemorySQL 应用)、记忆页(参考 magpie Memory)、项目列表、
   续接包/总结/会话(显示 `#id`、两步确认删除)、跨 agent 搜索(命中片段高亮、可展开会话、
-  同一会话最多先展示 3 条)、所有控件的悬停说明。
+  同一会话最多先展示 3 条)、记忆注入开关与目标 agent、所有控件的悬停说明。
   相对路径 + `magpie.service` 兼容 `magpie web`。
+- 图标沿用 MemorySQL 应用图标：页面/UI 用 `page/icon.png`；`magpie.icon` 是
+  同一图标的 128px data URI(1 万字节左右)，离线和 npm/GitHub 卡片都能显示。
 - 页面 token 每次宿主启动轮换：旧页面 API 返回 401 时前端自动 `location.replace`
   带 `?fresh=<时间戳>` 重载一次（<5 秒内不重复，防循环），不必手动刷新。
 - `magpie.actions` 的 `agent-sessions` 出现在 agent 行菜单，打开页面并带 `?agent=`。
@@ -219,8 +224,9 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 
 **整理记忆**(`runDreamJob`)：
 
-- 每晚 03:00 后一次，或页面「立即整理」；每个作用域最多 120 条
-  active/candidate、`locked=0` 的记忆
+- 每晚 03:00 后一次(与 magpie 记忆整理的 `DreamHour` 同周期)，或页面「立即整理」；
+  每个作用域最多 120 条 active/candidate、`locked=0` 的记忆
+- 状态行始终显示上一次整理时间(关闭时也显示)，没有变更时显示「没有需要变更的记忆」
 - prompt 要求模型只做「合并说同一件事」和「归档不再成立」，返回
   `{merge:[{ids,text,kind}],archive:[{id,why}]}`；id 是列表序号，后端校验存在且未锁定
 - 合并：插一条 `source='llm-tidy'` 的 active 记忆，成员置 `superseded`；
@@ -271,6 +277,7 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
 | 迁移自愈 | 中间版本把版本号写成 2 却没 ALTER，真库缺列；每次启动按 `hasColumn` 补齐，不信版本号 |
 | 捕获默认随后端 | embedded 没有文件捕获，回写是唯一来源；app 有文件捕获，回写会双写 |
 | 注入第一条用户消息 | 客户端历史里始终存在 → 后续请求前缀稳定;系统提示改动面更小 |
+| 记忆注入默认关、可按 agent 选 | 注入会把本地记忆随请求发给模型厂商；默认不改行为，用户显式打开并选 agent 后才生效 |
 | 页面用带路页 + 本地服务 | magpie 页面 sandbox 的 `connect-src 'none'` 决定了不能直连 |
 | 不改 magpie 内置 Memory | 不可插件化;硬替换会和用户已有数据/蒸馏流程打架 |
 
@@ -278,9 +285,10 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
 
 2026-11-20:
 
-- 插件:`node --test` **37 passed**：内嵌存储、搜索结构化命中、会话删除/回写不复活、
-  LLM 蒸馏/整理/项目总结(mock 模型)、记忆页 API、协议注入、钩子召回/捕获、
-  页面服务 token/CORS、迁移自愈；`bun:sqlite`(magpie 自带 Bun 1.4.4)冒烟通过。
+- 插件:`node --test` **38 passed**：内嵌存储、搜索结构化命中、会话删除/回写不复活、
+  记忆注入默认关/按 agent 过滤、LLM 蒸馏/整理/项目总结(mock 模型)、记忆页 API、
+  协议注入、钩子召回/捕获、页面服务 token/CORS、迁移自愈；
+  `bun:sqlite`(magpie 自带 Bun 1.4.4)冒烟通过。
 - 真实模型 E2E(临时库副本，不碰真库)：`workbuddy/glm-5.3-flash` 蒸馏出 **4 条候选**
   (kind/scope/project/why 正确、quote 校验有效)，并生成项目总结；`memory_get_project_digest`
   返回模型总结。
@@ -292,6 +300,10 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
   高亮、同一会话最多先展示 3 条(可「显示全部」)、会话 id 可见；两步确认删除后列表与
   状态计数同步(4→3)、搜索不再出现该会话；模拟旧 token 请求 401 时页面自动带
   `?fresh=` 重载并恢复。
+- 真机页面验收(2026-11-20)：左上角显示 MemorySQL 应用图标；记忆页新增「记忆注入」
+  默认关，打开后显示全部 agent 与逐个勾选，选 2 个后状态行同步；关掉后回到
+  「关闭（默认）」且选择保留；跑一次整理后状态行显示「关闭 · 上次整理 刚刚 ·
+  没有需要变更的记忆」。
 - MemorySQL:`npm run typecheck` 0;`npm test` **678 passed / 2 skipped**;
   `npm run build` 通过。
 - 真实 magpie 0.1.4594 加载:钩子 `onRequest`、10 个工具、`page MemorySQL` 都识别。

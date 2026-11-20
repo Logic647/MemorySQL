@@ -31,6 +31,11 @@
   box-sizing: border-box;
 }
 
+/* class 上的 display（如 .control-row 的 flex）会覆盖 hidden 属性，统一兜底 */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -476,6 +481,21 @@ button {
   gap: 6px;
   color: var(--muted);
   font-size: 12px;
+}
+.inject-pick {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.agent-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  flex: 1 1 240px;
+}
+.agent-pick {
+  color: var(--text);
+  font-size: 11.5px;
 }
 .switch {
   position: relative;

@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-11-20 · magpie 插件：应用图标 + 记忆注入开关 + 上次整理时间
+
+**图标**：插件改用 MemorySQL 应用图标。`page/icon.png` 直接复制 `build/icon.png`
+（1024×1024）；页面服务的 `/icon.png` 和 UI 顶栏都指向它。`magpie.icon` 只接受
+`https:` / `data:image/`，所以用 128px PNG 的 data URI（约 10KB，离线可用）。
+
+**记忆注入（默认关 + 按 agent 选）**
+- `distill.json` 新增 `inject`（默认 false）和 `injectAgents`（空 = 全部 agent）。
+- 记忆页新增「记忆注入」行：开关关闭时只显示「关闭（默认）」；打开后显示
+  「全部 agent」和逐个 agent（列表来自 `sessions.agent_type`，带会话数与最近时间）。
+- `hooks.mjs` 的 `onRequest` 先问 `backend.recallConfig()`（embedded 从内存状态读），
+  `inject=false` 直接跳过；`injectAgents` 非空时用 `agentTypeOf(ctx.agent)` 过滤，
+  只给选中的 agent 注入。app 后端没有页面状态，回落到插件选项 `recall`。
+- `recall` 默认值改为 **false**（package.json 与 `normalize` 同步）。
+- 注入仍只对本机请求、`skipAgents`/子代理/magpie 内部请求不注入，失败 fail open。
+- 「记忆注入」状态在 `~/.config/magpie/memorysql/distill.json`，关掉注入会保留
+  上次选的 agent，下次打开直接沿用。
+
+**整理周期与上次整理时间**
+- 周期继续沿用 magpie 记忆整理的规则：每天 03:00（本地）后一次；页面文案与
+  悬停说明写明「与 magpie 记忆整理同周期」。
+- 状态行现在**无论开关是否打开都显示上次整理时间**：有变更时「上次整理 X ·
+  合并 N / 归档 M」，没有变更时「上次整理 X · 没有需要变更的记忆」，从没跑过
+  显示「还没整理过」；「从对话学习」关闭时也保留「上次读会话 X · 新增 N 条」。
+- 真机跑了一次「立即整理」（0 条记忆，安全）确认显示「关闭 · 上次整理 刚刚 ·
+  没有需要变更的记忆」。
+
+**顺手修**
+- `.control-row` 的 `display:flex` 会覆盖 `hidden` 属性，导致「注入到」行在开关
+  关闭时仍然显示；加全局 `[hidden] { display: none !important; }` 兜底。
+
+**验证**
+- 插件 `node --test` **38 passed**：新增注入默认关、开关/目标 agent 保存、
+  `recallConfig` 默认值、钩子按 agent 过滤；原有搜索/删除/蒸馏/钩子全过。
+- 真机页面：左上角图标为应用图标；「记忆注入」默认关、打开后显示全部 agent、
+  选 2 个后状态行同步、关闭后恢复「关闭（默认）」且选择保留；上次整理时间可见。
+- 插件版本 **0.5.0**；README、`docs/magpie-plugin.md`、AGENTS.md 已同步。
+
 ## 2026-11-20 · magpie 插件：搜索修复 + 会话删除/id + 全控件使用提示
 
 **用户反馈**：搜索功能没用；会话要能删除；会话列表要显示 id；所有功能加使用提示。
