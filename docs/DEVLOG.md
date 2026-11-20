@@ -38,6 +38,10 @@
 - 记忆搜索无结果时给「去搜索会话和消息」，一键带关键词跳到搜索页
 - 搜索页在项目范围下 0 结果时给「在全部项目中搜索」
 
+**介绍文案**：`package.json` 的 `description` / `magpie.summary`、README 开头与功能列表、
+`docs/magpie-plugin.md` 的记忆页章节重写为独立表述，不再出现「参考 magpie 的 Memory」
+这类措辞；描述更新为「按 agent 选择的记忆注入 + LLM 项目总结与记忆整理」。
+
 **验证**
 - 插件 `node --test` **39 passed**：新增项目总结安静期（mock LLM）、`injectAll`
   与 0 个不注入；原有搜索/删除/蒸馏/钩子全过。

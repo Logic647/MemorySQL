@@ -14,7 +14,7 @@
 - **不要**把 MemorySQL 当成 magpie 内置 Memory 的替代品。magpie 已内建
   `internal/memory`(`~/.config/magpie/memory/*.md`、`/mcp/magpie/memory`、
   语义检索、对话蒸馏、夜间整理、注入 instructions、同步),且**不可插件化替换**。
-- 分工:magpie Memory 记「事实/偏好」;MemorySQL 记「谁在哪个项目做到哪一步」
+- 定位:MemorySQL 记「谁在哪个项目做到哪一步」——会话档案、项目交接、项目总结与收工汇报。
   —— 会话档案、项目交接、收工汇报。
 - 两种后端:
   - `embedded`(默认):插件自带 SQLite 知识库,零外部依赖;
@@ -185,7 +185,7 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
   `Access-Control-Allow-Origin: null` 并处理 `OPTIONS` 预检；每次宿主启动生成
   随机 token 注入页面 HTML 的 `<meta name="memorysql-token">`，API 必须带
   `x-memorysql-token`；静态 HTML 不带 CORS（别的 sandbox 页面读不到 token）。
-- `ui/`:状态(内置存储 / MemorySQL 应用)、记忆页(参考 magpie Memory)、项目列表、
+- `ui/`:状态(内置存储 / MemorySQL 应用)、记忆页、项目列表、
   续接包/总结/会话(显示 `#id`、两步确认删除)、跨 agent 搜索(命中片段高亮、可展开会话、
   同一会话最多先展示 3 条)、项目总结(安静期 + 立即生成)、整理记忆(间隔 + 立即整理)、
   记忆注入开关与目标 agent、所有控件的悬停说明。
@@ -197,9 +197,9 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
   从搜索页触发时会把 `view=search&q=…&scope=…` 一起带上，重载后自动恢复并重搜。
 - `magpie.actions` 的 `agent-sessions` 出现在 agent 行菜单，打开页面并带 `?agent=`。
 
-### 3.6 记忆页、项目总结与整理(参考 magpie dream / MemorySQL project-digest)
+### 3.6 记忆页、项目总结与整理
 
-**记忆页**(`ui/` 的「记忆」标签)照 magpie 的 Library → Memory 做：
+**记忆页**(`ui/` 的「记忆」标签)：
 
 - 状态分段(使用中 / 待确认 / 已归档；已归档含 superseded)、搜索、作用域筛选
 - 每行显示首行、作用域/标签/来源、kind 标签、锁定标记；展开可编辑文本/kind/
@@ -293,7 +293,7 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
 - 真机踩坑+修复：live 库被「版本=2 但缺 v2 列」的中间代码打开过，记忆页报
   `no such column: why`；改成每次启动自愈后，真库补列成功，`/api/memories` 正常。
 - 页面：真实 magpie 宿主内打开，浏览器目视确认记忆页(状态分段/模型选择/作用域/
-  项目总结/整理/记忆注入/搜索/添加)与 magpie Memory 布局一致。
+  项目总结/整理/记忆注入/搜索/添加)布局与交互符合预期。
 - 页面搜索/删除验收(临时库副本,不碰真库)：`搜索"插件"` 返回 20 条命中、片段围绕关键词
   高亮、同一会话最多先展示 3 条(可「显示全部」)、会话 id 可见；两步确认删除后列表与
   状态计数同步(4→3)、搜索不再出现该会话；模拟旧 token 请求 401 时页面自动带

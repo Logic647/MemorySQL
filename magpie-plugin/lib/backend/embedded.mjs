@@ -1157,7 +1157,7 @@ export async function createEmbeddedBackend(options = {}) {
     return JSON.stringify({ id: row?.id ?? null, outcome, messages: messages.length })
   }
 
-  // ----- LLM 整理（参考 magpie memdistill / dream）-----------------------
+  // ----- LLM 项目总结与整理 ------------------------------------------------
   //
   // 模型走 magpie 网关（loopback 免 key）：默认用 magpie 记忆蒸馏上次的
   // lastModel，页面上可以改。蒸馏/整理都在后台跑，页面轮询进度，不占工具

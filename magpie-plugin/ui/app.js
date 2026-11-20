@@ -1,6 +1,5 @@
 // MemorySQL 页面（由 service.mjs 提供，不在 magpie 的 sandbox 里）。
-// 记忆页参考 magpie 的 Library → Memory：状态分段、搜索、模型选择、
-// 从对话学习、整理、逐条确认/归档/编辑。
+// 记忆页：状态分段、搜索、项目总结、整理记忆、记忆注入、逐条确认/归档/编辑。
 const state = {
   backend: '',
   agent: new URLSearchParams(location.search).get('agent') || '',
