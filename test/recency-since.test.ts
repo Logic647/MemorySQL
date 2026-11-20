@@ -24,6 +24,7 @@ function setup(): { db: Db; tools: McpToolDef[] } {
     search,
     // memories 服务在 since/排序用例里用不到,给个最小替身
     memories: {
+      ingestSessions: async () => ({ scanned: 0, imported: 0, updated: 0, skipped: 0, sessionIds: [] }),
       upsertMemory: () => ({ id: 0, changed: false }),
       addMemory: () => ({ id: 0 })
     },

@@ -1,0 +1,89 @@
+{
+  "name": "@logic647/tools-memorysql",
+  "version": "0.1.0",
+  "description": "把本地 MemorySQL 知识库接进 magpie：跨 agent 会话档案、项目交接简报、自动续接与会话回写。MemorySQL as a magpie plugin: cross-agent session archive, project handoff, automatic recall and conversation capture.",
+  "type": "module",
+  "main": "./index.mjs",
+  "files": [
+    "index.mjs",
+    "hooks.mjs",
+    "service.mjs",
+    "lib",
+    "page",
+    "ui",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "magpie",
+    "magpie-tools",
+    "magpie-page",
+    "magpie-plugin",
+    "mcp",
+    "memory",
+    "memorysql",
+    "opencode",
+    "opencode-plugin"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Logic647/memorysql-magpie.git"
+  },
+  "engines": {
+    "magpie": ">=0.1.1531",
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "magpie": {
+    "name": "MemorySQL",
+    "icon": "page/icon.svg",
+    "summary": {
+      "en": "Cross-agent session archive and project handoff from your local MemorySQL knowledge base: 10 memory tools, automatic recall at the gateway, optional conversation capture, and a MemorySQL page.",
+      "zh": "把本地 MemorySQL 知识库接进 magpie：10 个记忆/会话工具、网关自动续接、可选的会话回写，以及一个 MemorySQL 页面。"
+    },
+    "hooks": "./hooks.mjs",
+    "options": {
+      "port": 8642,
+      "endpoint": "",
+      "readOnly": false,
+      "recall": true,
+      "capture": false,
+      "maxBytes": 6000,
+      "gatewayTimeoutMs": 1500,
+      "skipAgents": [],
+      "skipSubagents": true,
+      "recallRemote": false,
+      "captureRemote": false,
+      "pagePort": 3488
+    },
+    "page": {
+      "title": "MemorySQL",
+      "titles": {
+        "zh": "MemorySQL",
+        "zh-TW": "MemorySQL",
+        "ja": "MemorySQL"
+      },
+      "file": "page/index.html",
+      "icon": "page/icon.svg",
+      "service": {
+        "port": 3488,
+        "option": "pagePort"
+      }
+    },
+    "actions": [
+      {
+        "id": "agent-sessions",
+        "menu": "agent",
+        "title": "MemorySQL sessions",
+        "titles": {
+          "zh": "在 MemorySQL 里看会话",
+          "zh-TW": "在 MemorySQL 裡看會話",
+          "ja": "MemorySQL のセッション"
+        }
+      }
+    ]
+  }
+}

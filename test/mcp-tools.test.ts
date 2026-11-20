@@ -460,3 +460,124 @@ describe('memory_log_progress + brief', () => {
     expect(brief).toContain('写了一半的功能')
   })
 })
+
+describe('cwd project resolution', () => {
+  it('matches a subdirectory cwd to the longest project root', async () => {
+    // 第二项目更活跃:不带 cwd 时 active 会选它 —— 用它证明 cwd 真的生效
+    db.prepare(
+      `INSERT INTO projects (id, path, name, updated_at, device_id) VALUES (2, 'G:/work/Other', 'Other', 2, 'local')`
+    ).run()
+    db.prepare(
+      `INSERT INTO sessions (id, agent_type, external_id, project_id, started_at, last_message_at, title, summary, content_hash, message_count, tool_call_count, updated_at, device_id)
+       VALUES (30, 'codex', 'o1', 2, strftime('%s','now'), strftime('%s','now'), '别的项目最近会话', '', 'h30', 1, 0, strftime('%s','now'), 'local')`
+    ).run()
+
+    const byCwd = await call('memory_get_context', { cwd: 'F:/code/MemorySQL/src/plugins' })
+    expect(byCwd).toContain('## 项目: MemorySQL')
+    expect(byCwd).not.toContain('## 项目: Other')
+
+    // cwd 未知时回退到关键词,行为与旧版一致
+    const fallback = await call('memory_get_context', { cwd: 'Z:/nowhere', project: 'MemorySQL' })
+    expect(fallback).toContain('## 项目: MemorySQL')
+  })
+})
+
+describe('memory_list_projects', () => {
+  it('lists projects with session counts and last activity', async () => {
+    const out = await call('memory_list_projects', {})
+    expect(out).toContain('# 项目列表')
+    expect(out).toContain('#1 MemorySQL')
+    expect(out).toContain('2 个会话')
+    expect(out).toContain('F:/code/MemorySQL')
+  })
+})
+
+describe('memory_stats', () => {
+  it('reports counts in one call', async () => {
+    const s = JSON.parse(await call('memory_stats', {})) as {
+      sessions: number
+      projects: number
+      memories: number
+      messages: number
+    }
+    expect(s.sessions).toBe(3)
+    expect(s.projects).toBe(1)
+    expect(s.memories).toBe(3)
+    expect(s.messages).toBe(3)
+  })
+})
+
+describe('memory_import_session', () => {
+  it('imports, appends, and refuses to shrink a richer source capture', async () => {
+    const first = JSON.parse(
+      await call('memory_import_session', {
+        agent: 'magpie',
+        externalId: 'mag-sess-1',
+        cwd: 'F:/code/MemorySQL',
+        messages: [
+          { role: 'user', content: '第一轮问题' },
+          { role: 'assistant', content: '第一轮回答' }
+        ]
+      })
+    ) as { id: number; outcome: string; messages: number }
+    expect(first.outcome).toBe('imported')
+    expect(first.id).toBeGreaterThan(0)
+
+    const row = db
+      .prepare('SELECT title, cwd, message_count, project_id, raw_path FROM sessions WHERE id = ?')
+      .get(first.id) as {
+      title: string
+      cwd: string
+      message_count: number
+      project_id: number
+      raw_path: string
+    }
+    expect(row.title).toBe('第一轮问题')
+    expect(row.cwd).toBe('F:/code/MemorySQL')
+    expect(row.message_count).toBe(2)
+    // cwd 命中已登记项目,不新建项目
+    expect(row.project_id).toBe(1)
+    expect(row.raw_path).toBe('magpie-gateway:magpie')
+
+    const second = JSON.parse(
+      await call('memory_import_session', {
+        agent: 'magpie',
+        externalId: 'mag-sess-1',
+        messages: [
+          { role: 'user', content: '第一轮问题' },
+          { role: 'assistant', content: '第一轮回答' },
+          { role: 'user', content: '第二轮问题' }
+        ]
+      })
+    ) as { outcome: string }
+    expect(second.outcome).toBe('updated')
+    expect(
+      (db.prepare('SELECT message_count AS n FROM sessions WHERE id = ?').get(first.id) as { n: number }).n
+    ).toBe(3)
+
+    // 客户端只发了当前轮：不能把网关自己写的历史截短
+    const shorter = await call('memory_import_session', {
+      agent: 'magpie',
+      externalId: 'mag-sess-1',
+      messages: [{ role: 'user', content: '只有一条' }]
+    })
+    expect(shorter).toContain('跳过')
+    expect(
+      (db.prepare('SELECT message_count AS n FROM sessions WHERE id = ?').get(first.id) as { n: number }).n
+    ).toBe(3)
+
+    // 源文件捕获到了更完整的一份:网关的短副本不能再把它截短
+    db.prepare(
+      `UPDATE sessions SET message_count = 9, raw_path = 'C:/transcripts/x.jsonl' WHERE id = ?`
+    ).run(first.id)
+    const third = await call('memory_import_session', {
+      agent: 'magpie',
+      externalId: 'mag-sess-1',
+      messages: [{ role: 'user', content: '只有一条' }]
+    })
+    expect(third).toContain('更完整')
+    expect(
+      (db.prepare('SELECT message_count AS n FROM sessions WHERE id = ?').get(first.id) as { n: number }).n
+    ).toBe(9)
+  })
+})

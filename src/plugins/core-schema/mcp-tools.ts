@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import type { McpToolDef } from '../../main/core/plugin-host'
-import type { SearchHit } from '../../shared/types'
+import type { AgentType, MessageRole, RawMessage, RawSession, SearchHit } from '../../shared/types'
+import { collectDbStats } from '../../main/core/db-stats'
 import type { SearchService } from './search'
 import type { MemoriesService } from './index'
 
@@ -23,6 +24,20 @@ function fmtTime(ts: number | null | undefined): string {
 /** `since` is expressed in days back from now — unambiguous for agents. */
 function sinceCutoffSec(days: number): number {
   return Math.floor(Date.now() / 1000) - days * 86400
+}
+
+/**
+ * 归一化项目路径,用于 cwd 前缀匹配。
+ *
+ * 换机/斜杠两种写法/Windows 大小写都会让「同一个项目」在库里留下多行;
+ * 匹配时统一成 `/` 分隔、去尾斜杠、Windows 下转小写。只用于比较,不改写
+ * 库里的原始路径(展示仍要显示用户熟悉的那一份)。
+ */
+function normProjectPath(p: string | null | undefined): string {
+  if (!p) return ''
+  let s = p.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+  if (process.platform === 'win32') s = s.toLowerCase()
+  return s
 }
 
 interface ProjectRow {
@@ -65,8 +80,10 @@ export function createMcpTools(deps: {
   search: SearchService
   memories: MemoriesService
   services: { use<T = unknown>(name: string): T }
+  /** 主库路径,`memory_stats` 用它报告文件大小;可省略 */
+  dbPath?: string
 }): McpToolDef[] {
-  const { sqlite, search, memories, services } = deps
+  const { sqlite, search, memories, services, dbPath } = deps
 
   const KIND_ORDER = ['persona', 'preference', 'fact', 'decision'] as const
   const KIND_LABEL: Record<string, string> = {
@@ -226,7 +243,56 @@ export function createMcpTools(deps: {
       .all(like) as ProjectRow[]
   }
 
-  const findProject = (keyword?: string): ProjectRow | null => {
+  /**
+   * cwd → 项目:按**最长路径前缀**匹配。
+   *
+   * `findProjectsByKeyword` 的 path LIKE 只适合「路径片段」,agent 在项目
+   * 子目录里启动(cwd = `<repo>/src`)时匹配不到 `<repo>`。这里按目录边界
+   * 判断前缀,取最深的那个项目根;同一路径只登记一行,所以只返回一个。
+   * 找不到时返回空,由调用方退回关键词匹配/最近活跃项目。
+   */
+  const findProjectsByCwd = (cwd: string): ProjectRow[] => {
+    const target = normProjectPath(cwd)
+    if (!target) return []
+    const rows = sqlite
+      .prepare(
+        `SELECT id, name, path, tech_stack FROM projects
+         WHERE deleted = 0 AND path IS NOT NULL AND path != ''`
+      )
+      .all() as ProjectRow[]
+    let best: ProjectRow | null = null
+    let bestLen = -1
+    for (const row of rows) {
+      const p = normProjectPath(row.path)
+      if (!p) continue
+      if (target === p || target.startsWith(`${p}/`)) {
+        if (p.length > bestLen) {
+          best = row
+          bestLen = p.length
+        }
+      }
+    }
+    return best ? [best] : []
+  }
+
+  /**
+   * 统一的项目解析入口:显式 cwd 优先(按路径),否则按名称/路径关键词。
+   * get_context / brief / list_sessions / search 共用,避免同一段返回里
+   * 出现不同项目口径。
+   */
+  const resolveProjects = (keyword?: string, cwd?: string): ProjectRow[] => {
+    if (cwd && cwd.trim()) {
+      const byCwd = findProjectsByCwd(cwd)
+      if (byCwd.length > 0) return byCwd
+    }
+    return keyword ? findProjectsByKeyword(keyword) : []
+  }
+
+  const findProject = (keyword?: string, cwd?: string): ProjectRow | null => {
+    if (cwd && cwd.trim()) {
+      const byCwd = findProjectsByCwd(cwd)
+      if (byCwd[0]) return byCwd[0]
+    }
     if (keyword) {
       const row = findProjectByKeyword(keyword)
       if (row) return row
@@ -415,12 +481,14 @@ export function createMcpTools(deps: {
 
   const buildContext = (args: Record<string, unknown>): string => {
     const keyword = typeof args.project === 'string' ? args.project : undefined
+    const cwd = typeof args.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : undefined
     const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
     const includeLast = args.include_last_session === true
     // 同名项目(换机/斜杠写法/src 子目录)合并成一个集合,标题、总结、会话列表
     // **必须用同一份集合**,否则同一段返回里会出现三个不同口径的项目
     // (实测:标题是「嵌入式…省赛」,总结正文却是「冰冰快答小助手」)。
-    const matched = keyword ? findProjectsByKeyword(keyword) : []
+    // cwd 优先按路径前缀解析:agent 在子目录里启动也能回到项目根。
+    const matched = resolveProjects(keyword, cwd)
     const active = findProject(undefined)
     const project = matched[0] ?? active
     // 即使调用方没传 project,也落到最近活跃项目:这样「全局 + 项目记忆 + 总结」
@@ -476,10 +544,11 @@ export function createMcpTools(deps: {
 
   const buildBrief = (args: Record<string, unknown>): string => {
     const keyword = typeof args.project === 'string' ? args.project : undefined
+    const cwd = typeof args.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : undefined
     const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
-    const project = findProject(keyword)
+    const project = findProject(keyword, cwd)
     // 与 buildContext 同口径:同名项目合并成一份集合,标题/总结/会话列表共用它
-    const matched = keyword ? findProjectsByKeyword(keyword) : []
+    const matched = resolveProjects(keyword, cwd)
     const projectIds = matched.length > 0 ? matched.map((p) => p.id) : project ? [project.id] : null
     const sessions = recentSessionsOf(projectIds, 8)
 
@@ -558,6 +627,7 @@ export function createMcpTools(deps: {
         type: 'object',
         properties: {
           project: { type: 'string', description: '项目名或路径关键词,缺省取最近活跃项目' },
+          cwd: { type: 'string', description: '当前工作目录(绝对路径);优先按最长路径前缀匹配项目,适合 agent 在子目录里启动时' },
           agent: { type: 'string', description: '按 agent 过滤长期记忆(全局记忆始终包含),如 codex / hermes' },
           include_last_session: {
             type: 'boolean',
@@ -576,10 +646,84 @@ export function createMcpTools(deps: {
         type: 'object',
         properties: {
           project: { type: 'string', description: '项目名或路径关键词,缺省取最近活跃项目' },
+          cwd: { type: 'string', description: '当前工作目录(绝对路径);优先按最长路径前缀匹配项目' },
           agent: { type: 'string', description: '按 agent 过滤记忆(全局记忆始终包含)' }
         }
       },
       handler: (args) => buildBrief(args)
+    },
+    {
+      name: 'memory_list_projects',
+      description:
+        '【何时调用】需要知道知识库里有哪些项目、每个项目的会话数/最近活跃/总结覆盖时(例如"我最近在做哪些项目");比逐个翻 memory_list_sessions 便宜。\n' +
+        '返回项目 id、名称、路径、会话数、最后活跃时间、项目总结时间;按最近活跃排序。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: { type: 'number', description: '返回条数,默认 30,上限 100' },
+          includeEmpty: { type: 'boolean', description: 'true 时包含没有会话的项目(默认 false)' },
+          format: { type: 'string', enum: ['text', 'json'], description: '输出格式,默认 text;json 供插件页面等程序化使用' }
+        }
+      },
+      handler: (args) => {
+        const limit = Math.min(Math.max(Number(args.limit) || 30, 1), 100)
+        const includeEmpty = args.includeEmpty === true
+        const rows = sqlite
+          .prepare(
+            `SELECT p.id, p.name, p.path, p.updated_at AS updatedAt,
+                    COUNT(s.id) AS sessions,
+                    MAX(COALESCE(s.last_message_at, s.started_at, s.updated_at)) AS lastActive
+               FROM projects p
+               LEFT JOIN sessions s
+                 ON s.project_id = p.id AND s.deleted = 0 AND s.is_subagent = 0
+              WHERE p.deleted = 0
+              GROUP BY p.id
+              ${includeEmpty ? '' : 'HAVING sessions > 0'}
+              ORDER BY COALESCE(lastActive, p.updated_at / 1000) DESC
+              LIMIT ?`
+          )
+          .all(limit) as Array<{
+          id: number
+          name: string
+          path: string | null
+          updatedAt: number
+          sessions: number
+          lastActive: number | null
+        }>
+        if (rows.length === 0) return '知识库里还没有项目。'
+        // project_digests 由 project-digest 插件建表;插件停用/未迁移时静默跳过
+        const digest = new Map<number, { at: number; covered: number }>()
+        try {
+          const found = sqlite
+            .prepare(
+              `SELECT d.project_id AS id, d.created_at AS at, d.sessions_covered AS covered
+                 FROM project_digests d
+                WHERE d.deleted = 0
+                  AND d.created_at = (SELECT MAX(x.created_at) FROM project_digests x
+                                       WHERE x.project_id = d.project_id AND x.deleted = 0)
+                  AND d.project_id IN (${rows.map(() => '?').join(',')})`
+            )
+            .all(...rows.map((r) => r.id)) as Array<{ id: number; at: number; covered: number }>
+          for (const d of found) digest.set(d.id, { at: d.at, covered: d.covered })
+        } catch {
+          /* 没有工作总结表 —— 项目列表照常返回 */
+        }
+        const lines = rows.map((r, i) => {
+          const bits = [`${r.sessions} 个会话`]
+          if (r.lastActive) bits.push(`最后活跃 ${fmtDate(r.lastActive)}`)
+          const d = digest.get(r.id)
+          if (d) bits.push(`总结 ${fmtDate(Math.floor(d.at / 1000))} · 覆盖 ${d.covered}`)
+          return `${i + 1}. #${r.id} ${r.name}${r.path ? ` — ${r.path}` : ''}\n   ${bits.join(' · ')}`
+        })
+        if (args.format === 'json') {
+          return JSON.stringify(
+            rows.map((r) => ({ ...r, digest: digest.get(r.id) ?? null })),
+            null,
+            2
+          )
+        }
+        return `# 项目列表(共 ${rows.length} 个)\n${lines.join('\n')}\n\n> 看某个项目: memory_get_project_brief({project}) 或 memory_get_context({project})。`
+      }
     },
     {
       name: 'memory_list_sessions',
@@ -589,6 +733,7 @@ export function createMcpTools(deps: {
         type: 'object',
         properties: {
           project: { type: 'string', description: '项目名或路径关键词(精确匹配项目,不回退最近活跃)' },
+          cwd: { type: 'string', description: '当前工作目录(绝对路径);优先按最长路径前缀匹配项目' },
           agent: { type: 'string', description: '按 agent 过滤,如 codex / hermes / zcode' },
           since: { type: 'number', description: '只看最近 N 天,如 7' },
           limit: { type: 'number', description: '返回条数,默认 20,上限 100' },
@@ -596,11 +741,13 @@ export function createMcpTools(deps: {
           includeSubagents: {
             type: 'boolean',
             description: '是否包含子代理/子任务会话(默认 false —— 它们由父会话派生,会把列表挤满)'
-          }
+          },
+          format: { type: 'string', enum: ['text', 'json'], description: '输出格式,默认 text;json 供插件页面等程序化使用' }
         }
       },
       handler: (args) => {
         const keyword = typeof args.project === 'string' ? args.project : undefined
+        const cwd = typeof args.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : undefined
         const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
         const sinceDays = Number(args.since)
         const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100)
@@ -609,7 +756,7 @@ export function createMcpTools(deps: {
 
         // 同名项目全部纳入(换机/斜杠写法/src 子目录都会产生同名的独立项目);
         // 只取第一个会静默丢会话,见 findProjectsByKeyword 的注释
-        const matched = keyword ? findProjectsByKeyword(keyword) : []
+        const matched = resolveProjects(keyword, cwd)
         if (keyword && matched.length === 0) {
           return `未找到与"${keyword}"匹配的项目。可用 memory_search 按内容找会话。`
         }
@@ -640,6 +787,34 @@ export function createMcpTools(deps: {
           )
           .all(...params, limit, offset) as SessionRow[]
         if (rows.length === 0) return '没有符合条件的会话。'
+        if (args.format === 'json') {
+          const ids = rows.map((s) => s.id)
+          const projects = new Map<number, string>()
+          if (ids.length > 0) {
+            const found = sqlite
+              .prepare(
+                `SELECT s.id AS id, p.name AS name FROM sessions s
+                   LEFT JOIN projects p ON p.id = s.project_id
+                  WHERE s.id IN (${ids.map(() => '?').join(',')})`
+              )
+              .all(...ids) as Array<{ id: number; name: string | null }>
+            for (const p of found) if (p.name) projects.set(p.id, p.name)
+          }
+          return JSON.stringify(
+            rows.map((s) => ({
+              id: s.id,
+              title: s.title,
+              summary: s.summary,
+              agent: s.agent_type ?? null,
+              project: projects.get(s.id) ?? null,
+              startedAt: s.started_at ?? null,
+              lastMessageAt: s.last_message_at ?? null,
+              messageCount: s.message_count ?? null
+            })),
+            null,
+            2
+          )
+        }
         const body = rows.map((s, i) => `${i + 1}. ${sessionLine(s)}`).join('\n')
         // 命中多个同名项目时明说一句,否则 agent 会以为"就这些"
         if (matched.length > 1) {
@@ -765,6 +940,7 @@ export function createMcpTools(deps: {
           kind: { type: 'string', enum: ['session', 'message', 'memory'], description: '只搜某类资产' },
           agent: { type: 'string', description: '按 agent 过滤(记忆含全局)' },
           project: { type: 'string', description: '项目名或路径关键词(会话/消息/项目记忆;全局记忆始终保留)' },
+          cwd: { type: 'string', description: '当前工作目录(绝对路径);优先按最长路径前缀匹配项目' },
           since: { type: 'number', description: '只看最近 N 天,如 7' }
         },
         required: ['query']
@@ -778,12 +954,13 @@ export function createMcpTools(deps: {
         }
         const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
         const keyword = typeof args.project === 'string' && args.project.trim() ? args.project.trim() : undefined
+        const cwd = typeof args.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : undefined
         let projectId: number | undefined
         let projectIds: number[] | undefined
-        if (keyword) {
+        if (keyword || cwd) {
           // 与 memory_list_sessions / memory_get_context 同一合并口径:
           // 只取第一个会让同名项目(换机/斜杠/src 子目录)下的会话搜不到
-          const matched = findProjectsByKeyword(keyword)
+          const matched = resolveProjects(keyword, cwd)
           if (matched.length === 0) {
             return `未找到与"${keyword}"匹配的项目 — 项目过滤后无结果。可去掉 project 参数全库搜索。`
           }
@@ -898,6 +1075,7 @@ export function createMcpTools(deps: {
           content: { type: 'string', description: '记忆内容(一句话到一小段)' },
           agent: { type: 'string', description: '写入方 agent 归因,如 codex / hermes;全局记忆省略' },
           project: { type: 'string', description: '关联项目名或路径关键词(需已登记);带此参数默认写项目记忆' },
+          cwd: { type: 'string', description: '当前工作目录(绝对路径);优先按路径前缀解析项目' },
           scope: { type: 'string', enum: ['global', 'project'], description: '记忆作用域;缺省按 project 参数推断' },
           tags: { type: 'array', items: { type: 'string' }, description: '标签,最多 10 个' }
         },
@@ -916,7 +1094,8 @@ export function createMcpTools(deps: {
         }
         const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
         const keyword = typeof args.project === 'string' && args.project.trim() ? args.project.trim() : undefined
-        const project = keyword ? findProjectByKeyword(keyword) : null
+        const cwd = typeof args.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : undefined
+        const project = findProject(keyword, cwd)
         const scopeArg = args.scope === 'project' || args.scope === 'global' ? args.scope : undefined
         const scope = scopeArg ?? (project ? 'project' : 'global')
         if (scope === 'project' && !project) {
@@ -952,6 +1131,7 @@ export function createMcpTools(deps: {
         type: 'object',
         properties: {
           project: { type: 'string', description: '项目名或路径关键词(需已登记;未匹配则不关联项目)' },
+          cwd: { type: 'string', description: '当前工作目录(绝对路径);优先按路径前缀解析项目' },
           done: { type: 'string', description: '本轮完成的事' },
           next: { type: 'string', description: '下一步计划(可选)' },
           issues: { type: 'string', description: '遇到的问题/风险(可选)' },
@@ -967,7 +1147,8 @@ export function createMcpTools(deps: {
         const next = String(args.next ?? '').trim()
         const issues = String(args.issues ?? '').trim()
         const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
-        const matched = findProjectByKeyword(project)
+        const cwd = typeof args.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : undefined
+        const matched = findProject(project, cwd)
 
         const lines = [`[进度] 项目「${project}」`, `- 完成: ${done}`]
         if (next) lines.push(`- 下一步: ${next}`)
@@ -984,6 +1165,125 @@ export function createMcpTools(deps: {
         if (matched) bits.push(`关联项目 ${matched.name}`)
         else bits.push('项目未匹配,未关联')
         return `已记录收工进度(${bits.join(', ')})。该条为候选记忆:会出现在交接简报的「待确认进度」并作为项目总结素材;用户可在记忆页将其「启用」转正,或由自动整理吸收。`
+      }
+    },
+    {
+      name: 'memory_stats',
+      description:
+        '【何时调用】需要判断知识库规模/是否已有数据时(插件状态页、健康检查);普通 agent 一般不需要主动调用。\n' +
+        '返回会话/项目/消息/记忆数量、最近会话时间、数据库文件大小。',
+      inputSchema: { type: 'object', properties: {} },
+      handler: () => JSON.stringify(collectDbStats(sqlite, dbPath), null, 2)
+    },
+    {
+      name: 'memory_import_session',
+      description:
+        '【何时调用】外部网关(如 magpie 的 MemorySQL 插件)把一场已完成的对话回写成会话时使用;普通 agent 不要调用 —— 收工汇报用 memory_log_progress。\n' +
+        '按 (agent, externalId) upsert,只重写变化的尾部消息;若库里已有更完整的同源会话(文件捕获),会自动跳过,避免把完整记录截短。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent: { type: 'string', description: 'agent 类型,如 magpie / claudecode / codex' },
+          externalId: { type: 'string', description: '该 agent 的会话原生 id(稳定不变)' },
+          cwd: { type: 'string', description: '会话工作目录(绝对路径)' },
+          title: { type: 'string', description: '会话标题;省略时用首条用户消息,不调用 LLM' },
+          startedAt: { type: 'number', description: '开始时间,unix 秒' },
+          endedAt: { type: 'number', description: '结束时间,unix 秒' },
+          summarize: { type: 'boolean', description: 'true 时允许 LLM 生成标题/摘要(默认 false)' },
+          replace: { type: 'boolean', description: 'true 时允许用更短的消息列表覆盖网关自己写入的历史(默认 false:不截短)' },
+          messages: {
+            type: 'array',
+            description: '完整消息时间线(按时间顺序);后续调用可只追加尾部',
+            items: {
+              type: 'object',
+              properties: {
+                role: { type: 'string', enum: ['user', 'assistant', 'tool', 'system'] },
+                content: { type: 'string' },
+                ts: { type: 'number', description: 'unix 秒' },
+                toolName: { type: 'string' }
+              },
+              required: ['role', 'content']
+            }
+          }
+        },
+        required: ['agent', 'externalId', 'messages']
+      },
+      handler: async (args) => {
+        const agent = String(args.agent ?? '').trim()
+        const externalId = String(args.externalId ?? '').trim()
+        if (!agent) return '导入失败:agent 不能为空'
+        if (!externalId) return '导入失败:externalId 不能为空'
+        const incoming = Array.isArray(args.messages) ? args.messages : []
+        if (incoming.length === 0) return '导入失败:messages 不能为空'
+        if (incoming.length > 5000) return '导入失败:单次最多 5000 条消息(请分页/只传尾部)'
+        const roles = new Set(['user', 'assistant', 'tool', 'system'])
+        const messages: RawMessage[] = []
+        for (let i = 0; i < incoming.length; i++) {
+          const m = incoming[i] as Record<string, unknown> | null
+          const role = String(m?.role ?? '')
+          const content = typeof m?.content === 'string' ? m.content : ''
+          if (!roles.has(role)) return `导入失败:messages[${i}].role 必须是 user/assistant/tool/system`
+          if (!content) continue
+          const msg: RawMessage = { role: role as MessageRole, content }
+          const ts = Number(m?.ts)
+          if (Number.isFinite(ts) && ts > 0) msg.ts = Math.floor(ts)
+          if (typeof m?.toolName === 'string' && m.toolName) msg.toolName = m.toolName
+          messages.push(msg)
+        }
+        if (messages.length === 0) return '导入失败:没有有效消息'
+        const existing = sqlite
+          .prepare(
+            'SELECT id, message_count, raw_path FROM sessions WHERE agent_type = ? AND external_id = ?'
+          )
+          .get(agent, externalId) as
+          | { id: number; message_count: number; raw_path: string | null }
+          | undefined
+        // 文件捕获的完整记录不能被网关的较短副本截短;网关自己写入的行
+        // raw_path 以 'magpie-gateway:' 开头,默认也不截短(客户端可能只发
+        // 当前轮/被上下文窗口裁过),确需替换时显式传 replace=true。
+        if (existing && existing.message_count > messages.length) {
+          const gatewayOwned = String(existing.raw_path ?? '').startsWith('magpie-gateway:')
+          if (!gatewayOwned) {
+            return `已存在更完整的会话 #${existing.id}(${existing.message_count} 条,来自源文件),跳过网关回写。`
+          }
+          if (args.replace !== true) {
+            return `跳过:本次 ${messages.length} 条,少于已存的 ${existing.message_count} 条(网关回写默认不截短历史;确需替换传 replace=true)。`
+          }
+        }
+        const titleArg = typeof args.title === 'string' ? args.title.trim() : ''
+        const summarize = args.summarize === true
+        const firstUser = messages.find((m) => m.role === 'user')?.content ?? ''
+        // 不让网关回写触发 LLM:默认用首条用户消息做标题;显式 summarize=true 才交给摘要器
+        const title =
+          titleArg ||
+          (summarize
+            ? undefined
+            : clip(firstUser.split('\n').find((l) => l.trim()) ?? '', 80) || externalId)
+        const startedAt = Number(args.startedAt)
+        const endedAt = Number(args.endedAt)
+        const cwdArg =
+          typeof args.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : undefined
+        // 用已有项目登记里的**原样路径**回写:Windows 的反斜杠/正斜杠、大小写
+        // 差异会让 ingest 的 ensureProject 认为这是新项目,凭空多出一行。
+        const matchedCwd = cwdArg ? findProjectsByCwd(cwdArg) : []
+        const cwd = matchedCwd[0]?.path ?? cwdArg
+        const raw: RawSession = {
+          agentType: agent as AgentType,
+          externalId,
+          cwd,
+          startedAt: Number.isFinite(startedAt) && startedAt > 0 ? Math.floor(startedAt) : undefined,
+          endedAt: Number.isFinite(endedAt) && endedAt > 0 ? Math.floor(endedAt) : undefined,
+          title,
+          messages,
+          rawPath: `magpie-gateway:${agent}`
+        }
+        const res = await memories.ingestSessions([raw])
+        const id = res.sessionIds[0] ?? null
+        return JSON.stringify({
+          id,
+          outcome: res.imported > 0 ? 'imported' : res.updated > 0 ? 'updated' : 'skipped',
+          messages: messages.length
+        })
       }
     }
   ]

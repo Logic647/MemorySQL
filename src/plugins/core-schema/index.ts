@@ -1,11 +1,13 @@
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
-import type { SessionSummaryRow, MessageRow, SearchHit } from '../../shared/types'
+import type { RawSession, SessionSummaryRow, MessageRow, SearchHit } from '../../shared/types'
 import { CORE_MIGRATIONS } from './migrations'
-import { createIngestService, type IngestService } from './ingest'
+import { createIngestService, type IngestResult, type IngestService } from './ingest'
 import { createSearchService, type SearchService } from './search'
 import { createMcpTools } from './mcp-tools'
 
 export interface MemoriesService {
+  /** 外部来源(magpie 网关等)回写一场完整会话 —— 与文件捕获共用 ingest 管道 */
+  ingestSessions(sessions: RawSession[]): Promise<IngestResult>
   upsertMemory(input: {
     kind: string
     content: string
@@ -60,7 +62,8 @@ const plugin: MemorySQLPlugin = {
       sqlite: ctx.db.sqlite,
       search,
       memories: ingest,
-      services: ctx.services
+      services: ctx.services,
+      dbPath: ctx.env.dbPath
     })
     for (const tool of mcpTools) {
       ctx.mcp.registerTool(tool)

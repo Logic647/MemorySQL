@@ -3,6 +3,7 @@ import { app } from 'electron'
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import type { PluginContext } from '../../main/core/plugin-host'
 import { handleRpc, parseRpcMessage, type JsonRpcRequest } from '../../main/core/mcp-protocol'
+import { collectDbStats } from '../../main/core/db-stats'
 import { MEMORYSQL_INSTRUCTIONS } from '../../shared/mcp-instructions'
 
 /**
@@ -51,7 +52,14 @@ function startServer(): void {
       }
       if (req.method === 'GET' && req.url === '/health') {
         // version/tools 让外部探活脚本一眼判定"活着 + 哪个版本 + 工具全不全",
-        // 不必再走一遍 MCP 握手(过去只能拿 ok/port,判版本要额外握手)
+        // 不必再走一遍 MCP 握手(过去只能拿 ok/port,判版本要额外握手)。
+        // stats 给 magpie 插件/状态页用:一次探活就知道库有多大、有没有数据。
+        let stats: ReturnType<typeof collectDbStats> | null = null
+        try {
+          stats = collectDbStats(ctx.db.sqlite, ctx.env.dbPath)
+        } catch {
+          /* 早期启动 schema 还没建好 —— health 本身仍要可用 */
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(
           JSON.stringify({
@@ -59,7 +67,8 @@ function startServer(): void {
             server: 'memorysql-mcp',
             port,
             version: app.getVersion(),
-            tools: ctx.mcp.list().length
+            tools: ctx.mcp.list().length,
+            stats
           })
         )
         return

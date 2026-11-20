@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MemorySQL</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="icon" href="icon.svg" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <img src="icon.svg" alt="" width="28" height="28" />
+        <h1>MemorySQL</h1>
+        <span id="status" class="pill">连接中…</span>
+        <span id="agentChip" class="chip" hidden></span>
+      </div>
+      <button id="refresh" class="ghost" type="button">刷新</button>
+    </header>
+
+    <p id="unavailable" class="notice" hidden></p>
+
+    <main class="layout">
+      <section class="panel projects">
+        <div class="panel-head">
+          <h2>项目 <span id="projectCount" class="muted"></span></h2>
+        </div>
+        <input id="filter" class="field" type="search" placeholder="筛选项目 / 路径…" autocomplete="off" />
+        <ul id="projectList" class="project-list"></ul>
+      </section>
+
+      <section class="panel detail">
+        <div class="detail-head">
+          <h2 id="detailTitle">选择一个项目</h2>
+          <div class="tabs" role="tablist">
+            <button class="tab active" data-tab="context" type="button">续接包</button>
+            <button class="tab" data-tab="digest" type="button">项目总结</button>
+            <button class="tab" data-tab="sessions" type="button">会话</button>
+          </div>
+        </div>
+        <div id="detailBody" class="detail-body empty">从左侧选择一个项目。</div>
+      </section>
+    </main>
+
+    <section class="panel search">
+      <h2>跨 agent 搜索</h2>
+      <form id="searchForm" class="search-form">
+        <input id="query" class="field" type="search" placeholder="上次怎么做的 / 为什么这样定 / 踩过什么坑…" autocomplete="off" />
+        <button class="primary" type="submit">搜索</button>
+      </form>
+      <pre id="searchResult" class="result" hidden></pre>
+    </section>
+
+    <footer class="foot">数据来自本机 MemorySQL · 页面只读</footer>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>

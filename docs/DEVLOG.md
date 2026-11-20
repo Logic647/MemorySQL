@@ -4,6 +4,68 @@
 
 ---
 
+## 2026-11-20 · magpie 社区插件集成(工具 + 自动续接 + 页面 + 可选回写)
+
+**目标**:把 MemorySQL 作为 magpie 的社区插件接入,让经 magpie 的任意 agent 自动
+获得「续接包」,并把 MemorySQL 的 10 个能力暴露成 magpie 的统一工具。插件在独立
+本仓库 `magpie-plugin/`(建议发布为 `@logic647/tools-memorysql`,或改成
+`@magpie-community/tools-memorysql`)。设计细节见 `docs/magpie-plugin.md`。
+
+**关键认知(读 magpie 源码/文档)**
+- magpie 的社区插件 = OpenCode v1 插件 / 页面 / 网关钩子,npm 包 / git 仓库 / 文件夹
+  都可;**一个包可以同时是工具 + 钩子 + 页面**。
+- **magpie 已内建 Memory**(`internal/memory`、`/mcp/magpie/memory`、语义检索、
+  蒸馏、夜间整理、注入 instructions),且不可插件化替换。MemorySQL 的定位必须是
+  「跨 agent 会话档案 + 项目交接」,不是替代 magpie Memory。
+- 工具名 = `<插件短名>_<工具>`;从 npm 安装 `@logic647/tools-memorysql` 短名是
+  `memorysql`,**从文件夹安装短名是文件夹名**(实测 `magpie-plugin_*`)。
+- 网关钩子拿到的是请求副本:原地改完必须 `return body`,否则改动被丢弃;默认 1 秒,
+  `gatewayTimeoutMs` 可调到 30 秒,失败必须 fail open。
+- 插件页面是 `sandbox="allow-scripts"` + `connect-src 'none'`:读 MemorySQL 必须
+  用「带路页 → 插件自己的本地服务」;`magpie web` 下 127.0.0.1 是浏览器自己的电脑,
+  要用桥接的 `magpie.service`。
+- magpie 在 Windows 上配置目录是 `~/.config/magpie`(不是 `%APPDATA%`),沙箱测试
+  设 `APPDATA` 不生效。
+
+**MemorySQL 侧改动**
+- `/health` 加 `stats`(会话/项目/消息/记忆数、最近会话、db 大小),新增共享
+  `src/main/core/db-stats.ts`;`memory_stats` 同口径。
+- 新增 MCP 工具 `memory_list_projects`(支持 `format=json`)与
+  `memory_import_session`(网关回写:按 `(agent, externalId)` upsert、消息级 diff、
+  已有更完整源文件/网关历史时默认不截短,`replace:true` 才覆盖)。
+- `memory_get_context` / `memory_get_project_brief` / `memory_list_sessions` /
+  `memory_search` / `memory_write` / `memory_log_progress` 支持 `cwd`:按最长路径
+  前缀匹配项目,agent 在子目录里启动也能回到项目根。
+- `memory_list_sessions` 加 `format=json`;`MemoriesService` 加 `ingestSessions`。
+
+**插件侧**
+- `index.mjs`:10 个工具代理(`get_context`/`get_project_brief`/`get_project_digest`/
+  `list_projects`/`list_sessions`/`get_session`/`search`/`write`/`log_progress`/`stats`),
+  端点发现(8642–8652 扫描 + 30 秒缓存),`readOnly` 隐藏写工具。
+- `hooks.mjs`:首轮 `onRequest` 注入续接包(按 session 缓存、只本机、skipAgents/子代理/
+  magpie 内部请求跳过、1.25s 超时 fail open);`onResponse` 可选回写(默认关,
+  `(agent, externalId)` 去重,客户端历史不含注入块)。
+- `page/` + `service.mjs` + `ui/`:带路页 → 本地服务;状态/项目/续接包/总结/会话/
+  跨 agent 搜索;agent 行菜单带 `?agent=`;仅 127.0.0.1 + Host/Origin 校验,只读。
+
+**验证**
+- MemorySQL:`npm run typecheck` 0;`npm test` **678 passed / 2 skipped**;
+  `npm run build` 通过。
+- 插件:`node --test` **21 passed**。
+- 真实 magpie 0.1.4594 加载:显示 `async gateway hook onRequest`、10 工具、
+  `page MemorySQL`;页面服务正常启动(CLI 宿主会把服务端口移到空闲端口,属正常)。
+- 真实库副本(294MB / 444 会话 / 614 记忆)+ 构建后 MemorySQL:`/health` 带 stats;
+  `tools/list` 11 个工具;`memory_get_context({cwd:"H:/桌面/MemorySQL/src"})` 命中
+  项目;`memory_import_session` 2→3 条、只发 1 条时按不截短跳过;
+  `memory_list_sessions(format=json)` 能看到导入会话。
+- 未做:真实模型请求经 magpie 网关心跳的 E2E;magpie web 页面反代人工验收。
+
+**下一步**
+- 用真实 agent 跑一次「首轮注入 + 第二轮缓存命中」;补页面截图;发布 npm + 打
+  `magpie-plugin` topic(视情况给 `magpie-community/plugins` 提 registry PR)。
+
+---
+
 ## 2026-11-17 · 项目总结「追着活会话跑」修复(一聊天就总结)
 
 **现象**:刚开始和 agent 对话,会话页就出现「总结中」;真库里一场对话被切成 **8 个 digest**
