@@ -135,11 +135,12 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 `hooks.mjs` 的 `onRequest`:
 
 1. `getBackend(options)` 决定后端；`capture` 默认值随后端(embedded 开 / app 关)。
-2. **记忆注入默认关**：embedded 读页面状态(`distill.json` 的 `inject`/`injectAgents`)；
-   `inject=false` 时不注入；`injectAgents` 非空时只注入这些 `agent_type`(空 = 全部)。
+2. **记忆注入默认关**：embedded 读页面状态(`distill.json` 的
+   `inject`/`injectAll`/`injectAgents`)；`inject=false` 时不注入；`injectAll=true`
+   注入全部 agent，否则只注入 `injectAgents` 里的 `agent_type`(空 = 一个都不注入)。
    页面可选的 agent 直接复用 magpie 识别结果：读 `~/.cache/magpie/agents-state.json`
-   的 `state.agents`(按显示名 `agentTypeOf` 归一，没会话的也列出)，再补上会话里有、
-   magpie 状态缓存里没有的(`bun`/`node` 等)；读不到缓存才回落到 `sessions.agent_type`。
+   的 `state.agents`(按显示名 `agentTypeOf` 归一，没会话的也列出)；`bun`/`node`/`magpie`
+   等宿主运行时不在列表里，也不会被注入；读不到缓存才回落到 `sessions.agent_type`。
    app 后端没有页面状态，回落到插件选项 `recall`(默认 false)。
 3. 先按**客户端原始历史**绑定 capture(注入前)，再注入。
 4. 只对本机(`local` / `magpie-key`)生效；`skipAgents`、子代理、magpie 内部请求
@@ -178,7 +179,7 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
   `/api/search`、`/api/context`、`/api/digest`、`/api/session`，以及记忆页的
   `/api/memories`(GET/POST)、`/api/memories/status|remove|pin`、
   `/api/distill`(GET/POST)、`/api/distill/run`、`/api/dream/run`、
-  `/api/digest/generate`，全部转给当前后端。`/api/search` 在内置后端用
+  `/api/digest/run`、`/api/digest/generate`，全部转给当前后端。`/api/search` 在内置后端用
   `format:'json'` 拿结构化命中（会话 id + 命中片段 + 时间），app 后端仍返回文本。
   **sandbox iframe 的 Origin 是 `null`**：API 响应显式回
   `Access-Control-Allow-Origin: null` 并处理 `OPTIONS` 预检；每次宿主启动生成
@@ -186,15 +187,17 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
   `x-memorysql-token`；静态 HTML 不带 CORS（别的 sandbox 页面读不到 token）。
 - `ui/`:状态(内置存储 / MemorySQL 应用)、记忆页(参考 magpie Memory)、项目列表、
   续接包/总结/会话(显示 `#id`、两步确认删除)、跨 agent 搜索(命中片段高亮、可展开会话、
-  同一会话最多先展示 3 条)、记忆注入开关与目标 agent、所有控件的悬停说明。
+  同一会话最多先展示 3 条)、项目总结(安静期 + 立即生成)、整理记忆(间隔 + 立即整理)、
+  记忆注入开关与目标 agent、所有控件的悬停说明。
   相对路径 + `magpie.service` 兼容 `magpie web`。
 - 图标沿用 MemorySQL 应用图标：页面/UI 用 `page/icon.png`；`magpie.icon` 是
   同一图标的 128px data URI(1 万字节左右)，离线和 npm/GitHub 卡片都能显示。
 - 页面 token 每次宿主启动轮换：旧页面 API 返回 401 时前端自动 `location.replace`
   带 `?fresh=<时间戳>` 重载一次（<5 秒内不重复，防循环），不必手动刷新。
+  从搜索页触发时会把 `view=search&q=…&scope=…` 一起带上，重载后自动恢复并重搜。
 - `magpie.actions` 的 `agent-sessions` 出现在 agent 行菜单，打开页面并带 `?agent=`。
 
-### 3.6 记忆页与 LLM 蒸馏(参考 magpie memdistill / dream)
+### 3.6 记忆页、项目总结与整理(参考 magpie dream / MemorySQL project-digest)
 
 **记忆页**(`ui/` 的「记忆」标签)照 magpie 的 Library → Memory 做：
 
@@ -204,31 +207,27 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 - 手动添加/编辑的记忆 `source='user'`、`locked=1`，整理永不改动
 
 **模型**：插件在 magpie 的 Bun 宿主里，直接请求本机网关
-`POST <gateway>/v1/chat/completions`(loopback 免 key)。模型优先级：
+`POST <gateway>/v1/chat/completions`(loopback 免 key)。项目总结和整理记忆共用：
 页面选择(`distill.json.model`) > 插件选项 `model` > magpie 记忆蒸馏的
 `lastModel`(`~/.config/magpie/distill.json`) > 网关 `/v1/models` 第一个。
-没有可用模型时只走规则，不影响续接/工具。
+没有可用模型时状态行提示，不影响续接/工具。
 
-**从对话学习**(`runDistillJob`)：
+**项目总结**(`runDigestJob` + `generateDigestById`)：
 
-- 候选会话：`deleted=0`、`message_count>=2`、`last_message_at` 安静 30 分钟、
-  `distilled_at IS NULL OR message_count > distilled_count`(追加过才重读)，
-  按最后消息升序，一次最多 20 场；`days` 控制回看范围(7/30/90/365/全部)
-- 输入：只有 user/assistant 文本(user 4000 字、assistant 1200 字，总 24k，
-  超了保留头尾)+ 已有记忆(最多 40 条)；prompt 照 magpie 的蒸馏 prompt 改写，
-  明确「引用必须是用户原话、不要任务过程/密钥/项目文件已有的内容」
-- 输出：JSON 数组，最多 5 条；`kind` 映射到 persona/preference/decision/fact；
-  `quote` 去标点后必须出现在用户文本里，否则丢弃
-- 落库：`status='candidate'`、`source='llm-distill:<sessionId>'`、
-  `source_session_id`、`why`、`scope`(项目/全局)；同 scope+project 同文本去重；
-  候选要用户在记忆页确认(`active`)后才进入续接包
-- 进度：`distill.json` 的 `running/doing/of/left/added/error/last/lastModel`；
-  页面轮询；一轮失败留下错误和未读数量，下一轮重试
+- 页面「项目总结」行：安静期(默认 30 分钟，`digestQuietMinutes`)、自动开关
+  `digestOn`、模型选择、「立即生成」
+- 候选项目：有会话、最近会话已安静 ≥ 安静期、且最新 `project_digests.created_at`
+  早于最新会话时间(秒/毫秒换算)；按最近活跃排序，**一次最多 3 个项目**
+- 每个项目：最近 10 场会话 + 已有总结 → 模型返回 `{summary,recent,todos}`，
+  写 `project_digests`(历史保留，取最新)；`memory_get_project_digest` 优先返回它
+- 状态：`digestLast/digestAdded/digestModel/digestError`，页面轮询 `running/job`
+- 项目页「用模型生成总结」仍可对单个项目手动生成
 
 **整理记忆**(`runDreamJob`)：
 
-- 每晚 03:00 后一次(与 magpie 记忆整理的 `DreamHour` 同周期)，或页面「立即整理」；
-  每个作用域最多 120 条 active/candidate、`locked=0` 的记忆
+- 间隔：`dreamEveryHours`(默认 24 小时)，从上一次 `dreamt` 算起；刚从关闭切到打开时
+  以 `dreamSince` 为起点；「立即整理」随时可跑
+- 每个作用域最多 120 条 active/candidate、`locked=0` 的记忆
 - 状态行始终显示上一次整理时间(关闭时也显示)，没有变更时显示「没有需要变更的记忆」
 - prompt 要求模型只做「合并说同一件事」和「归档不再成立」，返回
   `{merge:[{ids,text,kind}],archive:[{id,why}]}`；id 是列表序号，后端校验存在且未锁定
@@ -236,13 +235,9 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
   归档：置 `archived`；手写/置顶(`locked=1`)永不参与
 - 变更记在 `distill.json.changes` 供页面显示(暂不支持 Undo)
 
-**项目总结**(`generateDigestById`)：
-
-- 项目最近 10 场会话 + 已有总结 → 模型返回
-  `{summary,recent,todos}`，写 `project_digests`(历史保留，取最新)
-- 勾选「整理后更新项目总结」时，蒸馏后有新记忆的项目最多自动生成 3 个；
-  项目页「用模型生成总结」可随时手动生成
-- `memory_get_project_digest` 优先返回最新 LLM 总结，没有才退回规则汇编
+**旧「从对话学习」**：`runDistillJob`(会话蒸馏出候选记忆)仍保留在后端与
+`/api/distill/run`，`distill.json` 的 `on` 字段也还在，但页面不再暴露、定时器也不再
+自动跑；历史候选仍可在「待确认」查看/确认/归档。
 
 **迁移自愈**：schema v2 的补列/建表**每次启动都检查**，不只信
 `meta.schema_version`。真机踩过：中间版本把版本写成 2 却没有执行 ALTER，
@@ -288,9 +283,9 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
 
 2026-11-20:
 
-- 插件:`node --test` **38 passed**：内嵌存储、搜索结构化命中、会话删除/回写不复活、
-  记忆注入默认关/按 agent 过滤、LLM 蒸馏/整理/项目总结(mock 模型)、记忆页 API、
-  协议注入、钩子召回/捕获、页面服务 token/CORS、迁移自愈；
+- 插件:`node --test` **39 passed**：内嵌存储、搜索结构化命中、会话删除/回写不复活、
+  记忆注入默认关/按 agent 过滤、项目总结(安静期/LLM)、LLM 蒸馏/整理、
+  记忆页 API、协议注入、钩子召回/捕获、页面服务 token/CORS、迁移自愈；
   `bun:sqlite`(magpie 自带 Bun 1.4.4)冒烟通过。
 - 真实模型 E2E(临时库副本，不碰真库)：`workbuddy/glm-5.3-flash` 蒸馏出 **4 条候选**
   (kind/scope/project/why 正确、quote 校验有效)，并生成项目总结；`memory_get_project_digest`
@@ -298,7 +293,7 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
 - 真机踩坑+修复：live 库被「版本=2 但缺 v2 列」的中间代码打开过，记忆页报
   `no such column: why`；改成每次启动自愈后，真库补列成功，`/api/memories` 正常。
 - 页面：真实 magpie 宿主内打开，浏览器目视确认记忆页(状态分段/模型选择/作用域/
-  从对话学习/整理/搜索/添加)与 magpie Memory 布局一致。
+  项目总结/整理/记忆注入/搜索/添加)与 magpie Memory 布局一致。
 - 页面搜索/删除验收(临时库副本,不碰真库)：`搜索"插件"` 返回 20 条命中、片段围绕关键词
   高亮、同一会话最多先展示 3 条(可「显示全部」)、会话 id 可见；两步确认删除后列表与
   状态计数同步(4→3)、搜索不再出现该会话；模拟旧 token 请求 401 时页面自动带
@@ -307,6 +302,10 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
   默认关，打开后显示全部 agent 与逐个勾选，选 2 个后状态行同步；关掉后回到
   「关闭（默认）」且选择保留；跑一次整理后状态行显示「关闭 · 上次整理 刚刚 ·
   没有需要变更的记忆」。
+- 页面改版验收(2026-11-20)：「项目总结」安静期 30 分钟 + 立即生成、「整理记忆」每 24
+  小时 + 立即整理；只勾一个 agent 再取消后显示「开启 · 未选 agent（不会注入）」而不是
+  变回全部；Bun/Node 不在 agent 列表；「默认模型」文字移除；记忆搜索无结果时可一键跳到
+  全局搜索；token 失效自动重载后仍停在搜索页并带 `q` 重搜（实测 12 条命中）。
 - MemorySQL:`npm run typecheck` 0;`npm test` **678 passed / 2 skipped**;
   `npm run build` 通过。
 - 真实 magpie 0.1.4594 加载:钩子 `onRequest`、10 个工具、`page MemorySQL` 都识别。

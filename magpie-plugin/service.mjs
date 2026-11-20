@@ -189,6 +189,10 @@ async function api(req, res, url, options, backendPromise) {
       if (!requireUi()) return
       return json(res, 200, ui.runDream())
     }
+    if (url.pathname === '/api/digest/run' && method === 'POST') {
+      if (!requireUi()) return
+      return json(res, 200, ui.runDigest())
+    }
     if (url.pathname === '/api/sessions/remove' && method === 'POST') {
       if (!requireUi()) return
       return json(res, 200, ui.deleteSessions(body))

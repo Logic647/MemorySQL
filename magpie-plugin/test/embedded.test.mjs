@@ -147,12 +147,12 @@ test('网关钩子 + 内置存储：注入默认关，开启后捕获的下一�
   })
   // 记忆注入默认关：即使插件选项 recall=true，也以页面开关为准
   const backend = await getBackend({ backend: 'embedded', dataDir: ':memory:' })
-  assert.deepEqual(backend.recallConfig(), { inject: false, agents: [] })
+  assert.deepEqual(backend.recallConfig(), { inject: false, all: true, agents: [] })
   assert.equal(await onRequest(body2(), ctx('s1', {})), undefined)
 
   // 打开注入（全部 agent）→ 下一轮注入
   await backend.ui.setDistill({ inject: true, injectAgents: [] })
-  assert.deepEqual(backend.recallConfig(), { inject: true, agents: [] })
+  assert.deepEqual(backend.recallConfig(), { inject: true, all: true, agents: [] })
   const out = await onRequest(body2(), ctx('s1', {}))
   assert.ok(out)
   assert.match(out.messages[0].content, /<memorysql-context>/)
@@ -257,7 +257,7 @@ test('内置存储：记忆注入默认关，开关与目标 agent 可保存', a
   t.after(() => backend.close())
   const call = (name, args = {}) => backend.call(name, args)
 
-  assert.deepEqual(backend.recallConfig(), { inject: false, agents: [] })
+  assert.deepEqual(backend.recallConfig(), { inject: false, all: true, agents: [] })
 
   await call('memory_import_session', {
     agent: 'zcode',
@@ -271,7 +271,7 @@ test('内置存储：记忆注入默认关，开关与目标 agent 可保存', a
   })
   assert.equal(saved.inject, true)
   assert.deepEqual(saved.injectAgents, ['zcode', 'claudecode'])
-  assert.deepEqual(backend.recallConfig(), { inject: true, agents: ['zcode', 'claudecode'] })
+  assert.deepEqual(backend.recallConfig(), { inject: true, all: false, agents: ['zcode', 'claudecode'] })
   // magpie 识别到的 agent 都在列表里，哪怕还没有会话
   assert.ok(saved.agents.some((agent) => agent.id === 'claudecode' && agent.name === 'Claude Code' && agent.magpie && agent.sessions === 0))
   assert.ok(saved.agents.some((agent) => agent.id === 'zcode' && agent.name === 'ZCode' && agent.sessions === 1))
@@ -279,12 +279,66 @@ test('内置存储：记忆注入默认关，开关与目标 agent 可保存', a
   // 空列表 = 注入全部 agent
   const all = await backend.ui.setDistill({ injectAgents: [] })
   assert.deepEqual(all.injectAgents, [])
-  assert.deepEqual(backend.recallConfig(), { inject: true, agents: [] })
+  assert.deepEqual(backend.recallConfig(), { inject: true, all: true, agents: [] })
+
+  // 指定模式下一个都不选 = 不注入（不能变回全部）
+  const none = await backend.ui.setDistill({ inject: true, injectAll: false, injectAgents: [] })
+  assert.equal(none.injectAll, false)
+  assert.deepEqual(backend.recallConfig(), { inject: true, all: false, agents: [] })
 
   // 关掉注入
-  const off = await backend.ui.setDistill({ inject: false })
+  const off = await backend.ui.setDistill({ inject: false, injectAll: true, injectAgents: [] })
   assert.equal(off.inject, false)
-  assert.deepEqual(backend.recallConfig(), { inject: false, agents: [] })
+  assert.deepEqual(backend.recallConfig(), { inject: false, all: true, agents: [] })
+})
+
+test('内置存储：项目总结按安静期用 LLM 生成', async (t) => {
+  const llm = {
+    async models() {
+      return [{ id: 'test/model', name: 'Test Model' }]
+    },
+    async resolveModel() {
+      return 'test/model'
+    },
+    async chat() {
+      return {
+        model: 'test/model',
+        content: JSON.stringify({ summary: '项目总览', recent: '最近进展', todos: ['补测试'] })
+      }
+    }
+  }
+  const backend = await createEmbeddedBackend({ memory: true, llm })
+  t.after(() => backend.close())
+  const call = (name, args = {}) => backend.call(name, args)
+
+  await call('memory_import_session', {
+    agent: 'zcode',
+    externalId: 'digest-1',
+    cwd: 'H:/work/demo',
+    title: '做项目',
+    endedAt: Math.floor(Date.now() / 1000) - 3600,
+    messages: [
+      { role: 'user', content: '开始做项目' },
+      { role: 'assistant', content: '先搭骨架' }
+    ]
+  })
+
+  await backend.ui.setDistill({ digestOn: true, digestQuietMinutes: 30, model: 'test/model' })
+  backend.ui.runDigest()
+  let state = null
+  for (let i = 0; i < 100; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    state = await backend.ui.distillState()
+    if (!state.running) break
+  }
+  assert.equal(state.running, false)
+  assert.equal(state.digestAdded, 1)
+  assert.ok(state.digestLast > 0)
+  assert.equal(state.digestError, '')
+
+  const digest = await call('memory_get_project_digest', { project: 'demo' })
+  assert.match(digest, /项目总览/)
+  assert.match(digest, /补测试/)
 })
 
 test('后端工厂：默认 embedded，backend=app 走代理', async () => {

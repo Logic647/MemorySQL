@@ -79,6 +79,7 @@ test('记忆页 API：token + 新增/列表/设置/蒸馏状态', async (t) => {
   assert.equal(state.models[0].id, 'test/model')
   assert.equal(state.inject, false)
   assert.deepEqual(state.injectAgents, [])
+  assert.equal(state.injectAll, true)
   assert.ok(Array.isArray(state.agents))
   const patched = await (
     await fetch(`${base}/api/distill`, {
@@ -101,6 +102,7 @@ test('记忆页 API：token + 新增/列表/设置/蒸馏状态', async (t) => {
   ).json()
   assert.equal(injecting.inject, true)
   assert.deepEqual(injecting.injectAgents, ['zcode', 'claudecode'])
+  assert.equal(injecting.injectAll, false)
 
   // 不带 token 的 POST 被拒
   const unauthorized = await fetch(`${base}/api/memories`, {

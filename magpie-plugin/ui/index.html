@@ -37,21 +37,31 @@
       <section class="panel controls">
         <div class="control-row">
           <div class="who">
-            <strong>从对话学习</strong>
-            <span id="distillLine" class="sub">关闭</span>
+            <strong>项目总结</strong>
+            <span id="digestLine" class="sub">关闭</span>
           </div>
           <div class="control-actions">
-            <select id="modelPick" class="field select" aria-label="模型" title="用哪个模型读会话；默认跟 magpie 记忆蒸馏用同一个"></select>
-            <select id="rangePick" class="field select" aria-label="读多久以前的" title="回看多久以前的会话">
-              <option value="7">最近 7 天</option>
-              <option value="30">最近 30 天</option>
-              <option value="90">最近 90 天</option>
-              <option value="365">最近 1 年</option>
-              <option value="-1">全部</option>
-            </select>
-            <button id="distillRun" class="primary" type="button" title="立刻读一批安静下来的会话，抽取候选记忆（一次最多 20 场）">立即整理</button>
-            <label class="switch" title="打开后每小时自动读一次安静下来的会话">
-              <input id="distillOn" type="checkbox" />
+            <select
+              id="modelPick"
+              class="field select"
+              aria-label="模型"
+              title="项目总结和整理记忆都用这个模型；默认跟 magpie 记忆蒸馏用同一个"
+            ></select>
+            <label class="num-field" title="会话安静多少分钟后才生成项目总结">
+              <span>安静期</span>
+              <input id="quietPick" class="field num" type="number" min="1" max="1440" step="1" />
+              <span>分钟</span>
+            </label>
+            <button
+              id="digestRun"
+              class="primary"
+              type="button"
+              title="立刻为会话已安静的项目生成/更新总结（一次最多 3 个）"
+            >
+              立即生成
+            </button>
+            <label class="switch" title="打开后，项目里的会话安静达到安静期就自动用 LLM 生成/更新项目总结">
+              <input id="digestOn" type="checkbox" />
               <span></span>
             </label>
           </div>
@@ -62,8 +72,20 @@
             <span id="dreamLine" class="sub">关闭</span>
           </div>
           <div class="control-actions">
-            <button id="dreamRun" class="ghost" type="button" title="合并说同一件事的记忆、归档过时记忆（手写/置顶不动）">立即整理</button>
-            <label class="switch" title="打开后每天 03:00 后整理一次（与 magpie 记忆整理同周期）">
+            <label class="num-field" title="两次整理之间至少间隔多少小时">
+              <span>每</span>
+              <input id="dreamEvery" class="field num" type="number" min="1" max="720" step="1" />
+              <span>小时</span>
+            </label>
+            <button
+              id="dreamRun"
+              class="ghost"
+              type="button"
+              title="合并说同一件事的记忆、归档过时记忆（手写/置顶不动）"
+            >
+              立即整理
+            </button>
+            <label class="switch" title="打开后按设定的间隔用 LLM 整理记忆">
               <input id="dreamOn" type="checkbox" />
               <span></span>
             </label>
@@ -89,10 +111,7 @@
           <label class="check" title="全部 agent；取消勾选后可以逐个选择"><input id="injectAll" type="checkbox" /> 全部 agent</label>
           <div id="injectAgents" class="agent-picks"></div>
         </div>
-        <div class="control-row slim">
-          <label class="check" title="整理记忆后，用模型更新有新记忆的项目总结"><input id="autoDigest" type="checkbox" /> 整理后更新项目总结</label>
-          <span id="distillHint" class="muted"></span>
-        </div>
+        <p id="distillHint" class="muted hint" hidden></p>
       </section>
 
       <section class="panel">

@@ -1173,21 +1173,33 @@ export async function createEmbeddedBackend(options = {}) {
   const UI_KINDS = ['persona', 'preference', 'fact', 'decision']
   const statePath = inMemory ? null : path.join(dataDir, 'distill.json')
   const defaultState = () => ({
+    // 旧「从对话学习」状态保留（手动 API 仍可用），页面不再暴露
     on: false,
     model: typeof options.model === 'string' ? options.model.trim() : '',
     days: 7,
     autoDigest: false,
+    // 项目总结：会话安静 quiet 分钟后用 LLM 生成/更新
+    digestOn: false,
+    digestQuietMinutes: 30,
+    digestLast: 0,
+    digestAdded: 0,
+    digestModel: '',
+    digestError: '',
+    // 整理记忆：每 dreamEveryHours 小时一次
     dream: false,
-    // 记忆注入：默认关；injectAgents 为空 = 注入到全部 agent
+    dreamEveryHours: 24,
+    dreamSince: 0,
+    dreamt: 0,
+    dreamError: '',
+    changes: [],
+    // 记忆注入：默认关；injectAll=true 注入全部，否则只注入 injectAgents
     inject: false,
+    injectAll: true,
     injectAgents: [],
     last: 0,
     lastModel: '',
     added: 0,
-    error: '',
-    dreamt: 0,
-    dreamError: '',
-    changes: []
+    error: ''
   })
   function loadState() {
     const base = defaultState()
@@ -1198,6 +1210,15 @@ export async function createEmbeddedBackend(options = {}) {
       loaded.injectAgents = Array.isArray(loaded.injectAgents)
         ? loaded.injectAgents.map((v) => String(v).trim().toLowerCase()).filter(Boolean)
         : []
+      if (typeof loaded.injectAll !== 'boolean') loaded.injectAll = loaded.injectAgents.length === 0
+      const int = (value, fallback, min, max) => {
+        const n = Number(value)
+        return Number.isFinite(n) ? Math.min(Math.max(Math.floor(n), min), max) : fallback
+      }
+      loaded.digestOn = loaded.digestOn === true
+      loaded.digestQuietMinutes = int(loaded.digestQuietMinutes, 30, 1, 1440)
+      loaded.dreamEveryHours = int(loaded.dreamEveryHours, 24, 1, 720)
+      loaded.dreamSince = Number(loaded.dreamSince) || 0
       return loaded
     } catch {
       return base
@@ -1890,9 +1911,11 @@ Leave out anything you would not change. If nothing should change, answer {}.`
       })
       seen.add(agent.id)
     }
-    // 会话里出现、但 magpie 状态缓存里没有的（内部调用等）放在后面
+    // 会话里出现、但 magpie 状态缓存里没有的（内部调用等）放在后面；
+    // bun/node/magpie 是宿主运行时，不作为可注入的 agent
+    const IGNORED_AGENTS = new Set(['bun', 'node', 'magpie'])
     for (const row of agentRows) {
-      if (seen.has(row.id)) continue
+      if (seen.has(row.id) || IGNORED_AGENTS.has(row.id)) continue
       agents.push({
         id: row.id,
         name: row.id,
@@ -1911,9 +1934,22 @@ Leave out anything you would not change. If nothing should change, answer {}.`
 
   async function setDistill(args = {}) {
     if (typeof args.on === 'boolean') distill.on = args.on
-    if (typeof args.dream === 'boolean') distill.dream = args.dream
     if (typeof args.autoDigest === 'boolean') distill.autoDigest = args.autoDigest
+    if (typeof args.dream === 'boolean') {
+      if (args.dream && !distill.dream) distill.dreamSince = Date.now()
+      distill.dream = args.dream
+    }
+    if (args.dreamEveryHours !== undefined) {
+      const n = Number(args.dreamEveryHours)
+      if (Number.isFinite(n)) distill.dreamEveryHours = Math.min(Math.max(Math.floor(n), 1), 720)
+    }
+    if (typeof args.digestOn === 'boolean') distill.digestOn = args.digestOn
+    if (args.digestQuietMinutes !== undefined) {
+      const n = Number(args.digestQuietMinutes)
+      if (Number.isFinite(n)) distill.digestQuietMinutes = Math.min(Math.max(Math.floor(n), 1), 1440)
+    }
     if (typeof args.inject === 'boolean') distill.inject = args.inject
+    if (typeof args.injectAll === 'boolean') distill.injectAll = args.injectAll
     if (Array.isArray(args.injectAgents)) {
       const picked = []
       for (const value of args.injectAgents) {
@@ -1925,13 +1961,15 @@ Leave out anything you would not change. If nothing should change, answer {}.`
         picked.push(id)
       }
       distill.injectAgents = picked.slice(0, 100)
+      // 兼容旧调用：只传列表时，空列表 = 全部，非空 = 指定
+      if (typeof args.injectAll !== 'boolean') distill.injectAll = picked.length === 0
     }
     if (typeof args.model === 'string') distill.model = args.model.trim()
     if (args.days !== undefined) {
       const days = Number(args.days)
       if ([7, 30, 90, 365, -1].includes(days)) distill.days = days
     }
-    if (distill.on && !distill.model) {
+    if ((distill.on || distill.digestOn || distill.dream) && !distill.model) {
       distill.model = (await llm.resolveModel('')) || ''
     }
     saveState()
@@ -1950,20 +1988,83 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     return { ok: true, started: true }
   }
 
-  function dueDream() {
-    if (!distill.dream) return false
-    const now = new Date()
-    const three = new Date(now)
-    three.setHours(3, 0, 0, 0)
-    if (now < three) three.setDate(three.getDate() - 1)
-    return (distill.dreamt || 0) < three.getTime()
+  // 项目总结：会话安静 quiet 分钟、且上次总结之后有新会话的项目，最多 3 个/轮。
+  function digestCandidates() {
+    const quiet = Math.floor(Date.now() / 1000) - distill.digestQuietMinutes * 60
+    return all(
+      `SELECT * FROM (
+         SELECT p.id, p.name,
+           (SELECT max(COALESCE(s.last_message_at, s.started_at)) FROM sessions s
+             WHERE s.project_id = p.id AND s.deleted = 0) AS lastAt,
+           (SELECT max(d.created_at) FROM project_digests d
+             WHERE d.project_id = p.id AND d.deleted = 0) AS digestAt
+         FROM projects p
+         WHERE p.deleted = 0
+           AND EXISTS (SELECT 1 FROM sessions s WHERE s.project_id = p.id AND s.deleted = 0)
+       )
+       WHERE lastAt IS NOT NULL AND lastAt <= ?
+         AND (digestAt IS NULL OR digestAt < lastAt * 1000)
+       ORDER BY lastAt DESC`,
+      quiet
+    )
   }
 
-  // 网关钩子每次请求问一次：是否注入、注入到哪些 agent（空 = 全部）。
+  async function runDigestJob() {
+    if (distill.running) return
+    distill.running = true
+    distill.job = 'digest'
+    distill.digestError = ''
+    saveState()
+    let done = 0
+    let firstError = ''
+    try {
+      const model = await llm.resolveModel(distill.model)
+      if (!model) throw new Error('没有可用模型')
+      for (const project of digestCandidates().slice(0, 3)) {
+        try {
+          const result = await generateDigestById(project.id)
+          if (result?.ok) {
+            done += 1
+            distill.digestModel = result.model || model
+          }
+        } catch (err) {
+          if (!firstError) firstError = String(err?.message ?? err).slice(0, 300)
+        }
+      }
+      distill.digestLast = Date.now()
+      distill.digestAdded = done
+      if (firstError) distill.digestError = firstError
+    } catch (err) {
+      distill.digestLast = Date.now()
+      distill.digestAdded = 0
+      distill.digestError = String(err?.message ?? err).slice(0, 400)
+    } finally {
+      distill.running = false
+      distill.job = ''
+      saveState()
+    }
+  }
+
+  function runDigest() {
+    if (distill.running) return { ok: false, running: true }
+    void runDigestJob()
+    return { ok: true, started: true }
+  }
+
+  function dueDream() {
+    if (!distill.dream) return false
+    const every = distill.dreamEveryHours * 3600_000
+    const since = distill.dreamt || distill.dreamSince || 0
+    if (!since) return true
+    return Date.now() - since >= every
+  }
+
+  // 网关钩子每次请求问一次：是否注入、全部还是指定的 agent。
   // 状态在内存里，setDistill 已经更新，不需要读文件。
   function recallConfig() {
     return {
       inject: distill.inject === true,
+      all: distill.injectAll !== false,
       agents: Array.isArray(distill.injectAgents) ? [...distill.injectAgents] : []
     }
   }
@@ -1972,8 +2073,8 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     const tick = () => {
       try {
         if (distill.running) return
-        if (distill.on && Date.now() - (distill.last || 0) > 3600_000) {
-          void runDistillJob()
+        if (distill.digestOn && digestCandidates().length > 0) {
+          void runDigestJob()
           return
         }
         if (dueDream()) void runDreamJob()
@@ -1996,6 +2097,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     setDistill,
     runDistill,
     runDream,
+    runDigest,
     generateDigest
   }
 
@@ -2034,7 +2136,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
       return {
         ok: true,
         backend: 'embedded',
-        version: '0.5.1',
+        version: '0.6.0',
         port: null,
         tools: Object.keys(handlers).length,
         stats: statsValue

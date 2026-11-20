@@ -157,11 +157,16 @@ export async function onRequest(body, ctx) {
   try {
     const backend = await getBackend(ctx.options)
     const options = normalize(ctx.options, backend.kind === 'embedded')
-    // 内置存储的「记忆注入」开关在页面上（distill.json）：默认关，
-    // 开了可以只注入指定的 agent（存的是 agent_type，空 = 全部）。
+    // 内置存储的「记忆注入」开关在页面上（distill.json）：默认关；
+    // 开了可以全部注入，也可以只注入选中的 agent（存的是 agent_type）。
     const rule = typeof backend.recallConfig === 'function' ? backend.recallConfig() : null
     const recallOn = rule ? rule.inject === true : options.recall
     const targets = rule && Array.isArray(rule.agents) ? rule.agents : []
+    const allAgents = rule
+      ? rule.all === undefined
+        ? targets.length === 0
+        : rule.all === true
+      : true
     // 先按**客户端原始历史**绑定捕获，再注入 —— 回写里不能带续接包
     bindCapture(body, ctx, options)
 
@@ -169,7 +174,7 @@ export async function onRequest(body, ctx) {
       ctx.report?.('skipped')
       return undefined
     }
-    if (targets.length > 0 && !targets.includes(agentTypeOf(ctx.agent))) {
+    if (!allAgents && !targets.includes(agentTypeOf(ctx.agent))) {
       ctx.report?.('skipped')
       return undefined
     }

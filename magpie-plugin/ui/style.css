@@ -482,6 +482,19 @@ button {
   color: var(--muted);
   font-size: 12px;
 }
+.num-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.num-field .num {
+  width: 60px;
+  min-width: 60px;
+  padding: 5px 6px;
+  text-align: right;
+}
 .inject-pick {
   justify-content: flex-start;
   flex-wrap: wrap;

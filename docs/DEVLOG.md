@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-11-20 · magpie 插件：项目总结/整理间隔 + 注入选择修复 + 搜索恢复
+
+**注入选择 bug**：`injectAgents=[]` 以前既表示「全部」，又会在「只勾了一个再取消」时
+出现，所以一取消就变回全选。现在拆成两个字段：
+
+- `injectAll`（默认 true）= 注入全部；为 false 时 `injectAgents` 才生效
+- 指定模式下 0 个选中 = 不注入（不会退回全部），状态行显示「开启 · 未选 agent（不会注入）」
+- `recallConfig()` 返回 `{inject, all, agents}`，钩子用 `!all && !targets.includes(...)` 跳过
+- 迁移：旧状态没有 `injectAll` 时，列表非空推断为指定模式，空列表推断为全部
+
+**agent 列表**：去掉 Bun/Node/magpie 宿主运行时（列表与注入都跳过），只展示 magpie
+识别到的 agent；移除「默认模型」那行文字。
+
+**项目总结替换「从对话学习」**
+- 页面第一行改为「项目总结」：模型、安静期（默认 30 分钟，`digestQuietMinutes`）、
+  立即生成、自动开关（`digestOn`）
+- `runDigestJob`：有会话、最近会话已安静 ≥ 安静期、且最新总结早于最新会话的项目，
+  按最近活跃排序，一次最多 3 个；每个项目仍用 `generateDigestById`（最近 10 场 +
+  已有总结 → `{summary,recent,todos}`）
+- 状态：`digestLast/digestAdded/digestModel/digestError`；POST `/api/digest/run`
+- 页面不再暴露旧「从对话学习」；`runDistillJob` 与 `distill.json.on` 保留在 API 层，
+  定时器不再自动跑
+
+**整理记忆加间隔**
+- `dreamEveryHours`（默认 24 小时，页面数字输入）从上一次 `dreamt` 算起；刚从关闭切到
+  打开用 `dreamSince` 起算；「立即整理」随时可跑
+- 不再固定 03:00；状态行仍始终显示上次整理时间
+
+**搜索恢复**
+- token 401 自动重载时带 `view=search&q=…&scope=…`，重载后恢复搜索页并自动重搜
+  （以前重载会丢掉查询，看起来像「搜索没结果」）
+- 记忆搜索无结果时给「去搜索会话和消息」，一键带关键词跳到搜索页
+- 搜索页在项目范围下 0 结果时给「在全部项目中搜索」
+
+**验证**
+- 插件 `node --test` **39 passed**：新增项目总结安静期（mock LLM）、`injectAll`
+  与 0 个不注入；原有搜索/删除/蒸馏/钩子全过。
+- 真机页面：安静期 30 / 间隔 24 输入正确；只勾 Codex 再取消 → 「开启 · 未选 agent
+  （不会注入）」、全部勾选保持 false；Bun/Node 不再出现；「默认模型」文字消失；
+  记忆搜索无结果可跳转（10 条命中）；模拟旧 token 搜索「记忆」→ 自动重载后 URL 带
+  `view=search&q=记忆` 并重搜出 12 条。
+- 插件版本 **0.6.0**；README、`docs/magpie-plugin.md`、AGENTS.md 已同步。
+
 ## 2026-11-20 · magpie 插件：应用图标 + 记忆注入开关 + 上次整理时间
 
 **图标**：插件改用 MemorySQL 应用图标。`page/icon.png` 直接复制 `build/icon.png`

@@ -37,6 +37,13 @@ function reloadForToken() {
     const at = Number(url.searchParams.get('fresh') || 0)
     if (Date.now() - at < 5000) return false
     url.searchParams.set('fresh', String(Date.now()))
+    // 从搜索页触发的重载：把视图/关键词/范围带过去，重载后自动重搜
+    if (state.view === 'search') {
+      url.searchParams.set('view', 'search')
+      const query = ($('#query')?.value || '').trim()
+      if (query) url.searchParams.set('q', query)
+      if (state.search.scope) url.searchParams.set('scope', state.search.scope)
+    }
     location.replace(url.toString())
     return true
   } catch {
@@ -170,10 +177,10 @@ function modelName(id) {
 function renderDistill() {
   const d = state.distill
   if (!d) return
-  $('#distillOn').checked = !!d.on
+  $('#digestOn').checked = !!d.digestOn
   $('#dreamOn').checked = !!d.dream
-  $('#autoDigest').checked = !!d.autoDigest
-  $('#rangePick').value = String(d.days || 7)
+  $('#quietPick').value = String(d.digestQuietMinutes || 30)
+  $('#dreamEvery').value = String(d.dreamEveryHours || 24)
 
   const pick = $('#modelPick')
   const current = d.model || ''
@@ -198,26 +205,28 @@ function renderDistill() {
   pick.value = current
   pick.disabled = (d.models || []).length === 0 && !current
 
-  const distillRunning = d.running && d.job !== 'dream'
+  const digestRunning = d.running && d.job === 'digest'
   const dreamRunning = d.running && d.job === 'dream'
-  let line
-  let bad = false
-  if (distillRunning) {
-    line = d.of ? `正在读取会话… ${d.doing || 0}/${d.of}` : '正在读取会话…'
-    if (d.left) line += ` · 还剩 ${d.left} 条`
-  } else if (d.error) {
-    line = `上次失败：${d.error}`
-    bad = true
-  } else if (d.last) {
-    line = `上次读会话 ${ago(d.last)} · 新增 ${d.added || 0} 条`
-    if (d.left) line += ` · 还有 ${d.left} 条未读`
+  const noModels = (d.models || []).length === 0 && !current
+  let digestLine
+  let digestBad = false
+  if (noModels) {
+    digestLine = '没有可用模型：先在 magpie 里配置模型'
+    digestBad = true
+  } else if (digestRunning) {
+    digestLine = '正在生成项目总结…'
+  } else if (d.digestError) {
+    digestLine = `上次失败：${d.digestError}`
+    digestBad = true
+  } else if (d.digestLast) {
+    digestLine = `上次生成 ${ago(d.digestLast)} · 更新 ${d.digestAdded || 0} 个项目`
   } else {
-    line = '还没读过会话'
+    digestLine = `安静期 ${d.digestQuietMinutes || 30} 分钟；会话安静后自动生成`
   }
-  if (!d.on && !distillRunning) line = `关闭 · ${line}`
-  const distillLine = $('#distillLine')
-  distillLine.textContent = line
-  distillLine.className = `sub${bad ? ' err' : ''}`
+  if (!d.digestOn && !digestRunning && !noModels) digestLine = `关闭 · ${digestLine}`
+  const digestEl = $('#digestLine')
+  digestEl.textContent = digestLine
+  digestEl.className = `sub${digestBad ? ' err' : ''}`
 
   const changes = Array.isArray(d.changes) ? d.changes : []
   const merged = changes.filter((c) => c.action === 'merge').length
@@ -233,23 +242,20 @@ function renderDistill() {
       merged || archived ? ` · 合并 ${merged} 条 / 归档 ${archived} 条` : ' · 没有需要变更的记忆'
     }`
   } else {
-    dreamLine = d.dream ? '每天 03:00 后一次（与 magpie 记忆整理同周期）' : '还没整理过'
+    dreamLine = `每 ${d.dreamEveryHours || 24} 小时整理一次`
   }
   if (!d.dream && !dreamRunning) dreamLine = `关闭 · ${dreamLine}`
   const dreamEl = $('#dreamLine')
   dreamEl.textContent = dreamLine
   dreamEl.className = `sub${dreamBad ? ' err' : ''}`
 
+  $('#digestRun').disabled = !!d.running
+  $('#dreamRun').disabled = !!d.running
   renderInject()
 
   const hint = $('#distillHint')
-  if ((d.models || []).length === 0) {
-    hint.textContent = '没有可用模型：先在 magpie 里配置模型'
-    hint.className = 'muted err'
-  } else if (d.defaultModel) {
-    hint.textContent = `默认模型：${modelName(d.defaultModel)}`
-    hint.className = 'muted'
-  } else {
+  if (hint) {
+    hint.hidden = true
     hint.textContent = ''
   }
 }
@@ -284,7 +290,7 @@ const AGENT_LABEL = {
   magpie: 'magpie'
 }
 
-// 「记忆注入」：开关 + 注入到哪些 agent（空列表 = 全部）。
+// 「记忆注入」：开关 + 注入到哪些 agent（全部 / 指定，指定为空 = 不注入）。
 function renderInject() {
   const d = state.distill
   if (!d) return
@@ -293,7 +299,7 @@ function renderInject() {
   $('#injectPick').hidden = !on
   const agents = Array.isArray(d.agents) ? d.agents : []
   const picked = Array.isArray(d.injectAgents) ? d.injectAgents : []
-  const all = picked.length === 0
+  const all = d.injectAll !== false
   $('#injectAll').checked = all
   const box = $('#injectAgents')
   box.replaceChildren()
@@ -309,7 +315,9 @@ function renderInject() {
       if (input.checked) next.add(agent.id)
       else next.delete(agent.id)
       const ids = [...next]
-      void saveDistill({ injectAgents: ids.length === agents.length ? [] : ids })
+      // 全部选中（且非空）就回到「全部」；0 个 = 不注入，不能再变成全部
+      const allNow = ids.length > 0 && ids.length === agents.length
+      void saveDistill({ injectAll: allNow, injectAgents: allNow ? [] : ids })
     })
     const display = (agent.magpie && agent.name) || AGENT_LABEL[agent.id] || agent.name || agent.id
     label.title = `${display} · ${agent.sessions || 0} 场会话${
@@ -318,12 +326,14 @@ function renderInject() {
     label.append(input, display)
     box.append(label)
   }
-  if (!agents.length) box.append(el('span', 'muted', '还没有会话；先让 agent 跑一轮再选'))
+  if (!agents.length) box.append(el('span', 'muted', 'magpie 还没识别到 agent'))
   $('#injectLine').textContent = !on
     ? '关闭（默认）'
     : all
       ? '开启 · 全部 agent'
-      : `开启 · ${picked.length} 个 agent`
+      : picked.length
+        ? `开启 · ${picked.length} 个 agent`
+        : '开启 · 未选 agent（不会注入）'
   $('#injectLine').className = 'sub'
 }
 
@@ -682,13 +692,36 @@ function renderMemList() {
   }
   for (const memory of data.memories || []) list.append(memRow(memory))
   if (!(data.memories || []).length && state.mem.open !== 'new') {
-    const text =
-      state.mem.status === 'candidate'
-        ? '没有待确认的记忆。'
-        : state.mem.status === 'archived'
-          ? '没有归档的记忆。'
-          : '还没有记忆。可以告诉 agent「记住…」，或点右上角添加。'
-    list.append(el('div', 'mem-none', text))
+    const query = state.mem.q.trim()
+    if (query) {
+      const empty = el('div', 'mem-none', `没有匹配「${query}」的记忆。`)
+      empty.append(
+        document.createElement('br'),
+        button(
+          '去搜索会话和消息',
+          () => {
+            state.mem.q = ''
+            const input = $('#memSearch')
+            if (input) input.value = ''
+            state.search.scope = ''
+            switchView('search')
+            $('#query').value = query
+            $('#searchForm').requestSubmit()
+          },
+          'ghost',
+          '到「搜索」页在会话标题、消息和记忆里搜同样的关键词'
+        )
+      )
+      list.append(empty)
+    } else {
+      const text =
+        state.mem.status === 'candidate'
+          ? '没有待确认的记忆。'
+          : state.mem.status === 'archived'
+            ? '没有归档的记忆。'
+            : '还没有记忆。可以告诉 agent「记住…」，或点右上角添加。'
+      list.append(el('div', 'mem-none', text))
+    }
   }
 }
 
@@ -891,10 +924,17 @@ function renderSearchScope() {
     option.value = project.path || project.name
     pick.append(option)
   }
+  // 项目还没加载完（例如 token 重载后从 URL 恢复搜索）时保留 scope，
+  // 等 loadProjects 回来再对齐，别把它清成「全部项目」。
+  if (!(state.projects || []).length) {
+    pick.value = ''
+    pick.hidden = true
+    return
+  }
   const values = [...pick.options].map((option) => option.value)
   pick.value = values.includes(state.search.scope) ? state.search.scope : ''
   state.search.scope = pick.value
-  pick.hidden = (state.projects || []).length === 0
+  pick.hidden = false
 }
 
 const HIT_LABEL = { session: '会话', message: '消息', memory: '记忆' }
@@ -930,13 +970,29 @@ function renderSearchHits(hits, query, showAll = false) {
   box.hidden = false
   box.replaceChildren()
   if (!hits.length) {
-    box.append(
-      el(
-        'div',
-        'mem-none',
-        `没有找到「${query}」相关的记录。试试更短的关键词，或把范围改成「全部项目」。`
-      )
+    const empty = el(
+      'div',
+      'mem-none',
+      `没有找到「${query}」相关的记录。试试更短的关键词${
+        state.search.scope ? '，或把范围改成「全部项目」' : ''
+      }。`
     )
+    if (state.search.scope) {
+      empty.append(
+        document.createElement('br'),
+        button(
+          '在全部项目中搜索',
+          () => {
+            state.search.scope = ''
+            renderSearchScope()
+            $('#searchForm').requestSubmit()
+          },
+          'ghost',
+          '清除项目范围，重新在全库搜索'
+        )
+      )
+    }
+    box.append(empty)
     return
   }
   // 同一场会话的消息最多先展示 3 条，避免 20 条结果全来自同一个长会话。
@@ -1040,30 +1096,36 @@ function wire() {
   })
 
   // memory controls
-  $('#distillOn').addEventListener('change', (event) => {
-    void saveDistill({ on: event.target.checked })
+  $('#digestOn').addEventListener('change', (event) => {
+    void saveDistill({ digestOn: event.target.checked })
+  })
+  $('#quietPick').addEventListener('change', (event) => {
+    const n = Number(event.target.value)
+    void saveDistill({ digestQuietMinutes: Number.isFinite(n) ? n : 30 })
   })
   $('#dreamOn').addEventListener('change', (event) => {
     void saveDistill({ dream: event.target.checked })
+  })
+  $('#dreamEvery').addEventListener('change', (event) => {
+    const n = Number(event.target.value)
+    void saveDistill({ dreamEveryHours: Number.isFinite(n) ? n : 24 })
   })
   $('#injectOn').addEventListener('change', (event) => {
     void saveDistill({ inject: event.target.checked })
   })
   $('#injectAll').addEventListener('change', (event) => {
     const agents = state.distill?.agents || []
-    // 勾「全部」= 空列表；取消后展开成逐个 agent，便于再取消某几个
-    void saveDistill({ injectAgents: event.target.checked ? [] : agents.map((agent) => agent.id) })
-  })
-  $('#autoDigest').addEventListener('change', (event) => {
-    void saveDistill({ autoDigest: event.target.checked })
+    // 勾「全部」= 全部（列表清空）；取消后展开成逐个 agent，便于再取消某几个
+    void saveDistill(
+      event.target.checked
+        ? { injectAll: true, injectAgents: [] }
+        : { injectAll: false, injectAgents: agents.map((agent) => agent.id) }
+    )
   })
   $('#modelPick').addEventListener('change', (event) => {
     void saveDistill({ model: event.target.value })
   })
-  $('#rangePick').addEventListener('change', (event) => {
-    void saveDistill({ days: Number(event.target.value) })
-  })
-  $('#distillRun').addEventListener('click', () => void runJob('api/distill/run'))
+  $('#digestRun').addEventListener('click', () => void runJob('api/digest/run'))
   $('#dreamRun').addEventListener('click', () => void runJob('api/dream/run'))
   $('#memAdd').addEventListener('click', () => {
     state.mem.open = 'new'
@@ -1138,6 +1200,20 @@ function wire() {
 
 wire()
 void (async () => {
+  const params = new URLSearchParams(location.search)
+  const wantView = params.get('view')
+  const wantQuery = (params.get('q') || '').trim()
+  const wantScope = params.get('scope') || ''
+  if (wantScope) state.search.scope = wantScope
   const ok = await loadStatus()
-  if (ok) switchView('memory')
+  if (!ok) return
+  if (wantView === 'search') {
+    switchView('search')
+    if (wantQuery) {
+      $('#query').value = wantQuery
+      $('#searchForm').requestSubmit()
+    }
+  } else {
+    switchView('memory')
+  }
 })()
