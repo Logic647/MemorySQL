@@ -137,6 +137,9 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 1. `getBackend(options)` 决定后端；`capture` 默认值随后端(embedded 开 / app 关)。
 2. **记忆注入默认关**：embedded 读页面状态(`distill.json` 的 `inject`/`injectAgents`)；
    `inject=false` 时不注入；`injectAgents` 非空时只注入这些 `agent_type`(空 = 全部)。
+   页面可选的 agent 直接复用 magpie 识别结果：读 `~/.cache/magpie/agents-state.json`
+   的 `state.agents`(按显示名 `agentTypeOf` 归一，没会话的也列出)，再补上会话里有、
+   magpie 状态缓存里没有的(`bun`/`node` 等)；读不到缓存才回落到 `sessions.agent_type`。
    app 后端没有页面状态，回落到插件选项 `recall`(默认 false)。
 3. 先按**客户端原始历史**绑定 capture(注入前)，再注入。
 4. 只对本机(`local` / `magpie-key`)生效；`skipAgents`、子代理、magpie 内部请求

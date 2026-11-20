@@ -7,7 +7,7 @@
 
 - **10 个工具**：`memorysql_get_context`、`search`、`list_sessions`、`get_session`、`list_projects`、`get_project_brief`、`get_project_digest`、`write`、`log_progress`、`stats`
 - **网关自动续接**：会话第一次经过 magpie 时，把「续接包」注入第一条用户消息；同一会话后续请求复用同一份，prompt cache 不受影响。**默认关闭**，在记忆页打开「记忆注入」后才生效
-- **记忆注入按 agent 选**：打开后可以注入到全部 agent，也可以只选某几个（默认全部）
+- **记忆注入按 agent 选**：打开后可以注入到全部 agent，也可以只选某几个（默认全部）；候选列表直接复用 magpie 已识别的 agent（含还没会话的），已捕获但 magpie 没识别到的附在后面
 - **会话回写**：内置存储默认把每轮 user/assistant 文本写进本地会话档案（app 后端默认关，避免和 MemorySQL 自己的文件捕获双写）
 - **记忆页（参考 magpie 的 Memory）**：从对话学习、待确认、搜索/作用域/状态分段、逐条确认/归档/编辑/删除
 - **LLM 会话蒸馏**：用 magpie 里已配置的模型读安静下来的会话，最多 5 条候选；引用必须是用户原话；你确认后才进续接包
@@ -140,7 +140,7 @@ magpie plugin dump     # 看钩子/选项
 
 - 记忆（参考 magpie Memory）：状态分段、搜索、作用域、添加/编辑/确认/归档/删除/置顶
 - 从对话学习 / 整理记忆 / 记忆注入 / 整理后更新项目总结
-- **记忆注入**：默认关；打开后选「全部 agent」或逐个勾选要注入的 agent
+- **记忆注入**：默认关；打开后选「全部 agent」或逐个勾选要注入的 agent。列表来自 magpie 已识别的 agent（Agents 页状态，含还没会话的），已捕获但 magpie 没识别到的附在后面
 - 整理状态行显示上一次整理时间（关闭时也显示）；周期与 magpie 记忆整理一致（每天 03:00 后一次）
 - 图标沿用 MemorySQL 应用图标（`page/icon.png`；`magpie.icon` 里是可离线用的 data URI）
 - 项目列表 → 续接包 / 项目总结（可点「用模型生成总结」）/ 会话

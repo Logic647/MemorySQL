@@ -13,7 +13,10 @@
 **记忆注入（默认关 + 按 agent 选）**
 - `distill.json` 新增 `inject`（默认 false）和 `injectAgents`（空 = 全部 agent）。
 - 记忆页新增「记忆注入」行：开关关闭时只显示「关闭（默认）」；打开后显示
-  「全部 agent」和逐个 agent（列表来自 `sessions.agent_type`，带会话数与最近时间）。
+  「全部 agent」和逐个 agent。**列表直接复用 magpie 识别到的 agent**：读
+  `~/.cache/magpie/agents-state.json` 的 `state.agents`（显示名按 `agentTypeOf`
+  归一，没有会话的也列出来），再补上会话里有、magpie 状态缓存里没有的（bun/node
+  这类内部调用）；缓存读不到才回落到 `sessions.agent_type`。
 - `hooks.mjs` 的 `onRequest` 先问 `backend.recallConfig()`（embedded 从内存状态读），
   `inject=false` 直接跳过；`injectAgents` 非空时用 `agentTypeOf(ctx.agent)` 过滤，
   只给选中的 agent 注入。app 后端没有页面状态，回落到插件选项 `recall`。
@@ -38,8 +41,10 @@
 **验证**
 - 插件 `node --test` **38 passed**：新增注入默认关、开关/目标 agent 保存、
   `recallConfig` 默认值、钩子按 agent 过滤；原有搜索/删除/蒸馏/钩子全过。
-- 真机页面：左上角图标为应用图标；「记忆注入」默认关、打开后显示全部 agent、
-  选 2 个后状态行同步、关闭后恢复「关闭（默认）」且选择保留；上次整理时间可见。
+- 真机页面：左上角图标为应用图标；「记忆注入」默认关、打开后列出 magpie 已识别的
+  11 个 agent（Claude Code / Codex / Gemini CLI / ZCode…，含 0 会话的）以及
+  bun/node；只勾 Codex 后状态行变「开启 · 1 个 agent」并持久化；关闭后恢复
+  「关闭（默认）」且选择保留；上次整理时间可见。
 - 插件版本 **0.5.0**；README、`docs/magpie-plugin.md`、AGENTS.md 已同步。
 
 ## 2026-11-20 · magpie 插件：搜索修复 + 会话删除/id + 全控件使用提示

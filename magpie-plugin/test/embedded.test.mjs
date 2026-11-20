@@ -164,6 +164,12 @@ test('网关钩子 + 内置存储：注入默认关，开启后捕获的下一�
   const z = await onRequest(body2(), ctx('s3', {}, 'ZCode'))
   assert.ok(z)
   assert.match(z.messages[0].content, /<memorysql-context>/)
+
+  // magpie 显示名（不在固定映射表里的）也能选中：Claude Desktop
+  await backend.ui.setDistill({ injectAgents: ['Claude Desktop'] })
+  const desktop = await onRequest(body2(), ctx('s4', {}, 'Claude Desktop'))
+  assert.ok(desktop)
+  assert.match(desktop.messages[0].content, /<memorysql-context>/)
 })
 
 test('内置存储：结构化搜索（命中片段/会话 id）+ 删除会话 + 回写不复活', async (t) => {
@@ -239,7 +245,15 @@ test('内置存储：记忆注入默认关，开关与目标 agent 可保存', a
       return { model: 'test/model', content: '{}' }
     }
   }
-  const backend = await createEmbeddedBackend({ memory: true, llm })
+  // 模拟 magpie 的 agents-state.json：claude 还没会话，zcode 有一场
+  const backend = await createEmbeddedBackend({
+    memory: true,
+    llm,
+    agentsState: [
+      { id: 'claude', name: 'Claude Code' },
+      { id: 'zcode', name: 'ZCode' }
+    ]
+  })
   t.after(() => backend.close())
   const call = (name, args = {}) => backend.call(name, args)
 
@@ -258,7 +272,9 @@ test('内置存储：记忆注入默认关，开关与目标 agent 可保存', a
   assert.equal(saved.inject, true)
   assert.deepEqual(saved.injectAgents, ['zcode', 'claudecode'])
   assert.deepEqual(backend.recallConfig(), { inject: true, agents: ['zcode', 'claudecode'] })
-  assert.ok(saved.agents.some((agent) => agent.id === 'zcode' && agent.sessions === 1))
+  // magpie 识别到的 agent 都在列表里，哪怕还没有会话
+  assert.ok(saved.agents.some((agent) => agent.id === 'claudecode' && agent.name === 'Claude Code' && agent.magpie && agent.sessions === 0))
+  assert.ok(saved.agents.some((agent) => agent.id === 'zcode' && agent.name === 'ZCode' && agent.sessions === 1))
 
   // 空列表 = 注入全部 agent
   const all = await backend.ui.setDistill({ injectAgents: [] })

@@ -311,10 +311,11 @@ function renderInject() {
       const ids = [...next]
       void saveDistill({ injectAgents: ids.length === agents.length ? [] : ids })
     })
-    label.title = `${AGENT_LABEL[agent.id] || agent.id} · ${agent.sessions || 0} 场会话${
+    const display = (agent.magpie && agent.name) || AGENT_LABEL[agent.id] || agent.name || agent.id
+    label.title = `${display} · ${agent.sessions || 0} 场会话${
       agent.lastAt ? ` · ${fmtDay(agent.lastAt)}` : ''
-    }`
-    label.append(input, AGENT_LABEL[agent.id] || agent.id)
+    }${agent.magpie ? ' · magpie 已识别' : ''}`
+    label.append(input, display)
     box.append(label)
   }
   if (!agents.length) box.append(el('span', 'muted', '还没有会话；先让 agent 跑一轮再选'))

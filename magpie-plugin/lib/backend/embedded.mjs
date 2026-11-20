@@ -80,6 +80,34 @@ function resolveDataDir(options) {
   return path.join(base, 'magpie', 'memorysql')
 }
 
+// magpie 自己识别到的 agent：Agents 页的状态缓存（state.agents）。
+// 读不到就返回 []，页面回落到已捕获会话里的 agent_type。
+// options.agentsState 只给测试注入。
+function detectedAgents(options = {}) {
+  let list = options.agentsState
+  if (!Array.isArray(list)) {
+    const base = process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache')
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.join(base, 'magpie', 'agents-state.json'), 'utf8'))
+      list = raw?.state?.agents
+    } catch {
+      list = []
+    }
+  }
+  if (!Array.isArray(list)) return []
+  const out = []
+  const seen = new Set()
+  for (const item of list) {
+    const name = String(item?.name ?? item?.id ?? '').trim()
+    if (!name) continue
+    const id = agentTypeOf(name)
+    if (seen.has(id)) continue
+    seen.add(id)
+    out.push({ id, name })
+  }
+  return out
+}
+
 function sessionLine(row) {
   const summary = row.summary ? clip(String(row.summary).split('\n')[0] ?? '', 120) : ''
   const started = row.started_at ?? row.last_message_at ?? null
@@ -1840,13 +1868,39 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     } catch {
       /* 网关没起来：返回空列表，页面仍能看状态 */
     }
-    const agents = all(
+    const agentRows = all(
       `SELECT agent_type AS id, count(*) AS sessions,
               max(COALESCE(last_message_at, started_at)) AS lastAt
          FROM sessions WHERE deleted = 0
         GROUP BY agent_type
         ORDER BY lastAt DESC, sessions DESC`
     )
+    const counts = new Map(agentRows.map((row) => [row.id, row]))
+    const agents = []
+    const seen = new Set()
+    // magpie 识别到的 agent 优先（哪怕还没有会话），显示名用 magpie 的
+    for (const agent of detectedAgents(options)) {
+      const row = counts.get(agent.id)
+      agents.push({
+        id: agent.id,
+        name: agent.name,
+        magpie: true,
+        sessions: Number(row?.sessions ?? 0),
+        lastAt: row?.lastAt ?? null
+      })
+      seen.add(agent.id)
+    }
+    // 会话里出现、但 magpie 状态缓存里没有的（内部调用等）放在后面
+    for (const row of agentRows) {
+      if (seen.has(row.id)) continue
+      agents.push({
+        id: row.id,
+        name: row.id,
+        magpie: false,
+        sessions: Number(row.sessions ?? 0),
+        lastAt: row.lastAt ?? null
+      })
+    }
     return {
       ...distill,
       models,
@@ -1980,7 +2034,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
       return {
         ok: true,
         backend: 'embedded',
-        version: '0.5.0',
+        version: '0.5.1',
         port: null,
         tools: Object.keys(handlers).length,
         stats: statsValue
