@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-11-22 · 看板巡检:omp 台账修复 + pi 系上 NAS + claude 升级
+
+**巡检结论:无适配发版需求。** 黑盒 0 漂移、0 检查器故障;本机 `upstream:check`
+7 家带源(zcode/dsh/hermes/mimocode/claudecode/codex/opencode)全部 schema 匹配;
+看板的 2 高/7 中风险都是 changelog 风险评估,不是实测漂移。三个跟进项全部落地:
+
+1. **omp 白盒 404(监控自身故障)**:台账 `canopicjars/omp` 已 404(当初标注
+   「待黑盒复核」),真项目是 **can1357/oh-my-pi**(Stencil Labs,39.6k stars,
+   release 活跃 v19.x)→ 台账改定(`82f6706`),服务器 pull 后白盒恢复
+   (fetchErrors 清零,LLM 对新 changelog 判 high)。
+2. **pi 系上 NAS(看守表 7→11 家)**:pi v1.6.0 的 `extension render()` 破坏性
+   变更(白盒高风险)在本机/NAS 都没有样本,pi 系一家改格式三家跟着改,只能
+   NAS 装 CLI 补样本。安装方式与实测坑:
+   - pi = npm `@earendil-works/pi-coding-agent --ignore-scripts`(1.6.0;bin `pi`);
+   - omp = `omp.sh` 安装器(R2 预编译二进制 ~300MB,NAS 下载 40 分钟,19.1.0);
+     **首次从 canopicjars 时代就没人装过**,omp.sh 直连常被 reset,重试可过;
+   - omo = 官方二进制安装器 `get.omo.dev`(**npm omo-ai 在 NAS 上 25 分钟装不完,
+     弃用**;5.1.81);
+   - cline = npm `cline`(3.0.75)。
+   **NAS 实测纠错**:omo 5.1.81 **没有 `run` 子命令**,print 模式是主命令上的
+   `-p/--print`(docs 的 `run <message>` 是 OpenCode 版用法)→ 会话命令已按实测
+   改定并锁测试。面板一键登录:omo/cline 可点;pi/omp 登录在 TUI(/login)。
+   四家版本已播种进 `versions.json`,防止明早全量轮把 300MB 的 omp 重装一遍
+   (探针 updateCmd 超时 300s 根本装不完 —— 已知限制:omp 真升级时会超时,
+   记 versionError,人工重跑安装器即可)。第一轮 `--skip-update` 已上报
+   (24 条,ledger match),4 家 🟡 absent 等登录出样本。
+3. **claudecode 升级**:winget 2.1.263→**2.1.330**,跑了一条最小会话(API 错误
+   也落 transcript),现行 parser 实测解析成功 → 黑盒对 2.1.330 有效。
+   codex/dsh/opencode/mimocode/hermes 均为桌面应用形态,更新走各自应用内,
+   等自然使用产生新样本后探针自动判定(当前 schema 全部匹配,无风险)。
+
+**验证**:vitest **677/679**(2 skip;新增看守表台账同步/安装形态/omo -p 断言、
+面板 11 家断言)、typecheck 0。看板:ledger **match**、黑盒 0 漂移(09:32 新鲜轮)。
+**待用户**:面板(http://192.168.10.2:8789)给 omo/cline 点一键登录;
+pi/omp 在 NAS TUI 里 /login —— 登录后探针才会产出这四家的黑盒样本。
+
+---
+
 ## 2026-11-20 · v0.7.8 已发版(总结不追活会话 + 整理容错)
 
 - 版本 0.7.7 → **0.7.8**,tag `v0.7.8` → `39d4637`;CI tag run `44712618109` **6/6 全绿**,
