@@ -1191,8 +1191,8 @@
       "agentType": "omp",
       "upstream": {
         "kind": "github",
-        "repo": "canopicjars/omp",
-        "note": "Pi 的 fork;仓库地址待黑盒复核(magpie 接线记录 alias oh-my-pi)"
+        "repo": "can1357/oh-my-pi",
+        "note": "Pi 的 fork(Stencil Labs);原记录 canopicjars/omp 已失效,2026-11-22 依 GitHub 搜索改定"
       },
       "monitor": "tracked",
       "localRoots": [
