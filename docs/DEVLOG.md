@@ -37,8 +37,10 @@
 
 **验证**:vitest **677/679**(2 skip;新增看守表台账同步/安装形态/omo -p 断言、
 面板 11 家断言)、typecheck 0。看板:ledger **match**、黑盒 0 漂移(09:32 新鲜轮)。
-**待用户**:面板(http://192.168.10.2:8789)给 omo/cline 点一键登录;
-pi/omp 在 NAS TUI 里 /login —— 登录后探针才会产出这四家的黑盒样本。
+**跟进闭环(同日)**:四家已登录并各跑一条最小会话(pi/omp/omo 全回 `ok`、cline 回
+`ok` + submit_and_exit)→ 黑盒 **ok 11→15、0 漂移**(看板 10:15 重算)。**pi v1.6.0
+render() 破坏性变更实测不影响适配器**——新样本现行 pi parser 直接解析;attention 里
+四家只剩白盒 changelog 风险标注,黑盒证实兼容。
 
 ---
 
