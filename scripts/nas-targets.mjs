@@ -124,11 +124,14 @@ export const NAS_AGENTS = [
   {
     id: 'omo',
     label: 'OmO',
-    // npm 包是 omo-ai(npm 上 unscoped 的 omo 是别人家的,README 明说)
-    updateCmd: ['npm', 'install', '-g', 'omo-ai@latest'],
+    // 官方二进制安装器(落 ~/.local/bin,重跑即更新)。npm 包是 omo-ai,但
+    // 2026-11-22 在 NAS 上实测 npm -g 装了 25+ 分钟没装完(依赖树太大),
+    // 二进制安装器十几秒完成 —— 探针的 300s 升级超时等不起 npm 路线
+    updateCmd: ['sh', '-c', 'curl -fsSL https://get.omo.dev/install.sh | bash'],
     versionCmd: ['omo', '--version'],
-    // docs/reference/cli.md:run <message> = 非交互会话跑完即退
-    sessionCmd: ['omo', 'run', 'Reply with exactly: ok'],
+    // NAS 实测(2026-11-22,omo 5.1.81):没有 run 子命令,print 模式同 pi 系是
+    // 主命令上的 -p/--print(docs 里的 `run <message>` 是 OpenCode 版的用法)
+    sessionCmd: ['omo', '-p', 'Reply with exactly: ok'],
     // omo login --no-browser 是设备码流程,面板能像 OAuth 按钮一样流式展示;
     // 但 OmO 账号「not open to everyone」,登录不上就只有版本监控
     loginCmd: ['omo', 'login', '--no-browser'],

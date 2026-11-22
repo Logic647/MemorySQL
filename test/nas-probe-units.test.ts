@@ -95,8 +95,8 @@ describe('nas-targets(看守表)', () => {
   })
 
   /**
-   * pi 系扩编(2026-11-22):omp 安装器必须走 sh -c(curl|sh);omo 的 npm 包
-   * 是 omo-ai(README 明说 unscoped omo 是别人家的);pi 的 TUI 登录塞不进
+   * pi 系扩编(2026-11-22):omp/omo 安装器必须走 sh -c(curl|sh,NAS 上 npm 装
+   * omo-ai 25 分钟装不完);omo 的二进制来自 get.omo.dev;pi 的 TUI 登录塞不进
    * 面板的一键登录 → loginCmd 必须 null。
    */
   it('pi 系四家:安装/会话命令的关键形态', () => {
@@ -104,11 +104,14 @@ describe('nas-targets(看守表)', () => {
     const omp = byId.get('omp')!
     expect(omp.updateCmd[0]).toBe('sh')
     expect(omp.updateCmd.join(' ')).toContain('https://omp.sh/install')
-    expect(byId.get('omo')!.updateCmd.join(' ')).toContain('omo-ai@latest')
+    expect(byId.get('omo')!.updateCmd.join(' ')).toContain('https://get.omo.dev/install.sh')
     const pi = byId.get('pi')!
     expect(pi.updateCmd).toContain('@earendil-works/pi-coding-agent@latest')
     expect(pi.updateCmd).toContain('--ignore-scripts')
     expect(pi.loginCmd, 'pi 只能 TUI /login 或 pi auth login <provider>').toBeNull()
     expect(byId.get('cline')!.sessionCmd[0]).toBe('cline')
+    // NAS 实测:omo 5.1.81 没有 run 子命令,print 模式是主命令上的 -p
+    expect(byId.get('omo')!.sessionCmd[0]).toBe('omo')
+    expect(byId.get('omo')!.sessionCmd[1]).toBe('-p')
   })
 })
