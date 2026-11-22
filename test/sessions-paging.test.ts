@@ -115,6 +115,47 @@ describe('sessions:get tail paging', () => {
     expect(r.messages).toHaveLength(450)
     expect(r.hasMore).toBe(false)
   })
+
+  /**
+   * harness 注入的系统文本(user 角色)必须带 system 标注返回(2026-11-22):
+   * 详情页据此降权展示 —— 真库一场会话 45 条 user 里只有 ~2 条是人话,
+   * 不标注的话用户翻记录找不到自己说过的话。库内不清洗,只改读侧形状。
+   */
+  it('user 角色里的 harness 注入带 system:true,真实输入不带', () => {
+    db.prepare(
+      `INSERT INTO sessions (id, agent_type, external_id, title, summary, content_hash, updated_at)
+       VALUES (2, 'zcode', 'seed-sys', '系统注入标注', '摘要', 'h2', 1)`
+    ).run()
+    const ins = db.prepare(
+      `INSERT INTO session_messages (session_id, seq, role, content, ts) VALUES (2, ?, 'user', ?, NULL)`
+    )
+    ins.run(0, '# Environment\nYou have been invoked in the following environment: \n - Primary working directory: C:\\')
+    ins.run(1, '<task-notification>\n<task-id>exec_x</task-id>\n</task-notification>')
+    ins.run(2, '这四家怎么用命令行登录')
+    const r = handlers.get('sessions:get')!({ id: 2 }) as {
+      messages: Array<{ seq: number; system?: boolean }>
+    }
+    expect(r.messages.map((m) => m.system)).toEqual([true, true, undefined])
+  })
+})
+
+describe('sessions:list 排序', () => {
+  /**
+   * 2026-11-22 用户拍板:列表按**最后消息时间**排,不再按 started_at ——
+   * 旧行为里当天还在聊的长会话(9 月开始的 #71)沉底,一次性探针会话浮顶。
+   * SQL 的 ORDER BY 决定分页窗口,渲染层二次排序同口径,两处都要锁。
+   */
+  it('按 last_message_at 降序;缺失时回落 started_at', () => {
+    db.prepare(
+      `INSERT INTO sessions (id, agent_type, external_id, title, content_hash, updated_at,
+         started_at, last_message_at) VALUES
+         (10, 'zcode', 'old-start-recent-msg', '老会话但刚活跃', 'h', 1, 1000, 9000),
+         (11, 'zcode', 'recent-start-old-msg',  '新会话没再聊',   'h', 1, 5000, 5000),
+         (12, 'zcode', 'no-last-message',       '缺最后消息',     'h', 1, 7000, NULL)`
+    ).run()
+    const rows = handlers.get('sessions:list')!({}) as Array<{ id: number }>
+    expect(rows.map((r) => r.id)).toEqual([10, 12, 11])
+  })
 })
 
 describe('memories:list paging', () => {

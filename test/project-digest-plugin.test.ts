@@ -24,6 +24,7 @@ let settings: Map<string, unknown>
 let vaultDir: string
 let refineCalls = 0
 let refineMode: 'absent' | 'throw' = 'absent'
+let refinePrompts: string[] = []
 
 const nowSec = (): number => Math.floor(Date.now() / 1000)
 
@@ -54,8 +55,9 @@ function initPlugin(): void {
         return {
           available: () => true,
           describe: () => 'mock',
-          refine: async () => {
+          refine: async (prompt: string) => {
             refineCalls++
+            refinePrompts.push(String(prompt))
             throw new Error('This operation was aborted')
           }
         }
@@ -109,6 +111,7 @@ beforeEach(() => {
   ])
   refineCalls = 0
   refineMode = 'absent'
+  refinePrompts = []
   vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'memorysql-digest-test-'))
 })
 
@@ -185,5 +188,33 @@ describe('project-digest 触发逻辑', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  /**
+   * harness 注入的系统文本在库里也是 user 角色(2026-11-22 真库实测):总结素材
+   * 的「首条用户消息」曾取到 `# Environment…`,LLM 从来看不到用户真正要什么。
+   * 断言的是发给 LLM 的 prompt(捕获后抛错走规则回落,digest 仍落库)。
+   */
+  it('总结素材的首条用户消息跳过 harness 注入,取真实输入', async () => {
+    addProject(1, 'demo')
+    const oldTs = nowSec() - 3600
+    addSession(1, 1, oldTs)
+    const ins = db.prepare(
+      `INSERT INTO session_messages (session_id, seq, role, content, ts) VALUES (1, ?, ?, ?, ?)`
+    )
+    ins.run(0, 'user', '# Environment\nYou have been invoked in the following environment:', oldTs - 600)
+    ins.run(1, 'assistant', '好的,开始处理。', oldTs - 500)
+    ins.run(2, 'user', '帮我把语义检索默认关掉', oldTs - 400)
+    refineMode = 'throw'
+    initPlugin()
+
+    await runNow(1)
+
+    expect(
+      (db.prepare(`SELECT COUNT(*) AS n FROM project_digests`).get() as { n: number }).n
+    ).toBe(1)
+    expect(refineCalls).toBe(1)
+    expect(refinePrompts[0]).toContain('帮我把语义检索默认关掉')
+    expect(refinePrompts[0]).not.toContain('# Environment')
   })
 })

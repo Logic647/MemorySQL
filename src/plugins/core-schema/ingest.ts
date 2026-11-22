@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type Database from 'better-sqlite3'
 import type { RawMessage, RawSession } from '../../shared/types'
+import { firstRealUserMessage } from '../../shared/harness-noise'
 import type { SummarizerProvider } from '../../main/core/plugin-host'
 
 const CONTENT_CAP = 100_000
@@ -98,7 +99,9 @@ function clip(text: string, max: number): string {
 }
 
 function fallbackTitle(s: RawSession): string {
-  const firstUser = s.messages.find((m) => m.role === 'user')?.content ?? ''
+  // 首条 harness 注入(# Environment 系统上下文)不是用户说的话,拿它当标题
+  // 会产出「# Environment You have been invoked…」这种废标题;先找真实输入
+  const firstUser = firstRealUserMessage(s.messages) ?? ''
   return clip(firstLine(firstUser) || s.externalId, 80)
 }
 

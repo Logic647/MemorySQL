@@ -4,6 +4,52 @@
 
 ---
 
+## 2026-11-22 · 「会话记录没有用户输入」排查 + harness 噪声分类器(未发版)
+
+**用户报障:会话记录好像没有用户输入的部分。** 排查结论:**数据零丢失**,所有出口
+(库、详情页、MCP get_session/get_context、导出 MD、备份)都有用户输入;真问题是
+**各家 harness 把系统上下文/通知写成 user 角色**,真实用户输入被淹没 —— 真库统计:
+**zcode 的 user 消息 85.5% 是噪声**(6535/7639),codex 20.9%、mimocode 19.8%,
+claudecode/hermes/opencode 基本干净。当前会话尾部 200 条里 45 条 "user" 只有 ~2 条
+是人话,其余是 `# Environment…`、`<task-notification>`、TodoWrite/total_tokens 提醒等。
+
+排查中排除的两个假线索(避免下次重查):①装机版 16:18 被 0.7.8 自动更新重启后
+**捕获并没有断**——zcode 的 watcher 路径不推进 `scanWatermark`(只有 scan() 推),
+水位停在重启前一刻是**正常**的;当时误判「停止入库」是把 UTC 时间戳当本地时间读
+(`12:30Z` = 本地 20:30)+ 副本没带 WAL。②`desktop:local_*` 8 条零消息会话是
+Claude Desktop 自己标的 `transcriptUnavailable`(transcript 已不存在),非解析问题。
+
+**修复(全部读侧,库内不清洗)**:
+- 新增 `src/shared/harness-noise.ts`:`isHarnessNoiseUserMessage`(行首锚定话术 +
+  嵌入式标签,误伤评估见文件头)+ `firstRealUserMessage`(前 12 条里找真实输入,
+  全噪声返回 null,宁缺毋滥)。
+- `core-schema` `sessions:get`:user 消息带 `system: true` 标注;详情页(App.tsx +
+  styles.css)系统注入降权展示(`msg-system`:55% 透明、小字号、96px 限高滚动),
+  标签显示「user · 系统注入」—— 真实输入一眼可辨。
+- `project-digest` 素材:`firstUser` 曾是 SQL 里 `role='user' ORDER BY seq LIMIT 1`,
+  直接取到系统注入 → `fixFirstUser` 对噪声首条回查前 12 条真实输入(发给 LLM 的
+  prompt 里「用户:」终于是人话)。
+- `core-schema` `fallbackTitle`:无 LLM 兜底标题不再产出「# Environment You have
+  been invoked…」。
+- `memory-core` `distill`:噪声不进候选提取,也不再撑大「短句画像」的分母
+  (实测噪声英文会误中 don't/remember 信号词、并把 5/9=0.56 的短句占比稀释到不触发)。
+- MCP `memory_get_session`:噪声行标注为 `USER(系统注入)`,agent 不再把系统上下文
+  当「用户说过的话」。
+
+**验证**:vitest **686/688**(2 skip;新增 harness-noise 5 + distill 1 + ingest-sync 1 +
+project-digest-plugin 1 + sessions-paging 1,样本全部来自真库)、typecheck 0、build 通过;
+真库全量回放:zcode 85.5%/codex 20.9%/mimocode 19.8% 噪声全部正确识别,#71 前 30 条
+内真实首条输入取词正确。诊断手段留档:装机版可带 `--remote-debugging-port=9223` 启动,
+从渲染层 `window.memorysql.invoke('<channel>', payload)` 直调任意 IPC 实时观测
+(测完已恢复正常启动)。
+
+**同日追加(用户拍板)**:会话列表改按**最后消息时间**排。旧行为按 `started_at` 倒序,
+当天还在聊的长会话(9 月开始的 #71)沉底、一次性探针会话浮顶。三处同步改:
+SQL `sessions:list` 的 `ORDER BY`(决定分页窗口)、渲染层分组键 `newestAt`
+(`lastMessageAt ?? startedAt`)、行排序 `effKey`(手动 sortKey 仍最优先)。
+锁测试 1 条(老会话新消息 > 缺 last_message 回落 > 新会话旧消息)。全量复验:
+vitest **687/689**、typecheck 0、build 通过。
+
 ## 2026-11-22 · 看板巡检:omp 台账修复 + pi 系上 NAS + claude 升级
 
 **巡检结论:无适配发版需求。** 黑盒 0 漂移、0 检查器故障;本机 `upstream:check`

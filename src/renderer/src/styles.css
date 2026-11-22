@@ -405,6 +405,9 @@ select option { background: var(--msql-bg-solid); color: var(--msql-fg); }
 .load-earlier:hover { color: var(--msql-accent-fg-dim); }
 .msg { border-radius: var(--msql-radius-md); padding: var(--msql-sp-3); border: 1px solid var(--msql-glass-border); background: var(--msql-glass-soft); box-shadow: var(--msql-card-shadow); }
 .msg-user { border-left: 2px solid var(--msql-accent); }
+/* harness 注入的系统文本(user 角色,读侧标注):降权+限高,真实用户输入不再被淹没 */
+.msg-system { opacity: 0.55; }
+.msg-system .msg-content { font-size: var(--msql-fs-sm); color: var(--msql-fg-dim); max-height: 96px; overflow: auto; }
 .msg-assistant { border-left: 2px solid var(--msql-success); }
 .msg-tool { border-left: 2px solid var(--msql-warning); background: var(--msql-tool-bg); }
 .msg-role { font-family: var(--msql-font-mono); font-size: var(--msql-fs-xs); color: var(--msql-fg-dim); margin-bottom: 6px; }

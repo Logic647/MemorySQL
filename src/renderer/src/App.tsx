@@ -1108,12 +1108,16 @@ export default function App() {
                     if (bucket) bucket.push(s)
                     else groups.set(key, [s])
                   }
-                  // 每组的最新开始时间只算一次。原来是 sort 比较器里对每组
-                  // 重新 Math.max(...map()) —— 分组多+行多时是 O(组×行) 的重复扫描
+                  // 每组的最新活动时间只算一次(按最后消息排:还在聊的会话/项目浮顶,
+                  // 不再按 started_at 让老会话压住今天活跃的)。原来是 sort 比较器里
+                  // 对每组重新 Math.max(...map()) —— 分组多+行多时是 O(组×行) 的重复扫描
                   const newestAt = new Map<string, number>()
                   for (const [k, list] of groups) {
                     let m = 0
-                    for (const r of list) if ((r.startedAt ?? 0) > m) m = r.startedAt ?? 0
+                    for (const r of list) {
+                      const t = r.lastMessageAt ?? r.startedAt ?? 0
+                      if (t > m) m = t
+                    }
                     newestAt.set(k, m)
                   }
                   const keys = [...groups.keys()].sort((x, y) => {
@@ -1133,7 +1137,9 @@ export default function App() {
                         children.set(r.similarTo, arr)
                       } else origins.push(r)
                     }
-                    const effKey = (r: SessionSummaryRow): number => r.sortKey ?? r.startedAt ?? 0
+                    // 手动拖动的 sortKey 优先;否则按最后消息排(与列表口径一致)
+                    const effKey = (r: SessionSummaryRow): number =>
+                      r.sortKey ?? r.lastMessageAt ?? r.startedAt ?? 0
                     const byTime = (x: SessionSummaryRow, y: SessionSummaryRow): number =>
                       effKey(y) - effKey(x)
                     origins.sort(byTime)
@@ -1440,9 +1446,13 @@ export default function App() {
                     </button>
                   )}
                   {selected.messages.map((m) => (
-                    <div key={m.id} className={`msg msg-${m.role}`}>
+                    <div key={m.id} className={`msg msg-${m.role}${m.system ? ' msg-system' : ''}`}>
                       <div className="msg-role">
-                        {m.role === 'tool' ? `🔧 ${m.toolName ?? 'tool'}` : m.role}
+                        {m.role === 'tool'
+                          ? `🔧 ${m.toolName ?? 'tool'}`
+                          : m.role === 'user' && m.system
+                            ? 'user · 系统注入'
+                            : m.role}
                         {m.ts ? <span className="msg-ts"> · {fmtTime(m.ts)}</span> : null}
                       </div>
                       <pre className="msg-content">{m.content}</pre>

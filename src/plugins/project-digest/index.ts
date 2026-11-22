@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
+import { isHarnessNoiseUserMessage } from '../../shared/harness-noise'
 import { DIGEST_MIGRATIONS } from './migrations'
 import {
   buildDigestMd,
@@ -100,6 +101,19 @@ const plugin: MemorySQLPlugin = {
     // 同一轮触发里已经消化过的会话不再回读(即使期间又追加了新消息)——
     // 多轮循环只负责「消化更多不同会话」,不追着活会话跑。
     const stmtSessionsExcluding = new Map<number, { all: (...params: unknown[]) => unknown[] }>()
+    // 首条 user 是 harness 注入(# Environment 等,见 shared/harness-noise.ts)时,
+    // 往后多看几条找真实输入;全噪声就留空 —— 「用户: # Environment…」比缺失更误导
+    const stmtFirstUserCandidates = sqlite.prepare(
+      'SELECT content FROM session_messages WHERE session_id = ? AND role = ? ORDER BY seq LIMIT 12'
+    )
+    const fixFirstUser = (sessions: DigestSessionInput[]): void => {
+      for (const s of sessions) {
+        if (s.firstUser && !isHarnessNoiseUserMessage(s.firstUser)) continue
+        const cands = stmtFirstUserCandidates.all(s.id, 'user') as Array<{ content: string }>
+        const hit = cands.find((c) => !isHarnessNoiseUserMessage(c.content))
+        s.firstUser = hit?.content ?? null
+      }
+    }
     const loadSessions = (
       projectId: number,
       coveredBefore: number,
@@ -107,7 +121,9 @@ const plugin: MemorySQLPlugin = {
       exclude: number[]
     ): DigestSessionInput[] => {
       if (exclude.length === 0) {
-        return stmtSessions.all(projectId, coveredBefore, cutoffSec) as DigestSessionInput[]
+        const rows = stmtSessions.all(projectId, coveredBefore, cutoffSec) as DigestSessionInput[]
+        fixFirstUser(rows)
+        return rows
       }
       let stmt = stmtSessionsExcluding.get(exclude.length)
       if (!stmt) {
@@ -116,7 +132,9 @@ const plugin: MemorySQLPlugin = {
         ) as unknown as { all: (...params: unknown[]) => unknown[] }
         stmtSessionsExcluding.set(exclude.length, stmt)
       }
-      return stmt.all(projectId, coveredBefore, cutoffSec, ...exclude) as DigestSessionInput[]
+      const rows = stmt.all(projectId, coveredBefore, cutoffSec, ...exclude) as DigestSessionInput[]
+      fixFirstUser(rows)
+      return rows
     }
     const stmtPendingProgress = sqlite.prepare(`
       SELECT content FROM memories

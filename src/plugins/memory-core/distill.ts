@@ -1,4 +1,5 @@
 import type { RawMessage } from '../../shared/types'
+import { isHarnessNoiseUserMessage } from '../../shared/harness-noise'
 
 /**
  * 规则记忆提炼:从单个会话消息里提取候选记忆(免费、离线、确定性)。
@@ -23,7 +24,10 @@ export function distill(
   sessionId: number,
   messages: RawMessage[]
 ): DistilledCandidate[] {
-  const users = messages.filter((m) => m.role === 'user')
+  // harness 注入的系统文本(# Environment / 运行时提醒 / task-notification)在库里
+  // 也是 user 角色:不滤掉的话,①英文噪声会误中 don't/remember 那组信号词;
+  // ②users 总数被撑大,「短句占比」画像统计失真
+  const users = messages.filter((m) => m.role === 'user' && !isHarnessNoiseUserMessage(m.content))
   const candidates: DistilledCandidate[] = []
   const seen = new Set<string>()
   const push = (c: DistilledCandidate): void => {

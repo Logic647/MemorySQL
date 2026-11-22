@@ -49,4 +49,26 @@ describe('memory distill (规则提炼)', () => {
     const out = distill('hermes', 6, [msg('assistant', '记住这个结果:一切正常。')])
     expect(out).toHaveLength(0)
   })
+
+  /**
+   * harness 注入的系统文本在库里也是 user 角色(2026-11-22 真库实测):不滤掉的话
+   * ①英文噪声误中 don't/remember 信号词 ②users 被撑大、短句画像失真
+   */
+  it('harness 噪声不参与提炼:不产候选、不进画像比例', () => {
+    const noise = [
+      '# Environment\nYou have been invoked in the following environment: \n - Primary working directory: C:\\',
+      "The TodoWrite tool hasn't been used recently. If you are working on tasks that would benefit from TodoWrite, remember to use it. Don't repeat tracked items.",
+      '<task-notification>\n<task-id>exec_x</task-id>\n<status>failed</status>\n</task-notification>',
+      '<total_tokens>15000000 tokens left</total_tokens>'
+    ]
+    const msgs: RawMessage[] = []
+    for (const n of noise) msgs.push(msg('user', n), msg('assistant', '好的,继续。'))
+    const out = distill('zcode', 7, msgs)
+    expect(out).toHaveLength(0)
+    // 噪声不进分母:6 条噪声 + 5 条真短句(占比 5/5=100%)→ 画像规则照常触发
+    const mixed: RawMessage[] = noise.flatMap((n) => [msg('user', n), msg('assistant', '好')])
+    for (let i = 0; i < 5; i++) mixed.push(msg('user', '继续'), msg('assistant', '继续推进并汇报。'))
+    const out2 = distill('zcode', 8, mixed)
+    expect(out2.some((c) => c.kind === 'persona' && c.content.includes('极简指令'))).toBe(true)
+  })
 })

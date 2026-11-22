@@ -1,5 +1,6 @@
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import type { SessionSummaryRow, MessageRow, SearchHit } from '../../shared/types'
+import { isHarnessNoiseUserMessage } from '../../shared/harness-noise'
 import { CORE_MIGRATIONS } from './migrations'
 import { createIngestService, type IngestService } from './ingest'
 import { createSearchService, type SearchService } from './search'
@@ -96,7 +97,7 @@ const plugin: MemorySQLPlugin = {
                     WHERE c.parent_session_id = s.id AND c.deleted = 0) AS subagentCount
            FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
            WHERE s.deleted = 0 ${archivedWhere} ${subWhere} ${where}
-           ORDER BY COALESCE(s.started_at, s.updated_at) DESC
+           ORDER BY COALESCE(s.last_message_at, s.started_at, s.updated_at) DESC
            LIMIT ? OFFSET ?`
         )
         .all(...params, limit, offset)
@@ -151,7 +152,11 @@ const plugin: MemorySQLPlugin = {
               .prepare(`${select} AND seq < ? ORDER BY seq DESC LIMIT ?`)
               .all(id, beforeSeq, cap) as MessageRow[])
           : (ctx.db.sqlite.prepare(`${select} ORDER BY seq DESC LIMIT ?`).all(id, cap) as MessageRow[])
-      const messages = rows.reverse()
+      // harness 注入的系统文本在库里也是 user 角色(库内不清洗),读侧标注出来,
+      // 详情页据此降权展示 —— 否则 45 条 "user" 里只有 2 条是人话
+      const messages = rows.reverse().map((m) =>
+        m.role === 'user' && isHarnessNoiseUserMessage(m.content) ? { ...m, system: true } : m
+      )
       const firstSeq = messages.length > 0 ? Number(messages[0].seq) : null
       const total = (
         ctx.db.sqlite

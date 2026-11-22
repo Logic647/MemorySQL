@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import type { McpToolDef } from '../../main/core/plugin-host'
 import type { SearchHit } from '../../shared/types'
+import { isHarnessNoiseUserMessage } from '../../shared/harness-noise'
 import type { SearchService } from './search'
 import type { MemoriesService } from './index'
 
@@ -731,7 +732,14 @@ export function createMcpTools(deps: {
         const kept: string[] = []
         for (let i = messages.length - 1; i >= 0; i -= 1) {
           const m = messages[i]
-          const label = m.role === 'tool' ? `TOOL(${m.tool_name ?? 'tool'})` : m.role.toUpperCase()
+          // harness 注入(# Environment/运行时提醒等)在库里也是 USER —— 不标注的话
+          // agent 会把系统上下文当成「用户说过的话」,预算还被噪声吃掉大半
+          const noise = m.role === 'user' && isHarnessNoiseUserMessage(m.content)
+          const label = m.role === 'tool'
+            ? `TOOL(${m.tool_name ?? 'tool'})`
+            : m.role === 'user' && noise
+              ? 'USER(系统注入)'
+              : m.role.toUpperCase()
           const line = `**${label}** ${when(m.ts)}\n${clipMsg(m.content, perMessage)}`
           const extra = line.length + (kept.length > 0 ? SEP.length : 0)
           if (extra > budget) {

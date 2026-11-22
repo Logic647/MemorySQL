@@ -102,6 +102,11 @@ export interface MessageRow {
   content: string
   ts: number | null
   toolName: string | null
+  /**
+   * harness 注入的「非用户输入」(系统上下文/运行时提醒/后台事件),读侧标注、
+   * 库内不清洗 —— 详情页降权展示,真实用户输入不被淹没。见 shared/harness-noise.ts
+   */
+  system?: boolean
 }
 
 export interface SearchHit {

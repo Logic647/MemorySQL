@@ -186,3 +186,33 @@ describe('summary cache (content_hash gate)', () => {
     expect(calls()).toBe(2)
   })
 })
+
+describe('fallbackTitle (无 LLM 时的兜底标题)', () => {
+  // 走 fallbackTitle = 不带 summarizer 的基础 ingest(getSummarizer: () => null)
+  it('跳过 harness 注入的首条 user,拿真实输入当标题;全噪声回落 externalId', async () => {
+    const env = '# Environment\nYou have been invoked in the following environment: \n - Primary working directory: C:\\'
+    const imported = await ingest.ingestSessions([
+      session({
+        externalId: 'noise-first',
+        title: undefined,
+        messages: [
+          { role: 'user', content: env },
+          { role: 'assistant', content: '好的' },
+          { role: 'user', content: '帮我把语义检索默认关掉' }
+        ]
+      }),
+      session({
+        externalId: 'noise-only',
+        title: undefined,
+        messages: [
+          { role: 'user', content: env },
+          { role: 'assistant', content: 'ok' }
+        ]
+      })
+    ])
+    expect(imported.imported).toBe(2)
+    expect(get('noise-first').title).toBe('帮我把语义检索默认关掉')
+    // 全噪声 → 与旧行为一致回落 externalId,绝不把系统上下文写成标题
+    expect(get('noise-only').title).toBe('noise-only')
+  })
+})
