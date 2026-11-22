@@ -781,7 +781,14 @@ export const AGENTS: AgentContract[] = [
     id: 'omp',
     name: 'omp(oh-my-pi)',
     agentType: 'omp',
-    upstream: { kind: 'github', repo: 'canopicjars/omp', note: 'Pi 的 fork;仓库地址待黑盒复核(magpie 接线记录 alias oh-my-pi)' },
+    upstream: {
+      kind: 'github',
+      repo: 'can1357/oh-my-pi',
+      // 2026-11-22 实测:旧地址 canopicjars/omp 已 404(台账当时标注"待复核"),
+      // 白盒连续报 404 才查出来 —— 真项目是 Stencil Labs 的 can1357/oh-my-pi
+      // (39k+ stars,release 活跃 v19.x,正文几千到几万字)。
+      note: 'Pi 的 fork(Stencil Labs);原记录 canopicjars/omp 已失效,2026-11-22 依 GitHub 搜索改定'
+    },
     monitor: 'tracked',
     localRoots: ['.omp/agent/sessions'],
     source: {
