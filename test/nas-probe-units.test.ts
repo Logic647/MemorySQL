@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
+import { NAS_AGENTS } from '../scripts/nas-targets.mjs'
 
 /**
  * NAS 探针的 systemd 单元 —— 锁住几条**踩过才写对**的配置。
@@ -66,5 +67,48 @@ describe('nas-probe.service', () => {
       expect(pathLine, `${name} 应显式设 PATH`).toContain('/home/logic/local/node-v22.22.1-linux-x64/bin')
       expect(pathLine, `${name} 应包含 ~/.local/bin`).toContain('/home/logic/.local/bin')
     }
+  })
+})
+
+describe('nas-targets(看守表)', () => {
+  /**
+   * 探针逐条调 NAS_AGENTS,台账缺了对应条目只会 warn 后跳过(2026-11-22 扩编
+   * pi/omp/omo/cline 时顺手加这条护栏):看守表加人必须同步台账,否则黑盒检查
+   * 根本不会看这家。
+   */
+  it('看守表的每一家都在上游台账里(黑盒检查才看得到它们)', () => {
+    const ledger = JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), 'upstream', 'ledger.json'), 'utf-8')
+    ) as { agents: Array<{ id: string }> }
+    const ledgerIds = new Set(ledger.agents.map((a) => a.id))
+    for (const a of NAS_AGENTS) {
+      expect(ledgerIds.has(a.id), `${a.id} 不在台账里`).toBe(true)
+    }
+  })
+
+  it('每家都有版本/会话命令;sshFallback 一律非空(登录失败的兜底指引)', () => {
+    for (const a of NAS_AGENTS) {
+      expect(a.versionCmd.length, `${a.id} versionCmd`).toBeGreaterThan(1)
+      expect(a.sessionCmd.length, `${a.id} sessionCmd`).toBeGreaterThan(1)
+      expect(a.sshFallback.length, `${a.id} sshFallback`).toBeGreaterThan(0)
+    }
+  })
+
+  /**
+   * pi 系扩编(2026-11-22):omp 安装器必须走 sh -c(curl|sh);omo 的 npm 包
+   * 是 omo-ai(README 明说 unscoped omo 是别人家的);pi 的 TUI 登录塞不进
+   * 面板的一键登录 → loginCmd 必须 null。
+   */
+  it('pi 系四家:安装/会话命令的关键形态', () => {
+    const byId = new Map(NAS_AGENTS.map((a) => [a.id, a]))
+    const omp = byId.get('omp')!
+    expect(omp.updateCmd[0]).toBe('sh')
+    expect(omp.updateCmd.join(' ')).toContain('https://omp.sh/install')
+    expect(byId.get('omo')!.updateCmd.join(' ')).toContain('omo-ai@latest')
+    const pi = byId.get('pi')!
+    expect(pi.updateCmd).toContain('@earendil-works/pi-coding-agent@latest')
+    expect(pi.updateCmd).toContain('--ignore-scripts')
+    expect(pi.loginCmd, 'pi 只能 TUI /login 或 pi auth login <provider>').toBeNull()
+    expect(byId.get('cline')!.sessionCmd[0]).toBe('cline')
   })
 })

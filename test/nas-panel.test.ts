@@ -49,7 +49,7 @@ describe('登录白名单', () => {
    * 这条用例从面板 API 侧断言"面板能看到全部看守家"。
    */
   it('面板覆盖看守表全部家:copilot 可一键登录,droid 只能 SSH(TUI 认证)', () => {
-    for (const t of ['qoder', 'codebuddy', 'copilot', 'qwencode', 'gemini', 'kimicli']) {
+    for (const t of ['qoder', 'codebuddy', 'copilot', 'qwencode', 'gemini', 'kimicli', 'omo']) {
       const hit = findLoginTarget(t)!
       expect(Array.isArray(hit.loginCmd), `${t} 应有非交互登录命令`).toBe(true)
       expect(hit.loginCmd!.length).toBeGreaterThan(1)
@@ -59,6 +59,12 @@ describe('登录白名单', () => {
     const droid = findLoginTarget('droid')!
     expect(droid.loginCmd, 'droid 不该被硬塞一个不存在的 login 命令').toBeNull()
     expect(droid.sshFallback).toContain('TUI')
+    // pi 系扩编(2026-11-22):pi/omp 的登录在 TUI(/login),面板管不到;
+    // cline 有 auth 子命令面板可点
+    for (const t of ['pi', 'omp']) {
+      expect(findLoginTarget(t)!.loginCmd, `${t} 登录在 TUI /login,不该有 loginCmd`).toBeNull()
+    }
+    expect(findLoginTarget('cline')!.loginCmd).toEqual(['cline', 'auth', 'cline'])
   })
 })
 
@@ -99,7 +105,7 @@ describe('冒烟:面板服务起来后,边界与页面', () => {
         reports: unknown[]
       }
       expect(st.lastRun).toBeNull()
-      expect(st.targets).toHaveLength(7) // 看守表 7 家(targets 与探针同源)
+      expect(st.targets).toHaveLength(11) // 看守表 11 家(targets 与探针同源;2026-11-22 +pi/omp/omo/cline)
       expect(st.reports).toEqual([])
 
       // 白名单外/注入形态的 login id → 400,绝不 spawn

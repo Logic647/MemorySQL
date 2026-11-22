@@ -9,9 +9,19 @@
  * (上游源码/样本 + 本机 check)。开源几家是早期就在看守表里的,保留不动
  * (多一层覆盖不亏,它们的数据目录本来就在 NAS 上)。
  *
- * ⚠ 命令一律用**数组**形态(spawn 不经 shell),除 droid 的安装脚本必须
+ * 2026-11-22 扩编:pi/omp/omo/cline 四家进看守表 —— pi v1.6.0 的
+ * `extension render()` 破坏性变更(看板白盒高风险)在本机/NAS 都没有样本
+ * 可以黑盒验证,而 pi 系一家改格式另外三家跟着改(family 证据),只能在
+ * NAS 装 CLI + 跑最小会话补样本。注意:这四家都要 **LLM 账号/密钥** 才能
+ * 出会话(面板一键登录 / SSH TUI),没登录前探针只能盯版本号,数据侧是 🟡。
+ *
+ * ⚠ 命令一律用**数组**形态(spawn 不经 shell),除 droid/omp 的安装脚本必须
  * 走 `sh -c`(官方只提供 curl | sh 安装器)。
  * ⚠ 这几家的 CLI 参数随版本变:改动前先在 NAS 上 `--help` 核对,别照抄。
+ *   2026-11-22 已核对来源:pi packages/coding-agent/docs/cli.md(--print)、
+ *   omp README(「omp -p answers a single prompt and exits」)、
+ *   omo docs/reference/cli.md(run <message> / login --no-browser)、
+ *   cline npm README(位置参数 one-shot / auth 子命令)。装好后仍以 NAS 实测为准。
  */
 
 /** @typedef {{ id: string, label: string, updateCmd: string[], versionCmd: string[],
@@ -85,6 +95,54 @@ export const NAS_AGENTS = [
     sessionCmd: ['kimi', '-p', 'Reply with exactly: ok'],
     loginCmd: ['kimi', 'login'],
     sshFallback: 'ssh nas 后运行 kimi 并在 TUI 里 /login'
+  },
+  // ---- pi 系(2026-11-22 扩编,黑盒样本补采样) ---------------------------
+  {
+    id: 'pi',
+    label: 'Pi',
+    // 官方 npm 安装文档带 --ignore-scripts(pi 不需要依赖生命周期脚本,照抄)
+    updateCmd: ['npm', 'install', '-g', '--ignore-scripts', '@earendil-works/pi-coding-agent@latest'],
+    versionCmd: ['pi', '--version'],
+    // docs/cli.md:--print 跑完写会话即退出(-p 同义)
+    sessionCmd: ['pi', '--print', 'Reply with exactly: ok'],
+    // 登录在 TUI 里 /login,或 pi auth login <provider> --no-browser ——
+    // provider 是参数,面板塞不出通用的一键登录
+    loginCmd: null,
+    sshFallback: 'ssh nas 后 TUI 里 /login,或 pi auth login <provider> --no-browser'
+  },
+  {
+    id: 'omp',
+    label: 'omp (oh-my-pi)',
+    // 预编译二进制 + SHA-256 校验的官方安装器(重跑即更新);仓库 can1357/oh-my-pi
+    updateCmd: ['sh', '-c', 'curl -fsSL https://omp.sh/install | sh'],
+    versionCmd: ['omp', '--version'],
+    // README:「omp -p answers a single prompt and exits」
+    sessionCmd: ['omp', '-p', 'Reply with exactly: ok'],
+    loginCmd: null,
+    sshFallback: 'ssh nas 后 TUI 里 /login(60+ provider:oauth/plan/local 任选)'
+  },
+  {
+    id: 'omo',
+    label: 'OmO',
+    // npm 包是 omo-ai(npm 上 unscoped 的 omo 是别人家的,README 明说)
+    updateCmd: ['npm', 'install', '-g', 'omo-ai@latest'],
+    versionCmd: ['omo', '--version'],
+    // docs/reference/cli.md:run <message> = 非交互会话跑完即退
+    sessionCmd: ['omo', 'run', 'Reply with exactly: ok'],
+    // omo login --no-browser 是设备码流程,面板能像 OAuth 按钮一样流式展示;
+    // 但 OmO 账号「not open to everyone」,登录不上就只有版本监控
+    loginCmd: ['omo', 'login', '--no-browser'],
+    sshFallback: 'omo login --no-browser(终端出设备码,任意设备网页批准;需 OmO 账号)'
+  },
+  {
+    id: 'cline',
+    label: 'Cline CLI',
+    updateCmd: ['npm', 'install', '-g', 'cline@latest'],
+    versionCmd: ['cline', '--version'],
+    // npm README:位置参数 one-shot(yolo 默认,跑完即退)
+    sessionCmd: ['cline', 'Reply with exactly: ok'],
+    loginCmd: ['cline', 'auth', 'cline'],
+    sshFallback: 'ssh nas 后运行 cline auth(cline OAuth / API key 二选一)'
   }
 ]
 
