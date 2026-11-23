@@ -88,3 +88,35 @@ describe('memory-core save/delete (scope + lock)', () => {
     expect(row.deleted).toBe(1)
   })
 })
+
+/**
+ * 2026-11-23 测试报告 P3-7:UI 上连续两次写同内容会得到两条一模一样的记忆
+ * (IPC `save` 走 addMemory 的「总是插入」路径)。现在 addMemory 按
+ * (kind, content, scope, project) 去重,已退休的不算重复。
+ */
+describe('memory-core save 去重', () => {
+  it('同 kind/scope/project 的相同内容不重复插入', () => {
+    const a = handlers.get('save')!({ kind: 'fact', content: '重复内容测试' }) as { id: number }
+    const b = handlers.get('save')!({ kind: 'fact', content: '重复内容测试' }) as { id: number }
+    expect(b.id).toBe(a.id)
+    const n = db.prepare(`SELECT COUNT(*) AS n FROM memories WHERE content = '重复内容测试'`).get() as { n: number }
+    expect(n.n).toBe(1)
+    // 不同 kind / 不同项目仍是不同的记忆
+    const c = handlers.get('save')!({ kind: 'decision', content: '重复内容测试' }) as { id: number }
+    expect(c.id).not.toBe(a.id)
+    const d = handlers.get('save')!({
+      kind: 'fact',
+      content: '重复内容测试',
+      scope: 'project',
+      projectId: 1
+    }) as { id: number }
+    expect(d.id).not.toBe(a.id)
+  })
+
+  it('已退休的同内容不算重复(允许重新记)', () => {
+    const a = handlers.get('save')!({ kind: 'fact', content: '退休后可重记' }) as { id: number }
+    db.prepare(`UPDATE memories SET status = 'retired' WHERE id = ?`).run(a.id)
+    const b = handlers.get('save')!({ kind: 'fact', content: '退休后可重记' }) as { id: number }
+    expect(b.id).not.toBe(a.id)
+  })
+})

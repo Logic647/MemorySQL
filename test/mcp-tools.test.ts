@@ -503,3 +503,17 @@ describe('memory_log_progress + brief', () => {
     expect(brief).toContain('写了一半的功能')
   })
 })
+
+describe('memory_search 参数校验', () => {
+  /**
+   * 2026-11-23 测试报告 P3-8:传错参数名(agent 用 q 而不是 query)时旧实现返回
+   * 「未找到与""相关的记录」,agent 会以为库里没数据。必须报参数错误。
+   */
+  it('缺 query / 空 query → 参数错误;传 q 时点名正确参数名', async () => {
+    expect(await call('memory_search', {})).toContain('参数错误')
+    expect(await call('memory_search', { query: '   ' })).toContain('参数错误')
+    const withQ = await call('memory_search', { q: 'SQLite' })
+    expect(withQ).toContain('参数错误')
+    expect(withQ).toContain('不是 q')
+  })
+})

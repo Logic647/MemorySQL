@@ -2,7 +2,7 @@
  * 生成一个**完全虚构**的演示库,用来拍 README / 宣传截图。
  * 所有项目名、路径、记忆内容都是编的,不含任何真实数据。
  *
- * 用法: node --experimental-strip-types scripts/seed-demo.ts <数据目录>
+ * 用法: node --experimental-strip-types scripts/seed-demo.ts <数据目录> [--theme=dark|light]
  *   然后: MEMORYSQL_DATA_DIR=<数据目录> npx electron . --remote-debugging-port=9225
  *
  * 同时会写一份 settings.json 把**所有 capture 插件关掉** —— 否则第一次启动
@@ -12,19 +12,32 @@ import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
 import { CORE_MIGRATIONS } from '../src/plugins/core-schema/migrations.ts'
+import { BUILTIN_PLUGIN_IDS } from '../src/shared/builtin-plugins.ts'
 
+// argv[2] 是数据目录;--theme= 可指定演示库主题(截图脚本用)
 const dir = process.argv[2]
-if (!dir) throw new Error('usage: seed-demo.ts <dataDir>')
+if (!dir) throw new Error('usage: seed-demo.ts <dataDir> [--theme=dark|light]')
 fs.mkdirSync(dir, { recursive: true })
 
-// 演示 profile:关捕获、关 MCP 监听(避免和正在运行的实例抢 8642)、固定深色
-const demoPlugins = [
-  'capture-codex', 'capture-zcode', 'capture-hermes', 'capture-claudecode',
-  'capture-qwencode', 'capture-kimicli', 'capture-codebuddy', 'capture-workbuddy',
-  'capture-qoder', 'capture-gemini', 'capture-cursor', 'capture-opencode',
-  'capture-dsh', 'capture-watcher'
-]
-const settings: Record<string, unknown> = { 'ui:theme': 'dark' }
+// 演示 profile:关捕获、关 MCP 监听(避免和正在运行的实例抢 8642)、主题可指定(默认深色)
+const themeArg = process.argv.find((a) => a.startsWith('--theme='))
+const theme = themeArg ? themeArg.split('=')[1] : 'dark'
+/**
+ * 关闭名单**从 BUILTIN_PLUGIN_IDS 派生**,不再手写。
+ *
+ * 2026-11-23 测试报告 P1-1:手写名单停在 14 家,后来新增的 mimocode 等 10 家
+ * 捕获插件不在名单里 → 应用按「源存在即默认启用」把本机真实会话灌进演示库
+ * (seed 13 条 → 启动后 465 条,含真实项目名),截图流程 take-screenshots.mjs
+ * 走同一份 seed,宣传图会直接泄露真实数据。
+ */
+const demoPlugins = BUILTIN_PLUGIN_IDS.filter(
+  (id) => id.startsWith('capture-') || id === 'import-chat'
+)
+// 兜底断言:清单必须覆盖所有捕获插件,否则宁可构建失败也别生成"演示库"
+if (demoPlugins.length < 20) {
+  throw new Error(`seed-demo: 捕获插件清单异常(${demoPlugins.length} 家),拒绝生成演示库`)
+}
+const settings: Record<string, unknown> = { 'ui:theme': theme }
 for (const id of demoPlugins) settings[`plugin.${id}.enabled`] = false
 settings['plugin.mcp-server.enabled'] = false
 settings['plugin.project-digest.enabled'] = false

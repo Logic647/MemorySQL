@@ -282,6 +282,8 @@ export default function App() {
 
   // 项目滚动总结:总开关关闭时 digestInfo.enabled=false,组头不渲染任何总结 UI
   const [digestInfo, setDigestInfo] = useState<DigestStatusInfo | null>(null)
+  /** 插件未启用/加载失败时的错误(用于弹窗错误态,避免永久「加载中」) */
+  const [digestErr, setDigestErr] = useState<string | null>(null)
   const [digestCards, setDigestCards] = useState<Record<number, DigestLatest | null>>({})
   const [openDigest, setOpenDigest] = useState<Set<number>>(new Set())
   const openDigestRef = useRef<Set<number>>(new Set())
@@ -383,6 +385,7 @@ export default function App() {
   const refreshDigest = useCallback(async (): Promise<void> => {
     try {
       setDigestInfo(await api.digestStatus())
+      setDigestErr(null)
       // 展开中的卡片同步刷新内容(总结刚完成时能看到新产物)
       for (const pid of openDigestRef.current) {
         void api
@@ -390,8 +393,11 @@ export default function App() {
           .then((d) => setDigestCards((prev) => ({ ...prev, [pid]: d })))
           .catch(() => {})
       }
-    } catch {
+    } catch (err) {
+      // 插件被禁用时 channel 根本不存在(不是 enabled=false),必须单独记错误态 ——
+      // 否则弹窗永久停在「加载中」(2026-11-23 测试报告 P2-4)
       setDigestInfo(null)
+      setDigestErr(err instanceof Error ? err.message : String(err))
     }
   }, [])
 
@@ -1489,7 +1495,11 @@ export default function App() {
           <div className="modal-overlay" onClick={() => setDigestModal(false)}>
             <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
               <div className="modal-title">项目总结 · 各项目滚动摘要</div>
-              {digestInfo == null ? (
+              {digestErr ? (
+                <p className="hint">
+                  项目总结插件未启用或加载失败 —— 在 设置 → 插件 中开启「项目总结」后重启应用。({digestErr})
+                </p>
+              ) : digestInfo == null ? (
                 <p className="hint">加载中…</p>
               ) : !digestInfo.enabled ? (
                 <p className="hint">

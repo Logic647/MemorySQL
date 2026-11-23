@@ -772,7 +772,13 @@ export function createMcpTools(deps: {
         required: ['query']
       },
       handler: async (args) => {
-        const q = String(args.query ?? '')
+        // 缺必填参数时报参数错误,别返回「未找到」——agent 会以为库里没数据
+        // (2026-11-23 测试报告 P3-8:传 q 而非 query 时输出「未找到与""相关」)
+        if (typeof args.query !== 'string' || args.query.trim() === '') {
+          const hint = typeof args.q === 'string' ? '(参数名是 query,不是 q)' : ''
+          return `参数错误:memory_search 需要 query 检索词${hint}`
+        }
+        const q = args.query.trim()
         const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100)
         const kind = typeof args.kind === 'string' ? args.kind : undefined
         if (kind && !SEARCH_KINDS.has(kind)) {

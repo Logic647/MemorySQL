@@ -4,6 +4,68 @@
 
 ---
 
+## 2026-11-23 · 按测试报告修复:1 P1 + 4 P2 + 6 P3(未发版)
+
+依据 `docs/test-report-2026-11-23.md`(全功能测试)逐条修复:
+
+**P1-1 演示库泄露**:`seed-demo.ts` 关闭名单改为从 `BUILTIN_PLUGIN_IDS` 派生全部
+`capture-*` + `import-chat`(不再手写),并加「少于 20 家就拒绝生成」的兜底断言;
+`take-screenshots.mjs` 走同一份 seed,宣传图不再可能带真实会话。新增源码级测试锁定「必须派生」。
+
+**P2-2 settings.json BOM**:读取时剥 `\uFEFF`;真损坏(含顶层不是对象)则把原文件改名
+`settings.json.corrupt-<ts>` 并在 `loadError` 记录原因,不再用空对象静默覆盖 ——
+deviceId 漂移/配置全丢的根因消除。
+
+**P2-5 项目路径分裂**:新增 `shared/project-path.ts`(分隔符/尾斜杠/盘符/UNC 归一)
+与 `core-schema/project-merge.ts`(启动时一次性合并:保留会话最多的项目,改指
+sessions/memories/project_digests,状态表有则搬移、否则丢弃,会话 cwd 一并规范化,幂等);
+`ensureProject` 写入前就归一,不再产生新的分裂。**真库副本实测**:MemorySQL 4→2、
+temp 4→2、money 3→2(不同盘符仍是不同项目,正确),575 条会话 cwd 全部规范化,
+行数守恒、无孤儿、二次运行零改动(新增 opt-in 验收 `test/real-db-merge-check.test.ts`)。
+
+**P2-4 项目总结弹窗**:插件被禁用时 channel 不存在,新增 `digestErr` 错误态,
+弹窗给出「设置 → 插件 开启后重启」而不是永久「加载中」。
+
+**P2-3 语义模型坏缓存**:新增 `semantic-search/model-cache.ts` —— 启用/重试前清理
+非 gzip 或 <1MB 的 `.tar.gz`(上游 403 的错误响应体),worker 侧也清;解压类错误翻译成
+「上游模型源不可用 + 坏缓存已清」的中文提示。**上游 403 本身未解**(需要镜像或自托管模型包)。
+
+**P3**:①`addMemory` 按 (kind, content, scope, project) 去重(已退休的算新,可重记);
+②`memory_search` 缺 query 返回参数错误并点名「参数名是 query,不是 q」;
+③`--reindex` 未启用时提示去设置开启而非 `Unknown channel`;④设置页工具数改读
+`mcpServer.toolCount`;⑤`pluginSetting` 仅 `key === 'enabled'` 才报 `restartNeeded`;
+⑥sync 合并补「内容相同但标题/摘要变更」的 LWW(尊重 `title_locked`);
+⑦instructions 补一句「没有 digest 工具时用 brief」。
+
+**验证**:vitest **727/731**(4 skip:2 真库 + 1 真库合并 + 1 跨平台)、typecheck 0、build 通过;
+真库副本合并验收通过。**未做**:语义上游源替换、2 字中文 bigram 索引(P3-6,按原计划排期)。
+
+## 2026-11-23 · 全功能测试:1 P1 + 4 P2 缺陷(未发版)
+
+**范围**:静态基线 + 隔离库 headless 全链路 + CDP 驱动 GUI + MCP 协议级调用,完整报告见
+`docs/test-report-2026-11-23.md`。全程未触真实库(322MB,装机版运行中),测试实例已清理。
+
+**基线**:typecheck 0 / vitest **702 通过 2 skip** / build 通过 / `upstream:check` 7 正常 0 漂移。
+捕获 8 家(465 会话含 127 子代理、71912 消息)全员 healthy,时间戳零异常(`last_message_at=0` 为 0 条);
+首轮扫描 16.4s → 增量 2.8s;MCP 7–8 工具、38 个 IPC channel、GUI 列表/详情/搜索/记忆/设置/主题全通。
+
+**P1 演示库泄露真实会话**:`scripts/seed-demo.ts` 的 `demoPlugins` 名单停在旧 14 家,
+新增 10 家(mimocode/goose/droid/cline/pi/omp/omo/grok/minimax/deveco/copilot)未关闭 →
+应用启动按「源存在即启用」把真实会话导进演示库(实测 13 → 465 条,含真实任务标题)。
+`take-screenshots.mjs` 走同一流程,宣传图会带真实会话。修法:名单从 `BUILTIN_PLUGIN_IDS` 派生全部 `capture-*`。
+
+**P2**(均给出复现与建议,见报告):①`settings.json` 带 UTF-8 BOM → `JSON.parse` 失败静默清空全设置
+并覆盖原文件(deviceId 漂移 `dev-ff7fecbc→dev-a8077dc7`);②语义检索恒 `TAR_BAD_ARCHIVE` —— fastembed 的
+`storage.googleapis.com/qdrant-fastembed` 返回 **403**,错误体 399B 被写成 `.tar.gz` 缓存,删了重试再毒化;
+③项目总结弹窗在 `project-digest` 插件禁用时永久「加载中」(`App.tsx:1470` 缺错误分支);
+④同一物理路径因 `\`/`/` 分裂成两个项目(MemorySQL 50/7、temp 139/14、money 各一份)。
+
+**连带发现**:IPC `memory-core:save` 不拒绝重复内容(同内容两条);`memory_search` 传错参数名返回「未找到」;
+`pluginSetting` 对 `plaintextAck` 误报 `restartNeeded`;跨设备同步只并内容不同步标题;`--reindex` 未启用时只报
+`Unknown channel`。**未覆盖**:打包版/自动更新、Spotlight 托盘热键、连接向导写真实配置、LLM 真实调用、mac/Linux。
+
+---
+
 ## 2026-11-23 · 项目串台 + MCP 主动调用:三级项目解析 + 指令加强(未发版)
 
 **用户报障:记忆/总结的调用输出有问题,会话 #574 出现了问题。** 复盘 #574

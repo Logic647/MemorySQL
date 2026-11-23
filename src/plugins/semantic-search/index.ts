@@ -10,6 +10,7 @@ import {
   isRuntimeCompatible,
   requireFromNativeRuntime
 } from '../../main/core/native-runtime'
+import { explainModelError, sanitizeModelCache } from './model-cache'
 
 export interface SemanticStatus {
   enabled: boolean
@@ -98,9 +99,14 @@ const plugin: MemorySQLPlugin = {
         // 模型加载与推理都在 worker 里,主进程不碰 ONNX。
         await importFastembed()
         const dims = 512
+        // 上次下载失败会在缓存里留一个 399 字节的错误响应体(伪装成 .tar.gz),
+        // 不清掉的话每次重试都直接解压失败 —— 永不自愈(2026-11-23 报告 P2-3)
+        const cacheDir = path.join(ctx.env.dataDir, 'fastembed-cache')
+        const removed = sanitizeModelCache(cacheDir)
+        if (removed.length > 0) ctx.log.warn(`removed corrupt model cache: ${removed.join(', ')}`)
         embedClient = createEmbedClient({
           dataDir: ctx.env.dataDir,
-          cacheDir: path.join(ctx.env.dataDir, 'fastembed-cache')
+          cacheDir
         })
         // 空闲 15 分钟释放推理内存(worker 直接 terminate,arena 全还给系统)
         if (idleTimer) clearInterval(idleTimer)
@@ -251,7 +257,14 @@ const plugin: MemorySQLPlugin = {
       // backfills relay marks across ALL sessions (only NULL slots:
       // user-curated relays via sessions:setRelay are never wiped; stale
       // auto-marks pointing at deleted sessions are inert in the UI)
-      const res = await c.sync({ full: true })
+      let res: Awaited<ReturnType<SemanticCore['sync']>>
+      try {
+        res = await c.sync({ full: true })
+      } catch (err) {
+        // 模型下载/解压失败:清掉坏缓存,并把错误翻译成人话(见 model-cache.ts)
+        sanitizeModelCache(path.join(ctx.env.dataDir, 'fastembed-cache'))
+        throw new Error(explainModelError(err))
+      }
       await markSimilarity(allSessionIds())
       return { ...res, ok: true }
     })

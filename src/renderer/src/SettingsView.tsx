@@ -87,6 +87,8 @@ export default function SettingsView() {
   }, [])
   const noticeApi = useMemo<NoticeApi>(() => ({ notices, push }), [notices, push])
   const [mcpPort, setMcpPort] = useState('')
+  /** 实际注册的工具数(mcp-server:status.toolCount);写死数字会随插件启停对不上 */
+  const [mcpToolCount, setMcpToolCount] = useState<number | null>(null)
   /**
    * MCP 端点是否对外服务。
    *
@@ -134,6 +136,7 @@ export default function SettingsView() {
       const m = await api.mcpStatus()
       setMcpPort(String(m.requestedPort ?? m.port))
       setMcpOn(m.enabled !== false)
+      setMcpToolCount(typeof m.toolCount === 'number' ? m.toolCount : null)
     } catch {
       // 注意:这里捕的是 **host 通道不可用**(如开发环境下部分通道未注册),
       // 不是"MCP 被禁用"。旧注释写成后者会误导排查方向。
@@ -369,7 +372,10 @@ export default function SettingsView() {
                   <li>
                     验证连通:浏览器或终端访问 <code>http://127.0.0.1:端口/health</code>,返回 ok 即在线。
                   </li>
-                  <li>工具调用入口:memory_get_context(续接包)、memory_search、memory_write 等 8 个工具。</li>
+                  <li>
+                    工具调用入口:memory_get_context(续接包)、memory_search、memory_write 等{' '}
+                    {mcpToolCount ?? '若干'} 个工具。
+                  </li>
                 </ol>
               </div>
               <label className="field">

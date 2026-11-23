@@ -4,6 +4,7 @@ import path from 'node:path'
 import type Database from 'better-sqlite3'
 import type { RawMessage, RawSession } from '../../shared/types'
 import { firstRealUserMessage } from '../../shared/harness-noise'
+import { canonicalProjectPath, projectPathKey } from '../../shared/project-path'
 import type { SummarizerProvider } from '../../main/core/plugin-host'
 
 const CONTENT_CAP = 100_000
@@ -68,7 +69,7 @@ export interface IngestService {
     tags?: string[]
     scope?: 'global' | 'project'
     locked?: boolean
-  }): { id: number }
+  }): { id: number; deduped?: boolean }
 }
 
 export interface IngestDeps {
@@ -204,12 +205,8 @@ export function createIngestService(deps: IngestDeps): IngestService {
     }
   }
   const sameDir = (a: string, b: string): boolean => {
-    const norm = (p: string): string => {
-      const s = p.replace(/[\\/]+$/, '')
-      return process.platform === 'win32' ? s.replace(/\//g, '\\').toLowerCase() : s
-    }
     try {
-      return norm(path.dirname(a)) === norm(path.dirname(b))
+      return projectPathKey(path.dirname(a)) === projectPathKey(path.dirname(b))
     } catch {
       return false
     }
@@ -223,21 +220,24 @@ export function createIngestService(deps: IngestDeps): IngestService {
    */
   const ensureProject = (cwd?: string): number | null => {
     if (!cwd) return null
-    const existing = stmtProjectFind.get(cwd) as { id: number } | undefined
+    // 项目身份 = 归一后的路径(分隔符/大小写/尾斜杠),否则同一目录会被
+    // `H:\x` 与 `H:/x` 拆成两个项目(2026-11-23 测试报告 P2-5)
+    const canonical = canonicalProjectPath(cwd)
+    const existing = stmtProjectFind.get(canonical) as { id: number } | undefined
     if (existing) return existing.id
-    const name = path.basename(cwd) || cwd
-    const candidates = (stmtProjectCandidates.all(cwd) as Array<{ id: number; path: string; name: string }>).filter(
-      (p) => sameDir(p.path, cwd)
+    const name = path.basename(canonical) || canonical
+    const candidates = (stmtProjectCandidates.all(canonical) as Array<{ id: number; path: string; name: string }>).filter(
+      (p) => sameDir(p.path, canonical)
     )
     const orphans = candidates.filter((p) => !pathExists(p.path))
     const adopt = orphans.find((p) => p.name === name) ?? (orphans.length === 1 ? orphans[0] : undefined)
     if (adopt) {
-      stmtProjectAdopt.run(cwd, name, now(), adopt.id)
-      stmtSessionsRecwd.run(cwd, adopt.id, now(), adopt.path)
+      stmtProjectAdopt.run(canonical, name, now(), adopt.id)
+      stmtSessionsRecwd.run(canonical, adopt.id, now(), adopt.path)
       return adopt.id
     }
     return Number(
-      (stmtProjectIns.run(cwd, name, now(), 'local') as { lastInsertRowid: number | bigint })
+      (stmtProjectIns.run(canonical, name, now(), 'local') as { lastInsertRowid: number | bigint })
         .lastInsertRowid
     )
   }
@@ -338,7 +338,8 @@ export function createIngestService(deps: IngestDeps): IngestService {
 
     // trust the adapter's cwd only when it points at something real — a
     // renamed-away folder must not clobber a project we just re-homed
-    const incomingCwd = s.cwd ?? null
+    // 先归一(cwd 进库前就统一分隔符,避免同一目录裂成两个项目)
+    const incomingCwd = s.cwd != null && s.cwd.trim() !== '' ? canonicalProjectPath(s.cwd) : null
     const effectiveCwd =
       incomingCwd != null && (pathExists(incomingCwd) || !existing?.cwd)
         ? incomingCwd
@@ -537,6 +538,13 @@ export function createIngestService(deps: IngestDeps): IngestService {
 
   // deleted rows stay found: user deletion must not be resurrected by a re-import
   const memoryFind = sqlite.prepare('SELECT id, content, deleted FROM memories WHERE source = ?')
+  // 同内容去重(同 kind / scope / project;已退休的不算重复,便于重新记一条)
+  const memoryFindDuplicate = sqlite.prepare(
+    `SELECT id FROM memories
+      WHERE deleted = 0 AND status != 'retired' AND kind = ? AND content = ?
+        AND IFNULL(project_id, -1) = IFNULL(?, -1) AND scope = ?
+      LIMIT 1`
+  )
   const memoryIns = sqlite.prepare(
     `INSERT INTO memories
        (kind, content, source, updated_at, device_id, agent_type, status, tags, project_id, scope, locked)
@@ -597,14 +605,24 @@ export function createIngestService(deps: IngestDeps): IngestService {
     },
 
     // agent-written memories are individual facts — insert always, never
-    // overwrite by source (unlike file-backed memories which replace by source)
-    addMemory(input): { id: number } {
+    // overwrite by source (unlike file-backed memories which replace by source).
+    // 但**完全同内容**的重复写入要拒绝(2026-11-23 测试报告 P3-7:UI 连续写两次
+    // 产生两条一模一样的记忆;MCP memory_write 的描述早已承诺去重)。
+    addMemory(input): { id: number; deduped?: boolean } {
       const MEMORY_CAP = 4000
       const content =
         input.content.length > MEMORY_CAP
           ? `${input.content.slice(0, MEMORY_CAP)}\n…[truncated]`
           : input.content
       const scope = input.scope ?? (input.projectId != null ? 'project' : 'global')
+      const projectId = input.projectId ?? null
+      const dup = memoryFindDuplicate.get(
+        input.kind,
+        content,
+        projectId,
+        scope
+      ) as { id: number } | undefined
+      if (dup) return { id: dup.id, deduped: true }
       const id = Number(
         (
           memoryIns.run(
@@ -616,7 +634,7 @@ export function createIngestService(deps: IngestDeps): IngestService {
             input.agentType ?? null,
             input.status ?? 'active',
             input.tags && input.tags.length > 0 ? JSON.stringify(input.tags.slice(0, 10)) : null,
-            input.projectId ?? null,
+            projectId,
             scope,
             input.locked ? 1 : 0
           ) as { lastInsertRowid: number | bigint }

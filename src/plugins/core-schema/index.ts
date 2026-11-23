@@ -2,6 +2,7 @@ import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import type { SessionSummaryRow, MessageRow, SearchHit } from '../../shared/types'
 import { isHarnessNoiseUserMessage } from '../../shared/harness-noise'
 import { CORE_MIGRATIONS } from './migrations'
+import { normalizeProjects } from './project-merge'
 import { createIngestService, type IngestService } from './ingest'
 import { createSearchService, type SearchService } from './search'
 import { createMcpTools } from './mcp-tools'
@@ -28,7 +29,7 @@ export interface MemoriesService {
     tags?: string[]
     scope?: 'global' | 'project'
     locked?: boolean
-  }): { id: number }
+  }): { id: number; deduped?: boolean }
 }
 
 const plugin: MemorySQLPlugin = {
@@ -40,6 +41,14 @@ const plugin: MemorySQLPlugin = {
 
   init(ctx) {
     ctx.db.migrate(CORE_MIGRATIONS)
+    // 存量归一:同一目录的 `\` 与 `/` 两种写法并成一个项目(详见 project-merge.ts)
+    const normalized = normalizeProjects(ctx.db.sqlite)
+    if (normalized.mergedGroups > 0 || normalized.removedProjects > 0 || normalized.canonicalizedPaths > 0) {
+      ctx.log.info(
+        `projects normalized: ${normalized.mergedGroups} groups merged, ${normalized.removedProjects} duplicates removed, ` +
+          `${normalized.repointedRows} rows re-pointed, ${normalized.canonicalizedPaths} paths canonicalized`
+      )
+    }
     ctx.log.info('schema migrated')
 
     const ingest = createIngestService({

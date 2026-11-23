@@ -11,6 +11,7 @@
  */
 import { parentPort, workerData } from 'node:worker_threads'
 import { requireFromNativeRuntime } from '../../main/core/native-runtime'
+import { sanitizeModelCache } from './model-cache'
 
 interface WorkerInit {
   /** 打包版从 <dataDir>/native-runtime 加载 fastembed,dev 走 node_modules */
@@ -37,6 +38,8 @@ async function loadFastembed(): Promise<FastembedModule> {
 
 async function getEmbedder(): Promise<Embedder> {
   if (!embedder) {
+    // 坏缓存(上次下载失败留下的错误响应体)会让解压永久失败,先清掉
+    sanitizeModelCache(init.cacheDir)
     const { FlagEmbedding, EmbeddingModel } = await loadFastembed()
     embedder = await FlagEmbedding.init({
       model: EmbeddingModel.BGESmallZH,

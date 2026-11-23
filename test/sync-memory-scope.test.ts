@@ -153,3 +153,72 @@ describe('sync-folder memory scope merge', () => {
     ).toBe(1)
   })
 })
+
+/**
+ * 2026-11-23 测试报告 P3-12:跨设备同步只合并内容,标题变更被静默丢弃。
+ * 现在内容哈希相同时按 updated_at 做 LWW 合并标题/摘要,并尊重本地 title_locked。
+ */
+describe('sync-folder 会话标题 LWW', () => {
+  const sess = (over: Partial<import('../src/plugins/sync-folder/sync-merge').BundleSession>) => ({
+    agent_type: 'zcode',
+    external_id: 'ext-1',
+    cwd: null,
+    started_at: 1,
+    ended_at: 2,
+    title: '远端新标题',
+    summary: null,
+    content_hash: 'h1',
+    message_count: 2,
+    tool_call_count: 0,
+    updated_at: 2000,
+    ...over
+  })
+  const localSession = (title: string, locked: number, updatedAt: number): void => {
+    db.prepare(
+      `INSERT INTO sessions (agent_type, external_id, title, title_locked, content_hash,
+         message_count, tool_call_count, updated_at, started_at, ended_at)
+       VALUES ('zcode', 'ext-1', ?, ?, 'h1', 2, 0, ?, 1, 2)`
+    ).run(title, locked, updatedAt)
+  }
+  const bundleWith = (s: ReturnType<typeof sess>): SyncBundle => ({
+    device: 'dev-B',
+    exportedAt: 3000,
+    since: 0,
+    sessions: [s],
+    messages: [],
+    memories: [],
+    projects: []
+  })
+
+  it('内容相同但标题更新 → 采用远端标题(LWW),并同步 FTS', () => {
+    localSession('本机旧标题', 0, 1000)
+    const res = mergeBundle(db, bundleWith(sess({})))
+    expect(res.sessionsUpdated).toBe(1)
+    const row = db.prepare(`SELECT title FROM sessions WHERE external_id = 'ext-1'`).get() as {
+      title: string
+    }
+    expect(row.title).toBe('远端新标题')
+    const fts = db.prepare(`SELECT title FROM sessions_fts`).get() as { title: string }
+    expect(fts.title).toBe('远端新标题')
+  })
+
+  it('本地 title_locked → 用户改过的名字不被覆盖', () => {
+    localSession('用户手改', 1, 1000)
+    const res = mergeBundle(db, bundleWith(sess({})))
+    expect(res.sessionsUpdated).toBe(0)
+    const row = db.prepare(`SELECT title FROM sessions WHERE external_id = 'ext-1'`).get() as {
+      title: string
+    }
+    expect(row.title).toBe('用户手改')
+  })
+
+  it('远端更旧 → 不改动', () => {
+    localSession('本机较新', 0, 5000)
+    const res = mergeBundle(db, bundleWith(sess({ updated_at: 2000 })))
+    expect(res.sessionsUpdated).toBe(0)
+    const row = db.prepare(`SELECT title FROM sessions WHERE external_id = 'ext-1'`).get() as {
+      title: string
+    }
+    expect(row.title).toBe('本机较新')
+  })
+})

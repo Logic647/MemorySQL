@@ -266,7 +266,13 @@ async function runHeadlessScan(): Promise<void> {
     try {
       results['semantic'] = await host.invoke('semantic-search:reindex')
     } catch (err) {
-      results['semantic'] = { error: String(err) }
+      const msg = String(err instanceof Error ? err.message : err)
+      // 插件未启用时 channel 根本不存在 —— 别把「Unknown channel」当成错误代码扔给用户
+      results['semantic'] = {
+        error: /unknown channel/i.test(msg)
+          ? '语义检索未启用:在 设置 → 智能引擎 打开「语义检索」后重试(或 semantic-search:enabled=true)'
+          : msg
+      }
     }
   }
   try {
@@ -561,7 +567,9 @@ function registerHostChannels(
       throw new Error('pluginSetting requires {id, key, value}')
     }
     settings.set(`${id}:${key}`, value)
-    return { ok: true, restartNeeded: true }
+    // 只有**插件启停**需要重启;其余键都是读时生效(如 sync-folder:plaintextAck,
+    // 实测保存后 syncNow 立即可用)。无条件返回 true 会让 UI 误报「需重启」。
+    return { ok: true, restartNeeded: key === 'enabled' }
   })
   // 「写入使用规则」:往 agent 认的规则文件里追加带标记的工作协议(幂等,可逆)。
   // 目标路径由台账 rules 字段决定(金丝雀/源码/官方文档测定过,不许猜)。

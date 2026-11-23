@@ -26,6 +26,8 @@ export const MEMORYSQL_INSTRUCTIONS = `MemorySQL 是用户本机的长期记忆�
 - 想知道「这个项目在做什么、还剩什么」→ memory_get_project_digest(最省 token)
 - 要接手别人做了一半的活 → memory_get_project_brief
 - 要找具体某句话的出处 → memory_search → memory_get_session
+- 如果 tools/list 里没有 memory_get_project_digest(用户关掉了「项目总结」插件),用
+  memory_get_project_brief 代替 —— 它始终可用,且带规则汇编的最近进展。
 
 预算约束(很重要,否则会变成噪音):
 - memory_get_context 每个会话最多调一次;已拿到上下文就不要重复调。

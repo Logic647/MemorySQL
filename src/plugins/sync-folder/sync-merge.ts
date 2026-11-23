@@ -204,6 +204,28 @@ export function mergeBundle(db: Database.Database, bundle: SyncBundle): MergeRep
         ftsSessionDel.run(local.id)
         ftsSessionIns.run(local.id, effTitle ?? '', s.summary ?? '')
         report.sessionsUpdated++
+      } else if (s.updated_at > local.updated_at && s.content_hash === local.content_hash) {
+        /**
+         * 内容相同但元数据变了(典型:另一台机器上重命名了会话)。
+         * 2026-11-23 测试报告 P3-12:旧逻辑只在内容哈希不同时才合并,
+         * 标题变更被静默丢弃。这里按 updated_at 做 LWW,仍尊重本地 title_locked
+         * (用户在本机改过的名字不被远端覆盖)。
+         */
+        const lock = db
+          .prepare(`SELECT title_locked, title, summary FROM sessions WHERE id = ?`)
+          .get(local.id) as
+          | { title_locked: number; title: string | null; summary: string | null }
+          | undefined
+        const nextTitle = lock?.title_locked ? lock.title ?? s.title : s.title
+        const nextSummary = s.summary ?? lock?.summary ?? ''
+        if (nextTitle !== lock?.title || nextSummary !== (lock?.summary ?? '')) {
+          db.prepare(
+            `UPDATE sessions SET title = ?, summary = ?, updated_at = ?, device_id = ? WHERE id = ?`
+          ).run(nextTitle, nextSummary, s.updated_at, bundle.device, local.id)
+          ftsSessionDel.run(local.id)
+          ftsSessionIns.run(local.id, nextTitle ?? '', nextSummary)
+          report.sessionsUpdated++
+        }
       }
     }
 
