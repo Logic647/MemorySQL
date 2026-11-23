@@ -126,8 +126,51 @@ describe('memory_list_sessions', () => {
     expect(merged).not.toContain('#21')
     // 命中多个时必须明说合并了哪几个,否则 agent 会以为"就这些"
     // (名字叫 MemorySQL 的共 3 个:种子项目 1 + 新机 2 + 斜杠变体 4)
-    expect(merged).toContain('命中 3 个同名/同路径项目')
-    expect(merged).toContain('#2 H:\\桌面\\MemorySQL')
+    expect(merged).toContain('3 个同名项目')
+    expect(merged).toContain('#2 MemorySQL(H:\\桌面\\MemorySQL)')
+  })
+
+  /**
+   * 2026-11-23 真机会话 #574:`new-chat` 用子串命中把 6 月的 `new-chat-7`
+   * 也并了进来,agent 在回答里写出「结构性发现:两个同名项目被合并」。
+   * 子串兜底只取最近活跃的一个,并把其它候选列出来。
+   */
+  it('子串兜底不把 new-chat-7 并进 new-chat', async () => {
+    db.prepare(
+      `INSERT INTO projects (id, path, name, updated_at, device_id) VALUES (60, 'H:\\桌面\\temp\\new-chat', 'new-chat', 60, 'local')`
+    ).run()
+    db.prepare(
+      `INSERT INTO projects (id, path, name, updated_at, device_id) VALUES (8, 'C:\\Users\\Logic\\Documents\\Codex\\2026-06-03\\new-chat-7', 'new-chat-7', 8, 'local')`
+    ).run()
+    const ins = db.prepare(
+      `INSERT INTO sessions (id, agent_type, external_id, project_id, started_at, title, summary, content_hash, message_count, tool_call_count, updated_at, device_id)
+       VALUES (?, 'mimocode', ?, ?, strftime('%s','now'), ?, '', ?, 1, 0, strftime('%s','now'), 'local')`
+    )
+    ins.run(574, 'm1', 60, '当前工作区会话', 'hm1')
+    ins.run(68, 'c1', 8, '六月的空壳项目会话', 'hm2')
+
+    const scoped = await call('memory_list_sessions', { project: 'new-chat', limit: 100 })
+    expect(scoped).toContain('#574')
+    expect(scoped, 'new-chat-7 是另一个项目,不该被并入').not.toContain('#68')
+    // 名字精确命中就不必啰嗦候选;没有同名项目时的子串才会列候选
+    expect(scoped).not.toContain('项目解析')
+  })
+
+  it('没有同名项目时才退回子串,并列出未纳入的候选', async () => {
+    db.prepare(
+      `INSERT INTO projects (id, path, name, updated_at, device_id) VALUES (60, 'H:\\桌面\\temp\\new-chat', 'new-chat', 60, 'local')`
+    ).run()
+    db.prepare(
+      `INSERT INTO projects (id, path, name, updated_at, device_id) VALUES (8, 'C:\\Users\\Logic\\Documents\\Codex\\2026-06-03\\new-chat-7', 'new-chat-7', 8, 'local')`
+    ).run()
+    db.prepare(
+      `INSERT INTO sessions (id, agent_type, external_id, project_id, started_at, title, summary, content_hash, message_count, tool_call_count, updated_at, device_id)
+       VALUES (574, 'mimocode', 'm1', 60, strftime('%s','now'), '当前工作区会话', '', 'hm1', 1, 0, strftime('%s','now'), 'local')`
+    ).run()
+    const scoped = await call('memory_list_sessions', { project: 'new-ch', limit: 100 })
+    expect(scoped).toContain('按**子串**')
+    expect(scoped).toContain('未纳入')
+    expect(scoped).toContain('#8')
   })
 
   it('名字没命中时才退回路径匹配', async () => {

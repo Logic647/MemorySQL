@@ -51,6 +51,17 @@ describe('memory distill (规则提炼)', () => {
   })
 
   /**
+   * 真实误报(memories #25,distill:zcode:64):「…新增一个极简插件需要哪些文件…」
+   * 里的「极简」是插件定语,被当成风格偏好写进全局记忆,污染每一份项目简报。
+   */
+  it('问句里的风格词不算偏好', () => {
+    const out = distill('zcode', 9, [
+      msg('user', 'json 的格式与 requires 依赖图,新增一个极简插件(如 core-launcher)需要哪些文件,参考 spotlight 相关插件的 manifest。')
+    ])
+    expect(out).toHaveLength(0)
+  })
+
+  /**
    * harness 注入的系统文本在库里也是 user 角色(2026-11-22 真库实测):不滤掉的话
    * ①英文噪声误中 don't/remember 信号词 ②users 被撑大、短句画像失真
    */

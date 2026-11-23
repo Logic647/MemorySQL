@@ -2,6 +2,12 @@ import type Database from 'better-sqlite3'
 import type { McpToolDef } from '../../main/core/plugin-host'
 import type { SearchHit } from '../../shared/types'
 import { isHarnessNoiseUserMessage } from '../../shared/harness-noise'
+import {
+  describeProjectMatch,
+  matchProjects,
+  type ProjectCandidate,
+  type ProjectMatch
+} from '../../shared/project-match'
 import type { SearchService } from './search'
 import type { MemoriesService } from './index'
 
@@ -181,51 +187,32 @@ export function createMcpTools(deps: {
     }
   }
 
+  const stmtAllProjects = sqlite.prepare(
+    'SELECT id, name, path, tech_stack, updated_at AS activity FROM projects WHERE deleted = 0'
+  )
+  const matchProjectKeyword = (keyword: string): ProjectMatch | null =>
+    matchProjects(stmtAllProjects.all() as ProjectCandidate[], keyword)
+
   const findProjectByKeyword = (keyword: string): ProjectRow | null =>
-    (
-      sqlite
-        .prepare(
-          `SELECT id, name, path, tech_stack FROM projects
-           WHERE deleted = 0 AND (name LIKE ? OR path LIKE ?)
-           ORDER BY updated_at DESC LIMIT 1`
-        )
-        .get(`%${keyword}%`, `%${keyword}%`) as ProjectRow | undefined
-    ) ?? null
+    (findProjectsByKeyword(keyword)[0] as ProjectRow | undefined) ?? null
 
   /**
-   * 关键词命中的**全部**项目(按最近活跃排序)。
+   * 关键词命中的项目(按最近活跃排序)。
    *
    * 真实数据里同名项目很常见:换机后路径变了(F:\桌面\MemorySQL 与
-   * H:\桌面\MemorySQL)、同盘的斜杠/反斜杠两种写法、甚至 src 子目录被
-   * 当成独立项目 —— 本机「MemorySQL」一个词就命中 5 个 id。只取 LIMIT 1
-   * 会让 memory_list_sessions 静默丢掉绝大部分会话(实测只回 1 条,
-   * 而项目实际有 20+ 条),用户以为数据没了。
+   * H:\桌面\MemorySQL)、同盘的斜杠/反斜杠两种写法 —— 本机「MemorySQL」
+   * 一个词命中 5 个 id。只取 LIMIT 1 会让 memory_list_sessions 静默丢掉
+   * 绝大部分会话。合并口径见 shared/project-match.ts:
    *
-   * ⚠ 合并的判据是**项目名**,不是路径子串:
-   *   - 名字匹配(name LIKE)优先,命中即用这批
-   *   - 名字没命中才退回路径匹配(允许用「数据库课程设计」这类路径片段找项目)
-   * 只用 `name OR path LIKE` 会把**同目录下的无关项目**全并进来:实测关键词
-   * 「桌面」命中 24 个项目(它们只是都放在 H:\桌面\ 下),于是标题写着 A、
-   * 总结正文却是 B 的结论。路径只在名字没命中时作兜底,且此时通常只命中一个。
+   *   精确同名 → 全部合并(同一项目的多份登记)
+   *   路径段同名 → 合并
+   *   子串兜底 → 只取最近活跃的一个,其余作为候选提示
+   *
+   * ⚠ 2026-11-23 修:「new-chat」过去用子串命中把 6 月的「new-chat-7」
+   * 并了进来,会话 #574 的 agent 直接在回答里写出「两个同名项目被合并」。
    */
-  const findProjectsByKeyword = (keyword: string): ProjectRow[] => {
-    const like = `%${keyword}%`
-    const byName = sqlite
-      .prepare(
-        `SELECT id, name, path, tech_stack FROM projects
-         WHERE deleted = 0 AND name LIKE ?
-         ORDER BY updated_at DESC`
-      )
-      .all(like) as ProjectRow[]
-    if (byName.length > 0) return byName
-    return sqlite
-      .prepare(
-        `SELECT id, name, path, tech_stack FROM projects
-         WHERE deleted = 0 AND path LIKE ?
-         ORDER BY updated_at DESC`
-      )
-      .all(like) as ProjectRow[]
-  }
+  const findProjectsByKeyword = (keyword: string): ProjectRow[] =>
+    (matchProjectKeyword(keyword)?.rows ?? []) as ProjectRow[]
 
   const findProject = (keyword?: string): ProjectRow | null => {
     if (keyword) {
@@ -421,7 +408,8 @@ export function createMcpTools(deps: {
     // 同名项目(换机/斜杠写法/src 子目录)合并成一个集合,标题、总结、会话列表
     // **必须用同一份集合**,否则同一段返回里会出现三个不同口径的项目
     // (实测:标题是「嵌入式…省赛」,总结正文却是「冰冰快答小助手」)。
-    const matched = keyword ? findProjectsByKeyword(keyword) : []
+    const match = keyword ? matchProjectKeyword(keyword) : null
+    const matched = (match?.rows ?? []) as ProjectRow[]
     const active = findProject(undefined)
     const project = matched[0] ?? active
     // 即使调用方没传 project,也落到最近活跃项目:这样「全局 + 项目记忆 + 总结」
@@ -438,6 +426,10 @@ export function createMcpTools(deps: {
 
     const parts: string[] = ['# MemorySQL 续接上下文\n']
     if (agent) parts.push(`> 记忆按 agent 过滤: ${agent}(含全局记忆)\n`)
+    // 非精确单命中时必须自报家门:子串兜底可能取的是"最近活跃的那个",
+    // agent 需要知道怎么改参数才能拿到另一个项目(2026-11-23 #574 教训)
+    const matchNote = match ? describeProjectMatch(match, keyword ?? '') : null
+    if (matchNote) parts.push(`${matchNote}\n`)
 
     parts.push(globalBlock.text)
     if (project) {
@@ -480,7 +472,8 @@ export function createMcpTools(deps: {
     const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
     const project = findProject(keyword)
     // 与 buildContext 同口径:同名项目合并成一份集合,标题/总结/会话列表共用它
-    const matched = keyword ? findProjectsByKeyword(keyword) : []
+    const match = keyword ? matchProjectKeyword(keyword) : null
+    const matched = (match?.rows ?? []) as ProjectRow[]
     const projectIds = matched.length > 0 ? matched.map((p) => p.id) : project ? [project.id] : null
     const sessions = recentSessionsOf(projectIds, 8)
 
@@ -488,6 +481,8 @@ export function createMcpTools(deps: {
       `# 项目交接简报: ${project?.name ?? '(未指定项目)'}`,
       ''
     ]
+    const matchNote = match ? describeProjectMatch(match, keyword ?? '') : null
+    if (matchNote) parts.push(matchNote)
     if (project?.path) parts.push(`- 路径: ${project.path}`)
     if (project?.tech_stack) parts.push(`- 技术栈: ${project.tech_stack}`)
     if (agent) parts.push(`- 面向 agent: ${agent}(记忆含全局)`)
@@ -553,8 +548,9 @@ export function createMcpTools(deps: {
     {
       name: 'memory_get_context',
       description:
-        '【何时调用】开始一个任务、进入不熟悉的项目、或用户说"续接/接着上次/继续做"时,先调一次(每个会话最多一次)。\n' +
-        '返回"续接包":全局记忆(画像/偏好/事实/决策)+ 项目记忆 + 项目总结(总览 + 最近进展)+ 最近会话(带 id,可直接深读),可选按 agent 过滤记忆、内联上一棒交接摘要。',
+        '【何时调用】**任何新任务的第一步**:在改代码、翻文件、猜方案之前先调一次(不需要用户提示"用记忆库")。用户说"续接/接着上次/继续做"时也用它。每个会话最多一次。\n' +
+        '返回"续接包":全局记忆(画像/偏好/事实/决策)+ 项目记忆 + 项目总结(总览 + 最近进展)+ 最近会话(带 id,可直接深读),可选按 agent 过滤记忆、内联上一棒交接摘要。\n' +
+        '项目参数传**当前工作目录名**即可;返回里的「项目解析」行会说明匹配方式(精确/路径/子串),子串兜底时会列出未纳入的候选,可改用完整项目名或路径重查。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -571,7 +567,7 @@ export function createMcpTools(deps: {
     {
       name: 'memory_get_project_brief',
       description:
-        '【何时调用】要接手别人做了一半的项目、或用户问"这个项目进展到哪了"时用;比逐个翻会话便宜得多。\n' +
+        '【何时调用】要接手别人做了一半的项目、或用户问"这个项目进展到哪了"时用;比逐个翻会话便宜得多。与 memory_get_context 二选一:要完整上下文(含最近会话列表)用 get_context,只要交接用 brief。\n' +
         '返回项目交接简报:全局记忆 + 项目记忆 + 项目总结(总览/最近进展/待办)+ 最近会话 + 上一棒 tail + 待确认进度,从知识库自动汇编。',
       inputSchema: {
         type: 'object',
@@ -608,9 +604,10 @@ export function createMcpTools(deps: {
         const offset = Math.max(Number(args.offset) || 0, 0)
         const includeSubagents = args.includeSubagents === true
 
-        // 同名项目全部纳入(换机/斜杠写法/src 子目录都会产生同名的独立项目);
-        // 只取第一个会静默丢会话,见 findProjectsByKeyword 的注释
-        const matched = keyword ? findProjectsByKeyword(keyword) : []
+        // 同名项目全部纳入(换机/斜杠写法),子串兜底只取最近活跃的一个;
+        // 口径见 shared/project-match.ts
+        const match = keyword ? matchProjectKeyword(keyword) : null
+        const matched = match?.rows ?? []
         if (keyword && matched.length === 0) {
           return `未找到与"${keyword}"匹配的项目。可用 memory_search 按内容找会话。`
         }
@@ -642,12 +639,9 @@ export function createMcpTools(deps: {
           .all(...params, limit, offset) as SessionRow[]
         if (rows.length === 0) return '没有符合条件的会话。'
         const body = rows.map((s, i) => `${i + 1}. ${sessionLine(s)}`).join('\n')
-        // 命中多个同名项目时明说一句,否则 agent 会以为"就这些"
-        if (matched.length > 1) {
-          const names = matched.map((p) => `#${p.id} ${p.path ?? p.name}`).join('、')
-          return `${body}\n\n> 关键词「${keyword}」命中 ${matched.length} 个同名/同路径项目,已合并结果:${names}`
-        }
-        return body
+        // 命中方式不是"精确单个"时明说:合并了谁 / 还有哪些候选,否则 agent 会以为"就这些"
+        const note = match ? describeProjectMatch(match, keyword ?? '') : null
+        return note ? `${body}\n\n${note}` : body
       }
     },
     {
@@ -891,7 +885,9 @@ export function createMcpTools(deps: {
         }
         touchMemories(memoryHitIds)
         if (lines.length === 0) return `未找到与"${q}"相关的记录。`
-        return lines.join('\n')
+        const projMatch = keyword ? matchProjectKeyword(keyword) : null
+        const note = projMatch ? describeProjectMatch(projMatch, keyword ?? '') : null
+        return note ? `${lines.join('\n')}\n\n${note}` : lines.join('\n')
       }
     },
     {

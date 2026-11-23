@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-11-23 · 项目串台 + MCP 主动调用:三级项目解析 + 指令加强(未发版)
+
+**用户报障:记忆/总结的调用输出有问题,会话 #574 出现了问题。** 复盘 #574
+(mimocode,项目 new-chat):agent 调 `memory_get_context` 后得出「memorysql 把
+当前项目 `new-chat` 解析成**两个同名项目合并**」—— 真凶是项目关键词匹配:
+
+- 过去 `name LIKE '%关键词%'` 全命中就合并 → `new-chat` 把 6 月的
+  `new-chat-7`(项目 #8)也并了进来,#574 的"项目记忆/总结"一半来自另一个项目;
+- 同类风险:关键词「课程」「桌面」等都会把同名前缀/同目录的无关项目混进来。
+
+**修复 1:三级项目解析(`src/shared/project-match.ts`,core-schema 与
+project-digest 共用)**:
+1. **项目名精确相等**(忽略大小写/空白)→ 全部合并 —— 换机/换盘的同名项目是
+   同一项目的多份登记(真库实测「MemorySQL」精确命中 4 个 id,合并是对的);
+2. **路径段精确相等**(用户贴路径/目录名)→ 合并;
+3. **子串兜底 → 只取最近活跃的 1 个**,其余作为候选列出(「new-ch」会提示
+   #8 未纳入,而不是悄悄合并)。
+输出侧:context / brief / digest / list_sessions / search 在**非精确单命中**时
+追加「项目解析」行(合并了谁、按什么口径、还能怎么改参数),agent 因此能自查纠偏。
+真库回放:`new-chat` → 仅 #60;`new-ch` → #60 + 候选 #8;`MemorySQL` → 4 个合并;
+「桌面」→ 精确命中项目 #33(不再路径子串拉进 24 个)。
+
+**修复 2:MCP 主动调用引导加强**:initialize `instructions` 改为「**任何新任务的
+第一步**就调 memory_get_context,不必等用户说用记忆库」+ 工具选择速查(digest 最省
+token / brief 交接 / search→get_session 找出处);`memory_get_context`、
+`memory_get_project_brief`、`memory_get_project_digest` 描述同步改写成
+「第一步/更省 token/二选一」并说明「项目解析」行的读法。
+⚠ 对忽略 `instructions` 的客户端(opencode 系/mimocode),规则文件仍是唯一可靠抓手
+—— 设置→连接向导「写入规则」写 AGENTS.md 标记块。
+
+**修复 3:规则提炼问句误报**:全局记忆 #25 是一条问句(「…新增一个极简插件需要
+哪些文件…」),「极简」被 STYLE_RE 当成风格偏好,污染每一份项目简报。新增
+`QUESTION_RE`(哪些/哪个/什么/怎么/如何/是否/吗/[?？])跳过问句句。
+
+**验证**:vitest **702/704**(2 skip;新增 project-match 11 条 + mcp-tools 2 条
+子串回归 + distill 1 条问句)、typecheck 0、build 通过;真库回放匹配口径如上。
+**待办(需用户确认)**:真库里 `memories #25` 这条误报仍在,可在记忆页 retire。
+
 ## 2026-11-23 · 项目总结「刚开始说话就总结」:安静期锚点修正(未发版)
 
 **用户报障:项目总结好像还是刚入库就跑了。** 查真库今天三条 digest:

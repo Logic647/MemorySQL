@@ -13,6 +13,12 @@ export interface DistilledCandidate {
 const DECISION_RE = /(决定|就用|选定|改用|换用|统一用|以后用|敲定|decided|switch(?:ed)? to|we'?ll (?:use|go with))/i
 const PREFERENCE_RE = /(记住|以后都|以后要|以后别|别忘了|不要再|别再|下次(直接|记得)|prefer|always|remember( that)?|don'?t|stop doing)/i
 const STYLE_RE = /(极简|简洁|直接给|别啰嗦|少废话|别反问|持续推进|verbose|be brief|no need to explain)/i
+/**
+ * 问句不是偏好/决策。真实误报(2026-11-23,memories #25,distill:zcode:64):
+ * 「…新增一个极简插件(如 core-launcher)需要哪些文件…」里的「极简」是插件定语,
+ * 被 STYLE_RE 当成风格偏好写进全局记忆,再出现在每一份项目简报里。
+ */
+const QUESTION_RE = /(哪些|哪个|什么|怎么|如何|为什么|是否|吗|呢|[?？])/
 
 function clip(text: string, max: number): string {
   const t = text.replace(/\s+/g, ' ').trim()
@@ -41,6 +47,7 @@ export function distill(
     for (const sentence of m.content.split(/(?<=[。！？!?.\n])/)) {
       const s = sentence.trim()
       if (s.length < 4 || s.length > 200) continue
+      if (QUESTION_RE.test(s)) continue // 问句不是偏好/决策(见 QUESTION_RE 注释)
       if (DECISION_RE.test(s)) push({ kind: 'decision', content: clip(s, 180) })
       else if (PREFERENCE_RE.test(s)) push({ kind: 'preference', content: clip(s, 180) })
       else if (STYLE_RE.test(s)) push({ kind: 'preference', content: clip(s, 180) })

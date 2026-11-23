@@ -2,6 +2,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { MemorySQLPlugin } from '../../main/core/plugin-host'
 import { isHarnessNoiseUserMessage } from '../../shared/harness-noise'
+import {
+  describeProjectMatch,
+  matchProjects,
+  type ProjectCandidate
+} from '../../shared/project-match'
 import { DIGEST_MIGRATIONS } from './migrations'
 import {
   buildDigestMd,
@@ -161,19 +166,12 @@ const plugin: MemorySQLPlugin = {
       WHERE p.deleted = 0
       ORDER BY COALESCE(s.last_message_at, s.started_at) DESC LIMIT 1
     `)
-    // 名字优先、路径兜底 —— 与 core-schema 的 findProjectsByKeyword 同口径。
-    // 只用 name OR path 会把同目录下的无关项目一起并进来(实测关键词「桌面」
-    // 命中 24 个项目,它们只是都放在 H:\桌面\ 下)。
-    const stmtProjectsByName = sqlite.prepare(`
-      SELECT p.id, p.name FROM projects p
-      WHERE p.deleted = 0 AND p.name LIKE ?
-      ORDER BY p.updated_at DESC
-    `)
-    const stmtProjectsByPath = sqlite.prepare(`
-      SELECT p.id, p.name FROM projects p
-      WHERE p.deleted = 0 AND p.path LIKE ?
-      ORDER BY p.updated_at DESC
-    `)
+    // 项目解析口径与 core-schema 完全一致(shared/project-match.ts):
+    // 精确同名合并 → 路径段匹配 → 子串兜底只取最近活跃的一个。
+    // 2026-11-23 #574:子串曾把 new-chat 与 new-chat-7 合并,agent 因此串项目。
+    const stmtAllProjects = sqlite.prepare(
+      'SELECT id, name, path, updated_at AS activity FROM projects WHERE deleted = 0'
+    )
 
     // ---- llm-refine(懒取:summarizer-llm 被停用时消化成规则模式,不炸) ---
     interface RefineService {
@@ -596,8 +594,9 @@ const plugin: MemorySQLPlugin = {
     ctx.mcp.registerTool({
       name: 'memory_get_project_digest',
       description:
-        '【何时调用】接手一个项目的第一件事(成本远低于逐个翻会话);用户问"这个项目最近在做什么/还有什么没做完"时也用它。\n' +
-        '返回项目滚动总结:项目总览 + 最近进展(详细)+ 待办 + 决策,带覆盖时间范围;需要细节再配合 memory_list_sessions / memory_get_session。',
+        '【何时调用】接手一个项目的第一件事(成本远低于逐个翻会话);用户问"这个项目最近在做什么/还有什么没做完"时也用它。比 memory_get_context 更省 token —— 只要结论不要会话清单就调这个。\n' +
+        '返回项目滚动总结:项目总览 + 最近进展(详细)+ 待办 + 决策,带覆盖时间范围;需要细节再配合 memory_list_sessions / memory_get_session。\n' +
+        '返回顶部/尾部带「项目解析」行:说明关键词按精确名、路径还是子串命中;子串兜底会列出未纳入的候选,不确定项目时先看这行。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -609,17 +608,13 @@ const plugin: MemorySQLPlugin = {
           return '项目总结功能未开启。请用户在 MemorySQL 设置 → 智能引擎 → 项目总结 中开启后重试;当前可先调用 memory_get_project_brief 获取规则汇编的交接简报。'
         }
         const keyword = typeof args.project === 'string' ? args.project.trim() : ''
-        // 同名项目(换机/斜杠/src 子目录)必须合并后再找总结,否则会读到另一份
-        // 路径下更旧(或另一项目)的总结 —— 与 memory_get_context 的口径不一致。
-        // 名字优先、路径兜底:只用 name OR path 会把同目录下的无关项目一起并进来。
-        const matched = keyword
-          ? ((): Array<{ id: number; name: string }> => {
-              const like = `%${keyword}%`
-              const byName = stmtProjectsByName.all(like) as Array<{ id: number; name: string }>
-              if (byName.length > 0) return byName
-              return stmtProjectsByPath.all(like) as Array<{ id: number; name: string }>
-            })()
-          : []
+        // 与 memory_get_context 同一解析口径(shared/project-match.ts):
+        // 精确同名合并(换机多份登记)→ 路径段匹配 → 子串兜底只取最近活跃的一个
+        const match =
+          keyword !== ''
+            ? matchProjects(stmtAllProjects.all() as ProjectCandidate[], keyword)
+            : null
+        const matched = (match?.rows ?? []) as Array<{ id: number; name: string; path: string | null }>
         const project = keyword
           ? matched[0]
           : (stmtActiveProject.get() as { id: number; name: string } | undefined)
@@ -651,7 +646,7 @@ const plugin: MemorySQLPlugin = {
         if (!d) {
           return `项目「${project.name}」还没有总结 —— 等待自动总结,或让用户在该项目上点「立即总结」。可先调用 memory_get_project_brief。`
         }
-        return buildDigestMcpText(
+        const text = buildDigestMcpText(
           {
             summary: d.summary,
             recent: d.recent ?? '',
@@ -669,6 +664,9 @@ const plugin: MemorySQLPlugin = {
             generatedAt: new Date()
           }
         )
+        // 解析口径不是"精确单个"时自报家门,避免 agent 把别的项目的总结当成当前的
+        const note = match ? describeProjectMatch(match, keyword) : null
+        return note ? `${text}\n\n${note}` : text
       }
     })
   }

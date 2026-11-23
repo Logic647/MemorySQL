@@ -15,12 +15,17 @@
  */
 
 /** initialize 返回的 instructions:客户端会(或可以)把它放进系统提示 */
-export const MEMORYSQL_INSTRUCTIONS = `MemorySQL 是用户本机的长期记忆库(MCP 服务),跨会话、跨 agent 共享。请在**不需要用户提醒**的情况下按下面的时机调用:
+export const MEMORYSQL_INSTRUCTIONS = `MemorySQL 是用户本机的长期记忆库(MCP 服务),跨会话、跨 agent 共享。**不要等用户说「用 memorysql / 记忆库 / 续接」才用** —— 按下面的时机主动调用:
 
-- 开始一个任务/进入陌生项目前:调 memory_get_context({ project: "<仓库目录名>" }) 一次,拿到全局记忆(画像/偏好/事实/决策)、项目记忆、项目总结(总览 + 最近进展)、最近会话与上一棒交接摘要。
-- 用户问「上次怎么做的」「为什么这样定」「之前踩过什么坑」:先 memory_search,不要凭印象回答。
-- 你做了架构决策、发现用户偏好、确认了事实:立刻 memory_write 一条(一条只写一件事,写短句;带 project 写项目记忆,不带写全局记忆)。
-- 收工、或要把活交给下一个 agent 之前:memory_log_progress 汇报「做了什么 / 下一步 / 卡在哪」。
+1. **任何新任务的第一步**(在改代码、翻文件、猜方案之前):memory_get_context({ project: "<当前工作目录名>" })。一次拿到全局画像/偏好/事实/决策、项目记忆、项目滚动总结(总览 + 最近进展)、最近会话与上一棒交接摘要。每个会话最多一次。
+2. 用户问「上次怎么做的 / 为什么这样定 / 之前踩过什么坑」:先 memory_search({ query }),不要凭印象回答;要细节再 memory_get_session({ id })。
+3. 做了架构决策、发现用户偏好、确认了事实:**当场** memory_write 一条(一条只写一件事,短句;带 project = 项目记忆,不带 = 全局记忆)。
+4. 收工、或要把活交给下一个 agent 之前:memory_log_progress({ project, done, next?, issues? }) 汇报「做了什么 / 下一步 / 卡在哪」。
+
+工具选择速查:
+- 想知道「这个项目在做什么、还剩什么」→ memory_get_project_digest(最省 token)
+- 要接手别人做了一半的活 → memory_get_project_brief
+- 要找具体某句话的出处 → memory_search → memory_get_session
 
 预算约束(很重要,否则会变成噪音):
 - memory_get_context 每个会话最多调一次;已拿到上下文就不要重复调。
