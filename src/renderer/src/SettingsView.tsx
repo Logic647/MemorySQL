@@ -1085,10 +1085,12 @@ function SemanticSection() {
     dims?: number
     rows?: number
     runtimeMissing?: boolean
+    modelMissing?: boolean
   } | null>(null)
   const [pending, setPending] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
   const [installing, setInstalling] = useState(false)
+  const [downloadingModel, setDownloadingModel] = useState(false)
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -1174,6 +1176,34 @@ function SemanticSection() {
           }}
         >
           {installing ? '下载中…(约 15MB)…' : '下载语义组件(~15MB)'}
+        </button>
+      )}
+      {status.enabled && status.modelMissing && (
+        <button
+          className="btn btn-accent btn-small"
+          disabled={downloadingModel}
+          style={{ marginTop: 8 }}
+          onClick={() => {
+            setDownloadingModel(true)
+            push('semantic', '模型下载中(HF 镜像,约 100MB),完成后自动就绪')
+            void api
+              .semanticDownloadModel()
+              .then((r) => {
+                push(
+                  'semantic',
+                  r.ok
+                    ? `嵌入模型已就绪(${r.source ?? '镜像'})${(r.downloaded ?? []).length > 0 ? `,下载 ${(r.downloaded ?? []).length} 个文件` : ''}`
+                    : (r.message ?? '模型下载失败')
+                )
+              })
+              .catch((err) => push('semantic', `模型下载失败: ${String(err)}`))
+              .finally(() => {
+                setDownloadingModel(false)
+                void load()
+              })
+          }}
+        >
+          {downloadingModel ? '模型下载中…(约 100MB)…' : '下载模型(~100MB)'}
         </button>
       )}
       <NoticeLine slot="semantic" />

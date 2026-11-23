@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-11-23 · 语义检索修好:自备模型下载(HF 镜像)+ P3-6 测量结论(未发版)
+
+**上游 403 是硬事实**(`storage.googleapis.com/qdrant-fastembed` 对匿名调用拒绝),
+但 fastembed 的 `retrieveModel` 逻辑给了绕路:只要 `<cacheDir>/<model>/` 目录存在,
+它**根本不会去下载**。所以不再依赖那个桶,自己把模型文件取齐:
+
+- 新增 `semantic-search/model-fetch.ts`:从 HF 镜像按 `Qdrant/bge-small-zh-v1.5` 的
+  文件列表下载 5 个文件(model_optimized.onnx / tokenizer.json / config.json /
+  tokenizer_config.json / special_tokens_map.json),**校验 HTTP 状态 + 长度 + JSON +
+  onnx 大小**,失败清半成品再换镜像;默认顺序 hf-mirror → 官方 HF,可用设置
+  `semantic-search:modelMirror` 指定自建反代。`isModelReady()` 供状态判断。
+- worker:模型未就绪直接报「去设置里下载模型」,不再走 fastembed 的 403 毒缓存路径。
+- `status` 增 `modelMissing`;新 IPC `downloadModel`;设置页「语义检索」加
+  **「下载模型(~100MB)」** 按钮(与既有「下载语义组件」同款交互)。
+- **端到端实测**:hf-mirror 8 秒拉完 94.8MB;隔离演示库(13 会话/16 记忆)
+  `--reindex` → **embedded 27 / removed 0**,语义链路恢复(此前恒 TAR_BAD_ARCHIVE)。
+- 坑:漏了 `tokenizer_config.json` 时 fastembed 报 `Tokenizer file not found`,
+  已补进必需清单(它的 loadTokenizer 逐个 existsSync)。
+
+**P3-6(2 字中文查询)测量结论**:真库 83,547 条消息上全表 `LIKE '%项目%'` 实测
+**68ms**(`%部署%` 67ms、`%记忆%` 66ms)。bigram 索引要把约 2100 万 token 写进
+FTS,磁盘代价数百 MB —— 对本地优先应用不划算,**暂不做**,数字留档;将来真慢了
+优先考虑「按时间窗口 + 项目过滤后扫」。
+
+**验证**:vitest **730/734**(4 skip;新增 model-fetch 3 条:取齐/全挂清半成品/
+截断校验)、typecheck 0、build 通过。
+
 ## 2026-11-23 · 按测试报告修复:1 P1 + 4 P2 + 6 P3(未发版)
 
 依据 `docs/test-report-2026-11-23.md`(全功能测试)逐条修复:

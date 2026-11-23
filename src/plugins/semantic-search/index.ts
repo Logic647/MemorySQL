@@ -11,6 +11,7 @@ import {
   requireFromNativeRuntime
 } from '../../main/core/native-runtime'
 import { explainModelError, sanitizeModelCache } from './model-cache'
+import { downloadModel, isModelReady, modelDir } from './model-fetch'
 
 export interface SemanticStatus {
   enabled: boolean
@@ -21,6 +22,8 @@ export interface SemanticStatus {
   rows?: number
   /** true = 原生栈未下载(安装包瘦身),设置页给「下载语义组件」按钮 */
   runtimeMissing?: boolean
+  /** true = 嵌入模型未就绪(上游 GCS 已失效),设置页给「下载模型」按钮 */
+  modelMissing?: boolean
 }
 
 /**
@@ -89,6 +92,7 @@ const plugin: MemorySQLPlugin = {
     let unavailable: { reason: string; runtimeMissing?: boolean } | null = null
     let idleTimer: NodeJS.Timeout | null = null
     let embedClient: EmbedClient | null = null
+    const cacheDir = path.join(ctx.env.dataDir, 'fastembed-cache')
 
     const tryInit = async (): Promise<boolean> => {
       if (core) return true
@@ -101,7 +105,6 @@ const plugin: MemorySQLPlugin = {
         const dims = 512
         // 上次下载失败会在缓存里留一个 399 字节的错误响应体(伪装成 .tar.gz),
         // 不清掉的话每次重试都直接解压失败 —— 永不自愈(2026-11-23 报告 P2-3)
-        const cacheDir = path.join(ctx.env.dataDir, 'fastembed-cache')
         const removed = sanitizeModelCache(cacheDir)
         if (removed.length > 0) ctx.log.warn(`removed corrupt model cache: ${removed.join(', ')}`)
         embedClient = createEmbedClient({
@@ -221,16 +224,59 @@ const plugin: MemorySQLPlugin = {
         // 组件装好后(或 dev 环境依赖齐全)在第一次 status 时拉起
         const m = readNativeRuntimeManifest(ctx.env.dataDir)
         if (unavailable?.runtimeMissing && !isRuntimeCompatible(m, app.getVersion(), process.platform, process.arch)) {
-          return { enabled: true, available: false, reason: unavailable.reason, runtimeMissing: true }
+          return {
+            enabled: true,
+            available: false,
+            reason: unavailable.reason,
+            runtimeMissing: true,
+            modelMissing: !isModelReady(cacheDir)
+          }
         }
         await tryInit()
       }
       const c = core
+      const modelMissing = !isModelReady(cacheDir)
       if (c) {
         const s = c.stats()
-        return { enabled: true, available: true, model: s.model, dims: s.dims, rows: s.rows }
+        return {
+          enabled: true,
+          available: true,
+          model: s.model,
+          dims: s.dims,
+          rows: s.rows,
+          modelMissing
+        }
       }
-      return { enabled: true, available: false, reason: unavailable?.reason, runtimeMissing: unavailable?.runtimeMissing }
+      return {
+        enabled: true,
+        available: false,
+        reason: unavailable?.reason,
+        runtimeMissing: unavailable?.runtimeMissing,
+        modelMissing
+      }
+    })
+
+    /**
+     * 下载嵌入模型(HF 镜像 → model 目录)。上游 GCS 桶已 403,fastembed 的
+     * 自带下载不可用;这里直接取模型文件,之后 fastembed 只做本地加载。
+     */
+    ctx.ipc.handle('downloadModel', async () => {
+      try {
+        // 允许用户配一个镜像(如自建反代);不配就走内置 hf-mirror → 官方 HF
+        const mirror = (ctx.settings.get<string>('modelMirror', '') ?? '').trim()
+        const res = await downloadModel({
+          cacheDir,
+          mirrors: mirror ? [mirror] : undefined,
+          onProgress: (line) => ctx.log.info(line)
+        })
+        // 之前若因缺模型失败过,清掉失败态让下次 status 重新拉起
+        unavailable = null
+        await tryInit()
+        ctx.log.info(`embedding model ready: ${modelDir(cacheDir)} (${res.source})`)
+        return { ok: true as const, source: res.source, downloaded: res.downloaded, modelDir: res.modelDir }
+      } catch (err) {
+        return { ok: false as const, message: String(err instanceof Error ? err.message : err) }
+      }
     })
 
     ctx.ipc.handle('installRuntime', async () => {

@@ -12,6 +12,7 @@
 import { parentPort, workerData } from 'node:worker_threads'
 import { requireFromNativeRuntime } from '../../main/core/native-runtime'
 import { sanitizeModelCache } from './model-cache'
+import { isModelReady, MODEL_MISSING_MESSAGE } from './model-fetch'
 
 interface WorkerInit {
   /** 打包版从 <dataDir>/native-runtime 加载 fastembed,dev 走 node_modules */
@@ -38,6 +39,8 @@ async function loadFastembed(): Promise<FastembedModule> {
 
 async function getEmbedder(): Promise<Embedder> {
   if (!embedder) {
+    // 模型没下全就别让 fastembed 去访问已失效的 GCS(403 会把坏包写进缓存)
+    if (!isModelReady(init.cacheDir)) throw new Error(MODEL_MISSING_MESSAGE)
     // 坏缓存(上次下载失败留下的错误响应体)会让解压永久失败,先清掉
     sanitizeModelCache(init.cacheDir)
     const { FlagEmbedding, EmbeddingModel } = await loadFastembed()

@@ -301,6 +301,7 @@ export const api = {
     dims?: number
     rows?: number
     runtimeMissing?: boolean
+    modelMissing?: boolean
   }> =>
     window.memorysql.invoke('semantic-search:status') as Promise<{
       enabled: boolean
@@ -310,6 +311,21 @@ export const api = {
       dims?: number
       rows?: number
       runtimeMissing?: boolean
+      modelMissing?: boolean
+    }>,
+  semanticDownloadModel: (): Promise<{
+    ok: boolean
+    message?: string
+    source?: string
+    downloaded?: string[]
+    modelDir?: string
+  }> =>
+    window.memorysql.invoke('semantic-search:downloadModel') as Promise<{
+      ok: boolean
+      message?: string
+      source?: string
+      downloaded?: string[]
+      modelDir?: string
     }>,
   semanticInstallRuntime: (): Promise<{ ok: boolean; message?: string; available?: boolean; version?: string }> =>
     window.memorysql.invoke('semantic-search:installRuntime') as Promise<{
