@@ -395,29 +395,64 @@ const plugin: MemorySQLPlugin = {
     }
 
     // ---- 自动触发:安静期防抖(监听常挂,开火时才检查开关 —— 开关即时生效) --
+    /**
+     * 安静期的起算点是**会话最后一条消息**,不是入库事件时刻。
+     *
+     * 2026-11-23 实测:13:20/13:31 就安静下来的会话,批量入库到 13:41 才落地,
+     * 按「入库时刻 + quietMinutes」排的闹钟在 15:42 才响 —— 恰好用户 15:43
+     * 重新开口,观感就是「刚开始说话 / 刚入库就总结」。另外定时器会被同项目
+     * 任何一次入库事件重置,子代理会话也在其中,实际触发时刻完全不可预测。
+     *
+     * 现在:按「项目内非子代理会话的最后活动 + quietMinutes」定点;到点再查一次,
+     * 期间用户又开口就顺延 —— 总结只会在项目真正安静满 quietMinutes 后跑。
+     */
+    const stmtProjectLastActivity = sqlite.prepare(
+      `SELECT MAX(COALESCE(last_message_at, started_at)) AS t FROM sessions
+        WHERE deleted = 0 AND project_id = ? AND is_subagent = 0`
+    )
+    const projectLastActivity = (projectId: number): number | null =>
+      (stmtProjectLastActivity.get(projectId) as { t: number | null } | undefined)?.t ?? null
+
     const quietTimers = new Map<number, NodeJS.Timeout>()
+    const scheduleAfterQuiet = (projectId: number): void => {
+      const prev = quietTimers.get(projectId)
+      if (prev) clearTimeout(prev)
+      quietTimers.delete(projectId)
+      const last = projectLastActivity(projectId)
+      if (last == null) return // 没有可总结的会话
+      const now = Date.now()
+      // 已安静满期 → 5 秒后跑(合并同一批入库事件);否则等到「最后消息 + 安静期」
+      const fireAt = Math.max(last * 1000 + quietMinutes() * 60_000, now + 5_000)
+      const t = setTimeout(() => {
+        quietTimers.delete(projectId)
+        if (!enabled()) return
+        // 到点复核:等待期间又聊起来了,把闹钟顺延到新的安静期,不在用户说话时插队
+        const latest = projectLastActivity(projectId)
+        if (latest != null && latest * 1000 + quietMinutes() * 60_000 > Date.now()) {
+          scheduleAfterQuiet(projectId)
+          return
+        }
+        enqueue(projectId)
+      }, fireAt - now)
+      t.unref?.()
+      quietTimers.set(projectId, t)
+    }
+
     ctx.events.on('ingest:result', (...args: unknown[]) => {
       if (!enabled()) return
       const sessionIds = (args[0] as number[] | undefined) ?? []
       if (sessionIds.length === 0) return
       const ph = sessionIds.map(() => '?').join(',')
+      // 子代理会话是父会话的内部过程:不该单独给项目排总结(也不该重置闹钟)
       const ids = (
         sqlite
           .prepare(
-            `SELECT DISTINCT project_id FROM sessions WHERE id IN (${ph}) AND project_id IS NOT NULL`
+            `SELECT DISTINCT project_id FROM sessions
+              WHERE id IN (${ph}) AND project_id IS NOT NULL AND is_subagent = 0`
           )
           .all(...sessionIds) as Array<{ project_id: number }>
       ).map((r) => r.project_id)
-      for (const pid of ids) {
-        const prev = quietTimers.get(pid)
-        if (prev) clearTimeout(prev)
-        const t = setTimeout(() => {
-          quietTimers.delete(pid)
-          if (enabled()) enqueue(pid)
-        }, quietMinutes() * 60_000)
-        t.unref?.()
-        quietTimers.set(pid, t)
-      }
+      for (const pid of ids) scheduleAfterQuiet(pid)
     })
 
     // 启动补跑:应用常关着会错过安静期;3 分钟后把「有未覆盖会话且 >24h 没总结」的补上。

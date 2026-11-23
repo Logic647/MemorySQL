@@ -218,3 +218,71 @@ describe('project-digest 触发逻辑', () => {
     expect(refinePrompts[0]).not.toContain('# Environment')
   })
 })
+
+/**
+ * 安静期起算点(2026-11-23 实测事故):定时器过去按「入库事件时刻 + quietMinutes」
+ * 排,而批量入库可能比消息晚 20+ 分钟;结果 digest 在用户重新开口的前一分钟跑完,
+ * 观感是「刚开始说话/刚入库就总结」。现在按「项目最后一条消息 + quietMinutes」
+ * 定点,到点还要复核一次,期间又开口就顺延。
+ */
+describe('安静期起算点', () => {
+  const digestCount = (): number =>
+    (db.prepare(`SELECT COUNT(*) AS n FROM project_digests`).get() as { n: number }).n
+
+  it('已安静满期的会话:迟到的入库事件不应再等 quietMinutes,几秒内就总结', async () => {
+    addProject(1, 'demo')
+    addSession(1, 1, nowSec() - 7200) // 2 小时前就安静了
+    vi.useFakeTimers()
+    try {
+      initPlugin()
+      events.emit('ingest:result', [1]) // 批量入库现在才把它送进来
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(digestCount()).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('项目仍活跃:quietMinutes 内不总结;等待期间又开口则顺延', async () => {
+    addProject(1, 'demo')
+    addSession(1, 1, nowSec() - 7200) // 老会话,本来可总结
+    vi.useFakeTimers()
+    try {
+      initPlugin()
+      addSession(2, 1, nowSec()) // 用户刚开口
+      events.emit('ingest:result', [2])
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+      expect(digestCount()).toBe(0) // 离安静满期还早
+      // 到点前又开口一次 → 闹钟顺延
+      await vi.advanceTimersByTimeAsync(60 * 60_000)
+      addSession(3, 1, nowSec())
+      events.emit('ingest:result', [3])
+      await vi.advanceTimersByTimeAsync(30 * 60_000)
+      expect(digestCount()).toBe(0) // 原本第二次该在 130min,顺延后还不到
+      // 安静满期后照常跑
+      await vi.advanceTimersByTimeAsync(150 * 60_000)
+      expect(digestCount()).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('子代理会话入库不排项目总结(也不重置闹钟)', async () => {
+    addProject(1, 'demo')
+    db.prepare(
+      `INSERT INTO sessions
+         (id, agent_type, external_id, project_id, cwd, started_at, ended_at, last_message_at,
+          title, summary, content_hash, message_count, tool_call_count, updated_at, is_subagent)
+       VALUES (9, 'zcode', 'sub-9', 1, 'C:\\demo', ?, ?, ?, '子代理', '', 'h9', 2, 0, ?, 1)`
+    ).run(nowSec() - 60, nowSec() - 60, nowSec() - 60, Date.now())
+    vi.useFakeTimers()
+    try {
+      initPlugin()
+      events.emit('ingest:result', [9])
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(digestCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
