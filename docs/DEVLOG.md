@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-11-23 · v0.7.9 已发版
+
+**https://github.com/Logic647/MemorySQL/releases/tag/v0.7.9**(20 资产,三清单公网 200,
+mac 双架构已合并,`latest.yml` 声明 size 与 exe 一致 104,384,185 B)。
+tag `5b9a711`,CI tag run **45148732099 6/6 全绿**(ci×2 + package×4,含 mac Intel)。
+
+内容见 `docs/releases/v0.7.9-notes.md`:harness 注入不再冒充用户输入、会话列表按最后消息排、
+项目总结安静期锚点、MCP 项目解析三级口径 + 主动调用引导、演示库隔离(P1)、settings BOM、
+项目路径存量合并、digest 弹窗错误态、**语义检索改 HF 镜像自备模型下载(端到端恢复)**、
+以及一批 P3(记忆去重/参数校验/工具数/restartNeeded/同步标题 LWW)。
+
+**发版插曲**:首次 tag run 因 `ci (windows-latest)` 两条「建临时 SQLite 库」用例
+5.3/5.6s 超时(默认 5s,本地 0.6s)失败 → `vitest.config.ts` 放宽到 20s/30s(提交 `5b9a711`),
+删除远端 tag 后重推触发新 run(API 删 + `git push`),6/6 全绿。
+mac 清单用参数化后的 `out/tmp/finish-mac-manifest.mjs <runId> <tag> <sha>`
+(Range 抽取两份 latest-mac.yml → merge-mac-manifest 校验 → `gh release upload --clobber`
+→ 按资产 id 鉴权校验双架构)。
+
 ## 2026-11-23 · 语义检索修好:自备模型下载(HF 镜像)+ P3-6 测量结论(未发版)
 
 **上游 403 是硬事实**(`storage.googleapis.com/qdrant-fastembed` 对匿名调用拒绝),
