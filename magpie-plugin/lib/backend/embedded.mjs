@@ -1065,7 +1065,10 @@ export async function createEmbeddedBackend(options = {}) {
     }
     hits.sort((a, b) => a.score - b.score)
     const top = hits.slice(0, limit)
-    touchMemories(top.filter((h) => h.memoryId).map((h) => h.memoryId))
+    // 页面自己的搜索只是翻看，不算「被召回」，也不推高记忆热度。
+    if (args.internal !== true) {
+      touchMemories(top.filter((h) => h.memoryId).map((h) => h.memoryId))
+    }
     // agent 的整库检索算一次「搜索」；页面自己的搜索（internal）不计入，
     // 否则召回率会被用户翻记忆页的行为冲淡。
     if (args.internal !== true && (!kind || kind === 'memory')) {
