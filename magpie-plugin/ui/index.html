@@ -85,6 +85,15 @@
             >
               立即整理
             </button>
+            <button
+              id="dreamUndo"
+              class="ghost"
+              type="button"
+              hidden
+              title="撤销最近一次整理：恢复被合并/归档的记忆；你之后改过或置顶的条目保持不动"
+            >
+              撤销上次整理
+            </button>
             <label class="switch" title="打开后按设定的间隔用 LLM 整理记忆">
               <input id="dreamOn" type="checkbox" />
               <span></span>
@@ -112,6 +121,21 @@
           <div id="injectAgents" class="agent-picks"></div>
         </div>
         <p id="distillHint" class="muted hint" hidden></p>
+      </section>
+
+      <section id="activityPanel" class="panel activity">
+        <div class="activity-head">
+          <div class="who">
+            <strong>记忆活动</strong>
+            <span id="activitySince" class="sub">正在读取…</span>
+          </div>
+          <div class="seg" id="activityRange" role="group" aria-label="统计区间">
+            <button type="button" data-days="7" class="active" title="看最近 7 天的活动">7 天</button>
+            <button type="button" data-days="30" title="看最近 30 天的活动">30 天</button>
+          </div>
+        </div>
+        <div id="activityTiles" class="activity-tiles"></div>
+        <div id="activityChart" class="activity-chart" hidden></div>
       </section>
 
       <section class="panel">

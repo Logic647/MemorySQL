@@ -831,3 +831,167 @@ button {
   max-height: 40vh;
   font-size: 11.5px;
 }
+
+/* --- 记忆活动 ----------------------------------------------------------- */
+.activity {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.activity-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.activity-head .who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.activity-head .sub {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.activity-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 8px;
+}
+.stat-tile {
+  display: grid;
+  gap: 3px;
+  text-align: left;
+  padding: 9px 11px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+}
+.stat-tile:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.stat-tile.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.stat-label {
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.stat-value {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stat-sub {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.spark {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1px;
+  height: 26px;
+  margin-top: 2px;
+}
+.spark i {
+  flex: 1 1 0;
+  max-width: 10px;
+  min-width: 2px;
+  border-radius: 1px 1px 0 0;
+  background: color-mix(in srgb, var(--accent) 34%, var(--line));
+}
+.spark i.zero {
+  height: 2px !important;
+  background: var(--line);
+}
+.spark i.today {
+  background: var(--accent);
+}
+.activity-chart {
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.activity-readout {
+  margin: 0 0 8px;
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.activity-bars {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 120px;
+  padding: 0 1px;
+  border-bottom: 1px solid var(--line);
+}
+.activity-bars button {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+}
+.activity-bars button:hover,
+.activity-bars button:focus-visible {
+  background: var(--panel-2);
+}
+.activity-bars button i {
+  display: block;
+  width: 100%;
+  max-width: 24px;
+  border-radius: 3px 3px 0 0;
+  background: color-mix(in srgb, var(--accent) 34%, var(--line));
+}
+.activity-bars button i.zero {
+  height: 2px !important;
+  background: var(--line);
+}
+.activity-bars button.empty {
+  cursor: default;
+}
+.activity-bars button.empty i {
+  height: 2px;
+  background: transparent;
+  border-bottom: 1px dashed var(--line);
+}
+.activity-bars button.today i {
+  background: var(--accent);
+}
+.activity-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.activity-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* 记忆展开后按原样显示换行（折叠时仍是一行） */
+.mem-name.open {
+  white-space: pre-wrap;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}

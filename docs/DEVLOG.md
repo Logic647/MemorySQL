@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-11-25 · magpie 插件：借鉴 magpie 记忆活动统计 + 整理撤销 + 多行记忆
+
+**触发**：magpie 当天给 Memory 加了「活动统计」（`internal/memory/stats.go`：
+每日新增/更新/清理/搜索/注入计数；Memory 页四张卡片 + 7/30 天趋势），
+此前还加了整理 Undo、多行记忆保持换行、项目指令文件优先。逐项对照后落地：
+
+**记忆活动（插件版）**：
+
+- schema v3 加 `memory_stats(day, metric, origin, n)` 与 `meta.stats_since`；
+  只存计数，不存记忆正文。`activity(days)` 返回 7/30 天 series + 当前
+  active/candidate/archived/used。
+- 计数点：`memory_write` / `memory_log_progress` / 旧蒸馏候选 / 页面新增 = created
+  （user/agent/inferred）；页面编辑/置顶变化/整理合并 = updated；
+  归档/删除/整理合并/搁置 = cleaned（you/tidy）；agent `memory_search`
+  = searches/found/recalled；网关首次注入 = injected。
+- 页面自己的搜索传 `internal:true` 不计召回率；`kind=session|message` 也不计。
+- 升级前只有 created 按 `memories.created_at` 回填（排除 llm-tidy），其余从
+  `stats_since` 起算。**踩坑**：`activity()` 内 `count()` helper 起初只接 sql，
+  `used` 的 `startMs` 参数被吞 → `used` 恒 0；测试抓出后改成 `...params`。
+
+**页面**：记忆页新增「记忆活动」面板（五张卡片：新增/召回率/更新率/清理率/
+注入会话），每张 7/30 天 sparkline，点开每日柱图；柱宽限制 24px（否则 7 天
+每根 170px），零值画 2px 基线，today 用 accent。hover/focus 显示当天明细；
+升级后脚注说明回填范围。记忆行显示「召回 N 次 · 最近时间」。
+
+**整理撤销**：`changes` 每条补 `at` 与 `from`（原 active/candidate），
+`undoDream()` 严格校验 status/updated_at/locked/deleted/source 后恢复；
+用户之后改过/置顶/删除/再归档的整项保留，返回 `{restored,removed,kept}`，
+页面按钮「撤销上次整理」+ 状态行说明。旧 `changes`（无 `at`）安全跳过。
+
+**多行/指令优先级**：续接包 `indentLines` 保留换行并缩进，整理 prompt 仍
+`clip` 成一行；页面折叠显示首行 + `…`，展开 `pre-wrap`。续接包尾注声明项目
+自带 `AGENTS.md`/`CLAUDE.md` 等文件优先、冲突时指出过时记忆；`memory_write`
+描述补「项目规则写进项目文件」。整理列表带 `used N×`。
+
+**验证**：`node --test` **43 passed**（活动统计/回填、撤销、用户改动保留、
+多行注入、注入计数、迁移 v3 幂等）；浏览器临时库验收五卡片/柱图/7→30 切换/
+多行展开 `pre-wrap`/同会话不重复计注入；社区包 `packages/memorysql` 同步 0.7.0。
+**没照搬**：本地语义检索（模型 135MB + ONNX，不适合社区插件）、文件即记忆 +
+多机同步、候选 30 天过期清理（会删数据）。未做：真实 agent 多天数据、整理取消。
+
+---
+
 ## 2026-11-20 · magpie 插件：项目总结/整理间隔 + 注入选择修复 + 搜索恢复
 
 **注入选择 bug**：`injectAgents=[]` 以前既表示「全部」，又会在「只勾了一个再取消」时

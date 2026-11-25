@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { openDatabase } from './sqlite.mjs'
-import { migrate } from './schema.mjs'
+import { localDay, migrate } from './schema.mjs'
 import { agentTypeOf } from '../agent-map.mjs'
 import {
   chat as llmChat,
@@ -67,6 +67,23 @@ function firstLine(text) {
     .split('\n')
     .find((l) => l.trim().length > 0)
   return (line ?? '').trim()
+}
+
+// 多行记忆在续接包里保持换行：首行跟在 "- " 后，后续行缩进两格，
+// 仍是一条列表项（用户手写几行，就按几行交给 agent）。
+function indentLines(text, pad = '  ') {
+  const lines = String(text ?? '')
+    .replace(/\r\n/g, '\n')
+    .trim()
+    .split('\n')
+  return lines.map((line, i) => (i > 0 && line.trim() ? pad + line.trimEnd() : line)).join('\n')
+}
+
+function clipBlock(text, max) {
+  const t = String(text ?? '')
+    .replace(/\r\n/g, '\n')
+    .trim()
+  return t.length > max ? `${t.slice(0, max)}…` : t
 }
 
 function escapeLike(value) {
@@ -133,6 +150,168 @@ export async function createEmbeddedBackend(options = {}) {
   const all = (sql, ...params) => db.prepare(sql).all(...params)
   const get = (sql, ...params) => db.prepare(sql).get(...params)
   const run = (sql, ...params) => db.prepare(sql).run(...params)
+
+  // ----- 记忆活动 ---------------------------------------------------------
+  // 只存计数，从不存记忆正文。按本地日期逐日累加，用来回答「记忆在做多少、
+  // 被 agent 用到多少、整理掉多少」。页面自己的搜索不计入召回率。
+  function note(metric, n = 1, origin = '') {
+    const value = Math.floor(Number(n))
+    if (!Number.isFinite(value) || value <= 0) return
+    try {
+      run(
+        `INSERT INTO memory_stats(day, metric, origin, n) VALUES (?, ?, ?, ?)
+         ON CONFLICT(day, metric, origin) DO UPDATE SET n = n + excluded.n`,
+        localDay(),
+        metric,
+        String(origin ?? ''),
+        value
+      )
+    } catch {
+      /* 计数失败绝不能影响被计数的操作 */
+    }
+  }
+
+  // 回填「开始统计之前」的新增：按记忆自己的 created_at 归类。
+  // llm-tidy 合并出来的不是新增（那是整理），不参与回填。
+  function createdOriginOf(source) {
+    const s = String(source ?? '')
+    if (s === 'user') return 'user'
+    if (s.startsWith('llm-distill')) return 'inferred'
+    if (s.startsWith('llm-tidy')) return ''
+    if (s.startsWith('agent')) return 'agent'
+    return 'imported'
+  }
+
+  function dayRange(days) {
+    const now = new Date()
+    const out = []
+    for (let i = days - 1; i >= 0; i -= 1) {
+      out.push(localDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i).getTime()))
+    }
+    return out
+  }
+
+  function addCount(map, key, n) {
+    const k = String(key ?? '')
+    if (!k) return
+    map[k] = (map[k] ?? 0) + Number(n || 0)
+  }
+
+  function activity(daysArg = 7) {
+    const days = Math.min(Math.max(Math.floor(Number(daysArg) || 7), 1), 400)
+    const keys = dayRange(days)
+    const first = keys[0]
+    const today = keys[keys.length - 1]
+    const since = get("SELECT value FROM meta WHERE key = 'stats_since'")?.value ?? today
+
+    const counts = new Map()
+    for (const row of all(
+      `SELECT day, metric, origin, n FROM memory_stats WHERE day >= ? AND day <= ?`,
+      first,
+      today
+    )) {
+      let day = counts.get(row.day)
+      if (!day) {
+        day = { created: {}, updated: 0, cleaned: {}, searches: 0, found: 0, recalled: 0, injected: 0 }
+        counts.set(row.day, day)
+      }
+      const n = Number(row.n) || 0
+      if (row.metric === 'created') addCount(day.created, row.origin, n)
+      else if (row.metric === 'cleaned') addCount(day.cleaned, row.origin, n)
+      else if (row.metric in day) day[row.metric] += n
+    }
+
+    // 开始统计之前：只有「新增」能从记忆自身的日期回填，其余指标没有历史。
+    const made = new Map()
+    if (first < since) {
+      const sinceStart = new Date(`${since}T00:00:00`).getTime()
+      for (const row of all(
+        `SELECT created_at, source FROM memories
+          WHERE deleted = 0 AND created_at < ? ORDER BY created_at ASC`,
+        sinceStart
+      )) {
+        const origin = createdOriginOf(row.source)
+        if (!origin) continue
+        const day = localDay(row.created_at)
+        if (day < first || day >= since) continue
+        let originMap = made.get(day)
+        if (!originMap) {
+          originMap = {}
+          made.set(day, originMap)
+        }
+        addCount(originMap, origin, 1)
+      }
+    }
+
+    const series = []
+    const totals = {
+      created: 0,
+      updated: 0,
+      cleaned: 0,
+      searches: 0,
+      found: 0,
+      recalled: 0,
+      injected: 0,
+      createdBy: {},
+      cleanedBy: {}
+    }
+    for (const day of keys) {
+      const rec = counts.get(day)
+      const before = day < since
+      const created = before ? made.get(day) ?? {} : rec?.created ?? {}
+      const cleaned = rec?.cleaned ?? {}
+      const item = {
+        day,
+        recorded: !before,
+        backfilled: before && Object.keys(created).length > 0,
+        created,
+        updated: rec?.updated ?? 0,
+        cleaned,
+        searches: rec?.searches ?? 0,
+        found: rec?.found ?? 0,
+        recalled: rec?.recalled ?? 0,
+        injected: rec?.injected ?? 0
+      }
+      series.push(item)
+      for (const [origin, n] of Object.entries(item.created)) {
+        totals.created += n
+        addCount(totals.createdBy, origin, n)
+      }
+      for (const [by, n] of Object.entries(item.cleaned)) {
+        totals.cleaned += n
+        addCount(totals.cleanedBy, by, n)
+      }
+      totals.updated += item.updated
+      totals.searches += item.searches
+      totals.found += item.found
+      totals.recalled += item.recalled
+      totals.injected += item.injected
+    }
+
+    const count = (sql, ...params) => Number(get(sql, ...params)?.n ?? 0)
+    const startMs = new Date(`${first}T00:00:00`).getTime()
+    return {
+      days,
+      today,
+      since,
+      series,
+      totals,
+      active: count("SELECT count(*) AS n FROM memories WHERE deleted = 0 AND status = 'active'"),
+      candidate: count("SELECT count(*) AS n FROM memories WHERE deleted = 0 AND status = 'candidate'"),
+      archived: count(
+        "SELECT count(*) AS n FROM memories WHERE deleted = 0 AND status IN ('archived','superseded')"
+      ),
+      used: count(
+        `SELECT count(*) AS n FROM memories
+          WHERE deleted = 0 AND status = 'active' AND last_access_at >= ?`,
+        startMs
+      )
+    }
+  }
+
+  function noteInjection() {
+    note('injected', 1)
+  }
 
   // ----- 项目 -------------------------------------------------------------
   function projectsByCwd(cwd) {
@@ -264,7 +443,7 @@ export async function createEmbeddedBackend(options = {}) {
       if (list.length === 0) continue
       lines.push(`### ${KIND_LABEL[kind] ?? kind}`)
       for (const row of list) {
-        const line = `- ${clip(row.content, 220)}`
+        const line = `- ${indentLines(clipBlock(row.content, 220))}`
         if (used + line.length > budget) break outer
         lines.push(line)
         used += line.length
@@ -364,6 +543,9 @@ export async function createEmbeddedBackend(options = {}) {
       parts.push(`\n## 上一棒交接摘要(最近会话 #${sessions[0].id} tail)`)
       parts.push(renderTail(sessions[0].id))
     }
+    parts.push(
+      '\n> 项目自带的 AGENTS.md / CLAUDE.md 等指令文件和文档优先于这里的记忆；两者冲突时以项目文件为准，并指出哪条记忆过时。项目内的规则、约定写进这些文件，记忆只放跨项目仍然成立的事实。'
+    )
     parts.push(
       '\n> 深读某条会话用 memory_get_session({id});需要更多历史用 memory_list_sessions 或 memory_search({query});拿到新结论/偏好用 memory_write({kind, content, project?}) 记录;收工时用 memory_log_progress 汇报进度。'
     )
@@ -884,6 +1066,16 @@ export async function createEmbeddedBackend(options = {}) {
     hits.sort((a, b) => a.score - b.score)
     const top = hits.slice(0, limit)
     touchMemories(top.filter((h) => h.memoryId).map((h) => h.memoryId))
+    // agent 的整库检索算一次「搜索」；页面自己的搜索（internal）不计入，
+    // 否则召回率会被用户翻记忆页的行为冲淡。
+    if (args.internal !== true && (!kind || kind === 'memory')) {
+      const recalled = top.filter((h) => h.kind === 'memory').length
+      note('searches', 1)
+      if (recalled > 0) {
+        note('found', 1)
+        note('recalled', recalled)
+      }
+    }
     if (args.format === 'json') {
       return JSON.stringify(
         top.map(({ line, ...rest }) => rest),
@@ -929,6 +1121,7 @@ export async function createEmbeddedBackend(options = {}) {
         now
       ).lastInsertRowid
     )
+    note('created', 1, 'agent')
     const bits = [`kind=${kind}`, `scope=${scope}`]
     if (agent) bits.push(`agent=${agent}`)
     if (project) bits.push(`project=${project.name}`)
@@ -962,6 +1155,7 @@ export async function createEmbeddedBackend(options = {}) {
         now
       ).lastInsertRowid
     )
+    note('created', 1, 'agent')
     const bits = [`#${id}`]
     if (matched) bits.push(`关联项目 ${matched.name}`)
     else bits.push('项目未匹配,未关联')
@@ -1192,6 +1386,10 @@ export async function createEmbeddedBackend(options = {}) {
     dreamt: 0,
     dreamError: '',
     changes: [],
+    // 最近一次「撤销整理」的结果（页面用它解释为什么没有可撤销记录）
+    dreamUndoAt: 0,
+    dreamUndoRestored: 0,
+    dreamUndoKept: 0,
     // 记忆注入：默认关；injectAll=true 注入全部，否则只注入 injectAgents
     inject: false,
     injectAll: true,
@@ -1280,7 +1478,8 @@ export async function createEmbeddedBackend(options = {}) {
       sourceSessionId: row.source_session_id ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      accessCount: row.access_count ?? 0
+      accessCount: row.access_count ?? 0,
+      lastAccessAt: row.last_access_at ?? null
     }
   }
 
@@ -1309,7 +1508,7 @@ export async function createEmbeddedBackend(options = {}) {
     const limit = Math.min(Math.max(Number(args.limit) || 200, 1), 500)
     const rows = all(
       `SELECT id, kind, content, scope, project_id, agent_type, status, tags, locked, why, source,
-              source_session_id, created_at, updated_at, access_count
+              source_session_id, created_at, updated_at, access_count, last_access_at
          FROM memories WHERE ${where.join(' AND ')}
         ORDER BY locked DESC, updated_at DESC LIMIT ?`,
       ...params,
@@ -1352,9 +1551,14 @@ export async function createEmbeddedBackend(options = {}) {
     const why = String(args.why ?? '').trim().slice(0, 500)
     const now = Date.now()
     if (id) {
-      if (!get('SELECT id FROM memories WHERE id = ? AND deleted = 0', id)) {
+      const before = get(
+        'SELECT content, kind, scope, project_id, tags, why, locked FROM memories WHERE id = ? AND deleted = 0',
+        id
+      )
+      if (!before) {
         return { ok: false, error: '记忆不存在' }
       }
+      const tagsJson = tags.length ? JSON.stringify(tags) : null
       run(
         `UPDATE memories SET content=?, kind=?, scope=?, project_id=?, tags=?, why=?, locked=1, updated_at=?
           WHERE id=?`,
@@ -1362,11 +1566,21 @@ export async function createEmbeddedBackend(options = {}) {
         kind,
         scope,
         projectId,
-        tags.length ? JSON.stringify(tags) : null,
+        tagsJson,
         why || null,
         now,
         id
       )
+      // 编辑记忆算「更新」；只点保存、什么都没改就不计。
+      const changed =
+        before.content !== text ||
+        before.kind !== kind ||
+        before.scope !== scope ||
+        (before.project_id ?? null) !== projectId ||
+        (before.tags ?? null) !== tagsJson ||
+        (before.why ?? null) !== (why || null) ||
+        Number(before.locked) !== 1
+      if (changed) note('updated', 1)
       return { ok: true, id }
     }
     const dup = get('SELECT id FROM memories WHERE content = ? AND deleted = 0 LIMIT 1', text)
@@ -1386,6 +1600,7 @@ export async function createEmbeddedBackend(options = {}) {
         now
       ).lastInsertRowid
     )
+    note('created', 1, 'user')
     return { ok: true, id: newId }
   }
 
@@ -1395,12 +1610,20 @@ export async function createEmbeddedBackend(options = {}) {
       .filter((n) => Number.isInteger(n) && n > 0)
     const status = ['active', 'candidate', 'archived'].includes(args.status) ? args.status : ''
     if (ids.length === 0 || !status) return { ok: false, error: '参数错误' }
+    const marks = ids.map(() => '?').join(',')
+    const before = all(`SELECT id, status FROM memories WHERE id IN (${marks}) AND deleted = 0`, ...ids)
     const res = run(
-      `UPDATE memories SET status=?, updated_at=? WHERE id IN (${ids.map(() => '?').join(',')}) AND deleted=0`,
+      `UPDATE memories SET status=?, updated_at=? WHERE id IN (${marks}) AND deleted=0`,
       status,
       Date.now(),
       ...ids
     )
+    // 从「使用中/待确认」变成归档 = 一条记忆离开使用；归档→归档、恢复都不计。
+    const leaving =
+      status === 'archived'
+        ? before.filter((row) => row.status === 'active' || row.status === 'candidate').length
+        : 0
+    if (leaving) note('cleaned', leaving, 'you')
     return { ok: true, count: Number(res.changes ?? ids.length) }
   }
 
@@ -1409,23 +1632,30 @@ export async function createEmbeddedBackend(options = {}) {
       .map(Number)
       .filter((n) => Number.isInteger(n) && n > 0)
     if (ids.length === 0) return { ok: false, error: '参数错误' }
+    const marks = ids.map(() => '?').join(',')
+    // 只有还在使用的记忆被删才算「清理」；删已归档的不重复计。
+    const live = get(
+      `SELECT count(*) AS n FROM memories
+        WHERE id IN (${marks}) AND deleted = 0 AND status IN ('active','candidate')`,
+      ...ids
+    )
     const res = run(
-      `UPDATE memories SET deleted=1, updated_at=? WHERE id IN (${ids.map(() => '?').join(',')})`,
+      `UPDATE memories SET deleted=1, updated_at=? WHERE id IN (${marks})`,
       Date.now(),
       ...ids
     )
+    if (Number(live?.n) > 0) note('cleaned', Number(live.n), 'you')
     return { ok: true, count: Number(res.changes ?? ids.length) }
   }
 
   function pinMemory(args = {}) {
     const id = Number(args.id)
     if (!Number.isInteger(id) || id <= 0) return { ok: false, error: '参数错误' }
-    run(
-      'UPDATE memories SET locked = ?, updated_at = ? WHERE id = ? AND deleted = 0',
-      args.pinned ? 1 : 0,
-      Date.now(),
-      id
-    )
+    const before = get('SELECT locked FROM memories WHERE id = ? AND deleted = 0', id)
+    if (!before) return { ok: false, error: '记忆不存在' }
+    const locked = args.pinned ? 1 : 0
+    run('UPDATE memories SET locked = ?, updated_at = ? WHERE id = ? AND deleted = 0', locked, Date.now(), id)
+    if (Number(before.locked) !== locked) note('updated', 1)
     return { ok: true }
   }
 
@@ -1627,6 +1857,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
       now,
       now
     )
+    note('created', 1, 'inferred')
     return 1
   }
 
@@ -1800,7 +2031,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
       const changes = []
       for (const sc of scopes) {
         const rows = all(
-          `SELECT id, kind, content, created_at FROM memories
+          `SELECT id, kind, content, status, created_at, access_count FROM memories
             WHERE deleted = 0 AND status IN ('active','candidate') AND locked = 0 AND scope = ?
               ${sc.scope === 'project' ? 'AND project_id = ?' : ''}
             ORDER BY updated_at DESC LIMIT 120`,
@@ -1810,10 +2041,9 @@ Leave out anything you would not change. If nothing should change, answer {}.`
         const list = rows
           .map(
             (r, i) =>
-              `${i + 1} | ${r.kind} | ${fmtDate(Math.floor((r.created_at || 0) / 1000))} | ${clip(
-                r.content,
-                180
-              )}`
+              `${i + 1} | ${r.kind} | ${fmtDate(Math.floor((r.created_at || 0) / 1000))} | used ${
+                r.access_count || 0
+              }× | ${clip(r.content, 180)}`
           )
           .join('\n')
         const reply = await llm.chat(
@@ -1830,7 +2060,9 @@ Leave out anything you would not change. If nothing should change, answer {}.`
         const archives = Array.isArray(obj.archive) ? obj.archive : []
         db.tx(() => {
           for (const m of merges) {
-            const ids = (Array.isArray(m.ids) ? m.ids : []).map(Number).filter((n) => byNum.has(n))
+            const ids = [
+              ...new Set((Array.isArray(m.ids) ? m.ids : []).map(Number).filter((n) => byNum.has(n)))
+            ]
             if (ids.length < 2) continue
             const text = String(m.text ?? '').trim()
             if (!text) continue
@@ -1850,28 +2082,50 @@ Leave out anything you would not change. If nothing should change, answer {}.`
               ).lastInsertRowid
             )
             for (const n of ids) {
-              run(
+              const res = run(
                 "UPDATE memories SET status='superseded', updated_at=? WHERE id=? AND locked=0",
                 now,
                 byNum.get(n).id
               )
+              // 被合并掉的旧记忆 = 离开使用；合并产生的这一条算「更新」不算新增。
+              if (Number(res?.changes) > 0) note('cleaned', 1, 'tidy')
             }
-            changes.push({ action: 'merge', ids: ids.map((n) => byNum.get(n).id), text, newId })
+            note('updated', 1)
+            changes.push({
+              action: 'merge',
+              ids: ids.map((n) => byNum.get(n).id),
+              // 撤销时按各自原来的状态恢复（候选不会因为撤销被顺手确认）
+              from: ids.map((n) => ({ id: byNum.get(n).id, status: byNum.get(n).status })),
+              text,
+              newId,
+              at: now
+            })
           }
           for (const a of archives) {
             const n = Number(a.id)
             const row = byNum.get(n)
             if (!row) continue
-            run(
+            const now = Date.now()
+            const res = run(
               "UPDATE memories SET status='archived', updated_at=? WHERE id=? AND locked=0",
-              Date.now(),
+              now,
               row.id
             )
-            changes.push({ action: 'archive', id: row.id, why: String(a.why ?? '').slice(0, 300) })
+            if (Number(res?.changes) > 0) note('cleaned', 1, 'tidy')
+            changes.push({
+              action: 'archive',
+              id: row.id,
+              from: row.status,
+              why: String(a.why ?? '').slice(0, 300),
+              at: now
+            })
           }
         })
       }
       distill.changes = changes.slice(0, 200)
+      distill.dreamUndoAt = 0
+      distill.dreamUndoRestored = 0
+      distill.dreamUndoKept = 0
       distill.dreamt = Date.now()
     } catch (err) {
       distill.dreamError = String(err?.message ?? err).slice(0, 400)
@@ -1880,6 +2134,94 @@ Leave out anything you would not change. If nothing should change, answer {}.`
       distill.job = ''
       saveState()
     }
+  }
+
+  // 撤销最近一次整理：合并出来的新记忆删掉、被合并/归档的恢复使用中。
+  // 只撤销「整理之后没人动过」的条目：用户改过、置顶、删掉或又归档过的，
+  // 原样保留（宁可少恢复，也不覆盖用户之后的决定）。
+  function undoDream() {
+    if (distill.running) return { ok: false, error: '整理正在进行，等它结束再撤销' }
+    const changes = Array.isArray(distill.changes) ? distill.changes : []
+    if (changes.length === 0) return { ok: false, error: '没有可撤销的整理记录' }
+    let restored = 0
+    let removed = 0
+    let kept = 0
+    db.tx(() => {
+      for (const c of [...changes].reverse()) {
+        if (!c.at) {
+          kept += 1
+          continue
+        }
+        if (c.action === 'archive') {
+          const row = get(
+            'SELECT id, status, updated_at, locked, deleted FROM memories WHERE id = ?',
+            c.id
+          )
+          if (
+            !row ||
+            row.deleted ||
+            Number(row.locked) !== 0 ||
+            row.status !== 'archived' ||
+            row.updated_at !== c.at
+          ) {
+            kept += 1
+            continue
+          }
+          const back = c.from === 'candidate' ? 'candidate' : 'active'
+          run('UPDATE memories SET status=?, updated_at=? WHERE id=?', back, Date.now(), row.id)
+          restored += 1
+          continue
+        }
+        if (c.action === 'merge') {
+          const merged = get(
+            'SELECT id, status, updated_at, locked, deleted, source FROM memories WHERE id = ?',
+            c.newId
+          )
+          const members = (Array.isArray(c.ids) ? c.ids : []).map((id) =>
+            get('SELECT id, status, updated_at, locked, deleted FROM memories WHERE id = ?', id)
+          )
+          const untouched =
+            merged &&
+            !merged.deleted &&
+            Number(merged.locked) === 0 &&
+            merged.status === 'active' &&
+            merged.updated_at === c.at &&
+            String(merged.source) === 'llm-tidy' &&
+            members.length >= 2 &&
+            members.every(
+              (m) =>
+                m &&
+                !m.deleted &&
+                Number(m.locked) === 0 &&
+                m.status === 'superseded' &&
+                m.updated_at === c.at
+            )
+          if (!untouched) {
+            kept += 1
+            continue
+          }
+          const now = Date.now()
+          const from = new Map(
+            (Array.isArray(c.from) ? c.from : []).map((item) => [Number(item.id), item.status])
+          )
+          run('UPDATE memories SET deleted=1, updated_at=? WHERE id=?', now, merged.id)
+          for (const m of members) {
+            const back = from.get(m.id) === 'candidate' ? 'candidate' : 'active'
+            run('UPDATE memories SET status=?, updated_at=? WHERE id=?', back, now, m.id)
+          }
+          removed += 1
+          restored += members.length
+          continue
+        }
+        kept += 1
+      }
+    })
+    distill.changes = []
+    distill.dreamUndoAt = Date.now()
+    distill.dreamUndoRestored = restored
+    distill.dreamUndoKept = kept
+    saveState()
+    return { ok: true, restored, removed, kept }
   }
 
   async function distillState() {
@@ -2097,8 +2439,10 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     setDistill,
     runDistill,
     runDream,
+    undoDream,
     runDigest,
-    generateDigest
+    generateDigest,
+    activity
   }
 
   const handlers = {
@@ -2121,6 +2465,8 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     file,
     ui,
     recallConfig,
+    // 网关钩子成功注入一次续接包时调用（同一会话复用缓存块不重复计）
+    noteInjection,
     async call(name, args = {}) {
       const handler = handlers[name]
       if (!handler) throw new Error(`内置存储不支持工具 ${name}`)
@@ -2136,7 +2482,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
       return {
         ok: true,
         backend: 'embedded',
-        version: '0.6.0',
+        version: '0.7.0',
         port: null,
         tools: Object.keys(handlers).length,
         stats: statsValue

@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { createEmbeddedBackend } from '../lib/backend/embedded.mjs'
 import { getBackend, resetBackend } from '../lib/backend/index.mjs'
 import { onRequest, onResponse, reset as resetHooks } from '../hooks.mjs'
@@ -157,6 +160,11 @@ test('网关钩子 + 内置存储：注入默认关，开启后捕获的下一�
   assert.ok(out)
   assert.match(out.messages[0].content, /<memorysql-context>/)
   assert.match(out.messages[0].content, /登录一直失败/)
+  assert.equal(backend.ui.activity(7).totals.injected, 1)
+
+  // 同一会话后续请求复用缓存块，不再算一次注入
+  assert.ok(await onRequest(body2(), ctx('s1', {})))
+  assert.equal(backend.ui.activity(7).totals.injected, 1)
 
   // 只注入指定 agent：Claude Code 被挡，ZCode 放行
   await backend.ui.setDistill({ injectAgents: ['zcode'] })
@@ -170,6 +178,9 @@ test('网关钩子 + 内置存储：注入默认关，开启后捕获的下一�
   const desktop = await onRequest(body2(), ctx('s4', {}, 'Claude Desktop'))
   assert.ok(desktop)
   assert.match(desktop.messages[0].content, /<memorysql-context>/)
+
+  // s1 / s3 / s4 各注入一次；被挡掉的 s2 不计
+  assert.equal(backend.ui.activity(7).totals.injected, 3)
 })
 
 test('内置存储：结构化搜索（命中片段/会话 id）+ 删除会话 + 回写不复活', async (t) => {
@@ -351,6 +362,18 @@ test('后端工厂：默认 embedded，backend=app 走代理', async () => {
   resetBackend()
 })
 
+test('内置存储：多行记忆在续接包里保留换行，并声明项目文件优先', async (t) => {
+  const backend = await fresh()
+  t.after(() => backend.close())
+  const call = (name, args = {}) => backend.call(name, args)
+
+  await call('memory_write', { kind: 'fact', content: '第一行\n第二行\n\n第四行' })
+  const context = await call('memory_get_context', {})
+  assert.match(context, /- 第一行\n {2}第二行\n\n {2}第四行/)
+  assert.match(context, /AGENTS\.md/)
+  assert.match(context, /项目文件为准/)
+})
+
 test('内置存储：status 报告后端与统计', async (t) => {
   const backend = await fresh()
   t.after(() => backend.close())
@@ -359,4 +382,158 @@ test('内置存储：status 报告后端与统计', async (t) => {
   assert.equal(status.backend, 'embedded')
   assert.equal(status.port, null)
   assert.equal(status.stats.sessions, 0)
+})
+
+test('内置存储：记忆活动按日统计（新增/更新/清理/搜索/注入，页面搜索不计）', async (t) => {
+  const backend = await fresh()
+  t.after(() => backend.close())
+  const call = (name, args = {}) => backend.call(name, args)
+
+  await call('memory_write', { kind: 'fact', content: '活动统计：第一条', cwd: 'H:/work/demo' })
+  await call('memory_write', { kind: 'fact', content: '活动统计：第二条', cwd: 'H:/work/demo' })
+  const user = backend.ui.saveMemory({ text: '活动统计：手写', scope: 'global' })
+  assert.equal(user.ok, true)
+
+  // 页面自己的搜索不计入 agent 召回率
+  await call('memory_search', { query: '活动统计', format: 'json', internal: true })
+  const hits = JSON.parse(await call('memory_search', { query: '活动统计', format: 'json' }))
+  assert.ok(hits.some((hit) => hit.kind === 'memory'))
+
+  // 编辑 = 更新；归档 = 清理；删已归档的不重复计
+  const edited = backend.ui.saveMemory({
+    id: user.id,
+    text: '活动统计：手写（改）',
+    kind: 'fact',
+    scope: 'global'
+  })
+  assert.equal(edited.ok, true)
+  backend.ui.setMemoryStatus({ ids: [user.id], status: 'archived' })
+  backend.ui.removeMemories({ ids: [user.id] })
+  backend.noteInjection()
+  backend.noteInjection()
+
+  const activity = backend.ui.activity(7)
+  assert.equal(activity.days, 7)
+  assert.equal(activity.series.length, 7)
+  assert.equal(activity.series[6].day, activity.today)
+  assert.equal(activity.series[6].recorded, true)
+  assert.equal(activity.totals.created, 3)
+  assert.equal(activity.totals.createdBy.agent, 2)
+  assert.equal(activity.totals.createdBy.user, 1)
+  assert.equal(activity.totals.updated, 1)
+  assert.equal(activity.totals.cleaned, 1)
+  assert.deepEqual(activity.totals.cleanedBy, { you: 1 })
+  assert.equal(activity.totals.searches, 1)
+  assert.equal(activity.totals.found, 1)
+  assert.ok(activity.totals.recalled >= 1)
+  assert.equal(activity.totals.injected, 2)
+  assert.equal(activity.active, 2)
+  assert.ok(activity.used >= 1)
+
+  // 30 天窗口也成立；since 不晚于今天
+  const month = backend.ui.activity(30)
+  assert.equal(month.series.length, 30)
+  assert.ok(month.since <= month.today)
+})
+
+test('内置存储：开始统计前的新增按记忆自身日期回填（其余指标无历史）', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'memorysql-stats-'))
+  const first = await createEmbeddedBackend({ dataDir: dir })
+  await first.call('memory_write', { kind: 'fact', content: '十天前写的记忆' })
+  first.close()
+
+  // 把这条记忆的创建时间改到 10 天前，并清掉当天实时计数，模拟「升级前的老记忆」
+  const { DatabaseSync } = await import('node:sqlite')
+  const db = new DatabaseSync(path.join(dir, 'memory.db'))
+  db.prepare('UPDATE memories SET created_at = ?').run(Date.now() - 10 * 86400_000)
+  db.prepare('DELETE FROM memory_stats').run()
+  db.close()
+
+  const second = await createEmbeddedBackend({ dataDir: dir })
+  t.after(() => {
+    second.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  const activity = second.ui.activity(30)
+  assert.equal(activity.series.length, 30)
+  assert.equal(activity.totals.created, 1)
+  assert.equal(activity.totals.updated, 0)
+  assert.equal(activity.totals.searches, 0)
+  const backfilled = activity.series.find((day) => day.backfilled)
+  assert.ok(backfilled)
+  assert.equal(backfilled.recorded, false)
+  assert.equal(Object.values(backfilled.created).reduce((n, v) => n + v, 0), 1)
+  assert.equal(activity.series.filter((day) => day.recorded).length, 1)
+})
+
+test('内置存储：整理记忆可撤销；用户之后改过的合并结果保留', async (t) => {
+  const llm = {
+    async models() {
+      return [{ id: 'test/model', name: 'Test Model' }]
+    },
+    async resolveModel() {
+      return 'test/model'
+    },
+    async chat() {
+      return {
+        model: 'test/model',
+        content: JSON.stringify({
+          merge: [{ ids: [1, 2], text: '合并后的记忆', kind: 'fact' }],
+          archive: [{ id: 3, why: '已经过时' }]
+        })
+      }
+    }
+  }
+  const backend = await createEmbeddedBackend({ memory: true, llm })
+  t.after(() => backend.close())
+  const call = (name, args = {}) => backend.call(name, args)
+  const settle = async () => {
+    for (let i = 0; i < 100; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      const state = await backend.ui.distillState()
+      if (!state.running) return state
+    }
+    throw new Error('整理没有结束')
+  }
+
+  for (const text of ['记忆 A', '记忆 B', '记忆 C']) {
+    await call('memory_write', { kind: 'fact', content: text })
+  }
+  await backend.ui.setDistill({ model: 'test/model' })
+  backend.ui.runDream()
+  let state = await settle()
+  assert.equal(state.dreamError, '')
+  assert.equal(state.changes.length, 2)
+  assert.ok(state.changes.every((change) => Number.isFinite(change.at)))
+
+  const list = (status) => backend.ui.listMemories({ status, limit: 100 }).memories
+  assert.equal(list('active').filter((m) => m.source === 'llm-tidy').length, 1)
+  assert.equal(list('archived').filter((m) => m.status === 'archived').length, 1)
+  assert.equal(list('archived').filter((m) => m.status === 'superseded').length, 2)
+
+  const undone = backend.ui.undoDream()
+  assert.deepEqual(
+    { ok: undone.ok, restored: undone.restored, removed: undone.removed, kept: undone.kept },
+    { ok: true, restored: 3, removed: 1, kept: 0 }
+  )
+  assert.equal(list('active').length, 3)
+  assert.equal(list('archived').length, 0)
+  assert.equal((await backend.ui.distillState()).changes.length, 0)
+
+  // 再整理一次，然后用户编辑合并结果；撤销时整个合并保留，只恢复归档的那条
+  backend.ui.runDream()
+  state = await settle()
+  assert.equal(state.changes.length, 2)
+  const merged = list('active').find((m) => m.source === 'llm-tidy')
+  assert.ok(merged)
+  backend.ui.saveMemory({ id: merged.id, text: '我改过的合并结果', kind: 'fact', scope: 'global' })
+  const second = backend.ui.undoDream()
+  assert.equal(second.ok, true)
+  assert.equal(second.kept, 1)
+  assert.equal(second.restored, 1)
+  assert.equal(second.removed, 0)
+  const after = list('active')
+  assert.ok(after.some((m) => m.id === merged.id && m.text === '我改过的合并结果'))
+  assert.equal(after.filter((m) => m.status === 'active').length, 2)
 })

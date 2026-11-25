@@ -166,7 +166,8 @@ export function toolsFor(options = {}, backendPromise = null) {
     tools.write = {
       description:
         '【何时调用】用户表达了偏好/习惯、你们拍板了架构决策、或确认了一个以后还会用到的事实——当场记一条。\n' +
-        '写入 MemorySQL 长期记忆：默认全局；带 project/cwd 时写成项目记忆。一条只写一件事，内容相同会拒绝重复写入。',
+        '写入 MemorySQL 长期记忆：默认全局；带 project/cwd 时写成项目记忆。一条只写一件事，内容相同会拒绝重复写入。\n' +
+        '项目内的规则/约定优先写进项目自己的 AGENTS.md / CLAUDE.md 等指令文件；这里只记跨项目仍然成立的事实。',
       args: {
         type: 'object',
         properties: {

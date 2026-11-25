@@ -105,7 +105,9 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 
 - `projects` / `sessions` / `session_messages` / `memories`(字段与 MemorySQL 对齐；
   sessions 时间是**秒**，memories/projects.updated_at 是**毫秒**)；
-  v2 加 `source_session_id` / `why` / `distilled_at` / `distilled_count` 与 `project_digests`
+  v2 加 `source_session_id` / `why` / `distilled_at` / `distilled_count` 与 `project_digests`；
+  v3 加 `memory_stats`(每日计数，只存 metric/origin/count，不存正文)与
+  `meta.stats_since`(开始逐日统计的日期)
 - FTS5 trigram 外部内容表：`sessions_fts` / `messages_fts` / `memories_fts`，
   配 `AFTER INSERT/UPDATE/DELETE` 触发器同步
 - 索引：agent/project/scope/status/content
@@ -115,7 +117,7 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 
 | 工具 | embedded 行为 |
 |---|---|
-| `memory_get_context` | 全局/项目记忆 + 最近会话；**全新库返回空串**(钩子据此不注入) |
+| `memory_get_context` | 全局/项目记忆 + 最近会话；**全新库返回空串**(钩子据此不注入)；多行记忆保留换行，并声明项目自带 `AGENTS.md` 等指令文件优先 |
 | `memory_get_project_brief` | 记忆 + 会话 + 上一棒 tail + 收工汇报候选 |
 | `memory_get_project_digest` | **LLM 滚动总结优先**；没有则规则汇编(项目信息 + 最近会话 + 收工汇报待办) |
 | `memory_list_projects` | 项目 + 会话数 + 最近活跃；`format=json` |
@@ -151,6 +153,8 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
    缓存块，前缀稳定，prompt cache 不碎。
 7. 失败/超时/空结果 → `ctx.report('unavailable'/'empty')` + 返回 `undefined`，
    请求原样放行。内置后端是本地同步查询，通常毫秒级。
+8. 首次为某个 session 取到并注入成功后，embedded 记一次 `injected` 活动计数；
+   复用缓存块的后续请求不重复计(页面「注入会话」就是它)。
 
 ### 3.4 会话回写
 
@@ -202,9 +206,29 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 **记忆页**(`ui/` 的「记忆」标签)：
 
 - 状态分段(使用中 / 待确认 / 已归档；已归档含 superseded)、搜索、作用域筛选
-- 每行显示首行、作用域/标签/来源、kind 标签、锁定标记；展开可编辑文本/kind/
-  scope/项目/标签/why，确认/归档/恢复/删除/置顶
+- 每行显示首行、作用域/标签/来源、kind 标签、锁定标记、被召回次数/最近召回；
+  多行记忆折叠时首行 + `…`，展开后 `pre-wrap` 按原样换行
+- 展开可编辑文本/kind/scope/项目/标签/why，确认/归档/恢复/删除/置顶
 - 手动添加/编辑的记忆 `source='user'`、`locked=1`，整理永不改动
+
+**记忆活动**(`activity()` + `/api/activity`)：
+
+- `memory_stats(day, metric, origin, n)` 按**本地日期** UPSERT 累加；只存计数，
+  不存记忆正文。metric：`created` / `updated` / `cleaned` / `searches` / `found` /
+  `recalled` / `injected`
+- `created` 按来源分 `user` / `agent` / `inferred`：页面新增、`memory_write`、
+  `memory_log_progress`、旧蒸馏候选都算；整理合并出来的算 `updated`，不算新增
+- `updated`：页面编辑(内容/kind/scope/项目/标签/why/锁定有变化)、置顶变化、整理合并
+- `cleaned` 按执行者分 `you` / `tidy`：记忆从 active/candidate 离开(归档/删除/合并/
+  搁置)；删已归档的不重复计
+- `searches` / `found` / `recalled`：agent 的 `memory_search`(有结果次数 / 返回条数)；
+  `kind=session|message` 与页面自己的搜索(`internal:true`)不计入
+- `injected`：网关**首次**为某个会话注入续接包；复用缓存块不重复计
+- `meta.stats_since` 是开始逐日统计的日期；之前的日子只有 `created` 按
+  `memories.created_at` 回填(排除 `llm-tidy`)，其余指标没有历史
+- 页面五个卡片：新增(条/天)、召回率(found/searches)、更新率(updated/active)、
+  清理率(cleaned/active)、注入会话数；每个带 7/30 天 sparkline，点开看每日柱子，
+  hover/focus 显示当天明细
 
 **模型**：插件在 magpie 的 Bun 宿主里，直接请求本机网关
 `POST <gateway>/v1/chat/completions`(loopback 免 key)。项目总结和整理记忆共用：
@@ -227,23 +251,31 @@ magpie 窗口 ── page iframe ──► 插件服务 127.0.0.1:3488 ──►
 
 - 间隔：`dreamEveryHours`(默认 24 小时)，从上一次 `dreamt` 算起；刚从关闭切到打开时
   以 `dreamSince` 为起点；「立即整理」随时可跑
-- 每个作用域最多 120 条 active/candidate、`locked=0` 的记忆
+- 每个作用域最多 120 条 active/candidate、`locked=0` 的记忆；列表带
+  `used N×`(被召回次数)，供模型判断哪些还在用
 - 状态行始终显示上一次整理时间(关闭时也显示)，没有变更时显示「没有需要变更的记忆」
 - prompt 要求模型只做「合并说同一件事」和「归档不再成立」，返回
   `{merge:[{ids,text,kind}],archive:[{id,why}]}`；id 是列表序号，后端校验存在且未锁定
 - 合并：插一条 `source='llm-tidy'` 的 active 记忆，成员置 `superseded`；
   归档：置 `archived`；手写/置顶(`locked=1`)永不参与
-- 变更记在 `distill.json.changes` 供页面显示(暂不支持 Undo)
+- 变更记在 `distill.json.changes`(每条带 `at` 时间戳和原状态 `from`)，页面显示
+  「合并 N / 归档 M」
+- **撤销**(`undoDream` / `POST /api/dream/undo`)：只撤销最近一次整理，按原状态
+  恢复被合并/归档的条目、删掉合并出来的新记忆。严格校验「整理后没人动过」
+  (status/updated_at/locked/deleted/source 都对得上)才恢复；用户改过、置顶、删掉
+  或又归档过的整项保留，返回 `{restored, removed, kept}`，页面状态行说明保留了几项
 
 **旧「从对话学习」**：`runDistillJob`(会话蒸馏出候选记忆)仍保留在后端与
 `/api/distill/run`，`distill.json` 的 `on` 字段也还在，但页面不再暴露、定时器也不再
 自动跑；历史候选仍可在「待确认」查看/确认/归档。
 
-**迁移自愈**：schema v2 的补列/建表**每次启动都检查**，不只信
+**迁移自愈**：schema 的补列/建表**每次启动都检查**，不只信
 `meta.schema_version`。真机踩过：中间版本把版本写成 2 却没有执行 ALTER，
 之后按版本号跳过迁移，真库缺 `why/source_session_id/distilled_at`，
-记忆页报 `no such column: why`。现在 `hasColumn` 每次补齐，测试
-`test/schema.test.mjs` 锁住「版本=2 但缺列也能自愈」。
+记忆页报 `no such column: why`。现在 `hasColumn` 每次补齐；v3 的
+`memory_stats` 与 `stats_since` 也每次检查(已有库升级时 `stats_since=当天`，
+之前的新增从记忆自身日期回填)。测试 `test/schema.test.mjs` 锁住
+「版本=2 但缺列也能自愈」与幂等。
 
 ## 4. MemorySQL 应用侧改动(给 `backend: "app"` 用)
 
@@ -314,11 +346,38 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
   2→3、短列表跳过、`memory_list_sessions(format=json)`。
 - 未做:真实 agent 经 magpie 网关心跳的 E2E;`magpie web` 页面反代人工验收。
 
+2026-11-25（借鉴 magpie 当天的记忆更新）：
+
+- magpie 当天给 Memory 加了「活动统计」（`internal/memory/stats.go`：每日
+  新增/更新/清理/搜索/注入计数 + Memory 页四个卡片和 7/30 天趋势），并在此前加了
+  整理 Undo、多行记忆保持换行、项目指令文件优先。插件按同一套语义做了对应能力：
+  - `memory_stats` 表 + `activity()` + `/api/activity`；页面五张卡片（新增/召回率/
+    更新率/清理率/注入会话），7/30 天 sparkline 与每日柱子。调用方：`write` /
+    `log_progress` / 蒸馏候选 / 页面新增/编辑/置顶/归档/删除、MCP `memory_search`、
+    网关首次注入。页面搜索 `internal:true` 与 `kind=session|message` 不计召回率。
+  - 升级前只有 `created` 按 `memories.created_at` 回填（`llm-tidy` 排除），其余指标
+    从 `stats_since` 起算；只存计数，不存正文。
+  - 整理 Undo：`changes` 记 `at` 与 `from`，严格校验后恢复；用户之后改过/置顶/删除/
+    再归档的条目保留（`{restored,removed,kept}`）。
+  - 多行记忆：续接包按 `Indented` 思路保留行并缩进，整理 prompt 仍折成一行；
+    页面折叠显示首行 + `…`，展开 `pre-wrap`。续接包声明项目 `AGENTS.md` 等文件优先，
+    `memory_write` 描述也建议项目规则写进项目文件。
+- `node --test` **43 passed**（新增活动统计/回填、整理撤销、多行注入、注入计数）。
+- 浏览器验收（临时库 + 真实页面服务）：五张卡片与 sparkline、点开每日柱子、
+  7/30 天切换、同一会话再请求不重复计注入、多行记忆展开高度 3 行
+  (`white-space: pre-wrap`)、记忆行显示「召回 N 次 · 刚刚」。
+- 没照搬：magpie 的本地语义检索（模型下载/ONNX 不适合社区插件，嵌入式继续
+  FTS5+LIKE）、文件即记忆 + 多机同步（本插件是 SQLite，另属一套设计）、
+  候选 30 天过期清理（会删数据，先不做）、`memory_save` 的项目文件提示条
+  （只在工具描述和续接包里声明，不改写用户文件）。
+- 未做：真实 agent 经网关的多天活动数据（本地只用模拟请求验证计数）；
+  整理取消（在途一轮仍不可中断）。
+
 ## 7. 待办
 
 - 用真实 agent 跑一次「首轮注入 + 第二轮缓存命中」的网关 E2E(embedded + app 各一次)。
 - 内置存储的检索排序(现在是 bm25/LIKE + 最近时间，没有 MemorySQL 的语义检索)。
-- 蒸馏/整理的取消与 Undo(现在关掉开关不会中断在途的一轮)。
+- 蒸馏/整理的取消(现在关掉开关不会中断在途的一轮；Undo 已支持最近一次整理)。
 - 视反馈决定是否把 embedded 的 `capture` 做成可配置的「只捕获某些 agent」。
 - 发布 npm(`@logic647/tools-memorysql` 或 `@magpie-community/tools-memorysql`)；
   打 `magpie-plugin` topic / 提 community registry PR。

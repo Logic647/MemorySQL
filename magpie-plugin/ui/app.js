@@ -11,6 +11,7 @@ const state = {
   sess: { removing: null },
   search: { scope: '' },
   distill: null,
+  activity: { days: 7, data: null, open: null },
   poll: 0
 }
 
@@ -109,6 +110,15 @@ function firstLine(text) {
   return (line ?? '').trim()
 }
 
+// 折叠时只显示第一行；后面还有内容就加省略号（展开后按原样显示所有行）。
+function folded(text) {
+  const first = firstLine(text)
+  const more = String(text ?? '')
+    .split('\n')
+    .filter((line) => line.trim()).length > 1
+  return more ? `${first} …` : first
+}
+
 // ----- 状态 / 视图 ---------------------------------------------------------
 
 async function loadStatus() {
@@ -124,7 +134,7 @@ async function loadStatus() {
     setStatus(bits.join(' · '), 'ok')
     if (state.backend !== 'embedded') {
       notice('app 后端：记忆管理请在 MemorySQL 应用里操作；这里仍可查看项目与搜索。')
-      for (const sel of ['#view-memory .controls', '#view-memory .mem-bar']) {
+      for (const sel of ['#view-memory .controls', '#view-memory .mem-bar', '#activityPanel']) {
         const node = $(sel)
         if (node) node.hidden = true
       }
@@ -132,7 +142,7 @@ async function loadStatus() {
       if (list) list.replaceChildren(el('div', 'mem-none', 'app 后端：请到 MemorySQL 应用里管理记忆。'))
     } else {
       notice('')
-      for (const sel of ['#view-memory .controls', '#view-memory .mem-bar']) {
+      for (const sel of ['#view-memory .controls', '#view-memory .mem-bar', '#activityPanel']) {
         const node = $(sel)
         if (node) node.hidden = false
       }
@@ -157,6 +167,7 @@ function switchView(view) {
   if (view === 'memory' && state.backend === 'embedded') {
     void loadDistill()
     void loadMemory()
+    void loadActivity()
   }
   if (view === 'projects') void loadProjects()
   if (view === 'search') {
@@ -230,12 +241,22 @@ function renderDistill() {
   const changes = Array.isArray(d.changes) ? d.changes : []
   const merged = changes.filter((c) => c.action === 'merge').length
   const archived = changes.length - merged
+  const undoBtn = $('#dreamUndo')
+  if (undoBtn) {
+    // 旧版本写下的 changes 没有 at，无法安全撤销：只有带时间戳的才显示按钮。
+    undoBtn.hidden = !changes.some((c) => Number.isFinite(c.at))
+    undoBtn.disabled = !!d.running
+  }
   let dreamLine
   let dreamBad = false
   if (dreamRunning) dreamLine = '整理中…'
   else if (d.dreamError) {
     dreamLine = `上次失败：${d.dreamError}`
     dreamBad = true
+  } else if (!changes.length && d.dreamUndoAt) {
+    dreamLine = `已撤销上次整理 · 恢复 ${d.dreamUndoRestored || 0} 条${
+      d.dreamUndoKept ? ` · ${d.dreamUndoKept} 项因你之后改过而保留` : ''
+    }`
   } else if (d.dreamt) {
     dreamLine = `上次整理 ${ago(d.dreamt)}${
       merged || archived ? ` · 合并 ${merged} 条 / 归档 ${archived} 条` : ' · 没有需要变更的记忆'
@@ -344,6 +365,7 @@ async function loadDistill() {
     renderDistill()
     if (wasRunning && !state.distill.running) {
       if (state.view === 'memory') void loadMemory()
+      void loadActivity()
       void loadStatus()
     }
     if (state.distill.running) {
@@ -376,6 +398,231 @@ async function runJob(path) {
     state.poll = setTimeout(() => void loadDistill(), 500)
   } catch (err) {
     notice(`启动失败：${err.message}`)
+  }
+}
+
+// ----- 记忆活动 -----------------------------------------------------------
+
+function originName(key) {
+  return { user: '你', agent: 'agent', inferred: '从会话学到', imported: '导入', you: '你', tidy: '整理', expiry: '过期' }[key] ?? key
+}
+
+const ACTIVITY_TILES = [
+  {
+    key: 'created',
+    label: '新增记忆',
+    def: '每天新增的记忆：你添加的、agent 写入的、从会话学到的。同样的内容再次保存算更新，不算新增。',
+    pick: (day) => Object.values(day.created || {}).reduce((n, v) => n + v, 0),
+    value: (d) => `${(d.totals.created / d.days).toFixed(1)} 条/天`,
+    sub: (d) =>
+      `${d.totals.created} 条 · 你 ${d.totals.createdBy.user || 0} / agent ${
+        (d.totals.createdBy.agent || 0) +
+        (d.totals.createdBy.inferred || 0) +
+        (d.totals.createdBy.imported || 0)
+      }`
+  },
+  {
+    key: 'recall',
+    label: '召回率',
+    def: 'agent 搜索记忆时至少找到一条的次数占比。页面自己的搜索和翻看记忆不算，否则会把指标冲淡。',
+    pick: (day) => (day.searches > 0 ? day.found / day.searches : null),
+    scale: 1,
+    value: (d) =>
+      d.totals.searches ? `${Math.round((d.totals.found / d.totals.searches) * 100)}%` : '还没有搜索',
+    sub: (d) =>
+      d.totals.searches
+        ? `${d.totals.found}/${d.totals.searches} 次有结果 · 返回 ${d.totals.recalled} 条`
+        : 'agent 还没搜过记忆'
+  },
+  {
+    key: 'updated',
+    label: '更新率',
+    def: '更新次数与现在使用中的记忆数之比：内容/标签/置顶被改、手写编辑、整理合并。只改状态不算更新。',
+    pick: (day) => (day.recorded ? day.updated : null),
+    value: (d) =>
+      d.active
+        ? `${Math.round((d.totals.updated / d.active) * 100)}%`
+        : d.totals.updated
+          ? `${d.totals.updated} 次`
+          : '—',
+    sub: (d) => `${d.totals.updated} 次更新 · ${d.active} 条使用中`
+  },
+  {
+    key: 'cleaned',
+    label: '清理率',
+    def: '离开使用的记忆与现在使用中的记忆数之比：你归档/删除、整理合并或搁置。删已归档的不重复计。',
+    pick: (day) => (day.recorded ? Object.values(day.cleaned || {}).reduce((n, v) => n + v, 0) : null),
+    value: (d) =>
+      d.active
+        ? `${Math.round((d.totals.cleaned / d.active) * 100)}%`
+        : d.totals.cleaned
+          ? `${d.totals.cleaned} 条`
+          : '—',
+    sub: (d) => `${d.totals.cleaned} 条清理 · ${d.active} 条使用中`
+  },
+  {
+    key: 'injected',
+    label: '注入会话',
+    def: '网关第一次把续接包注入某个会话算一次；同一会话后续请求复用同一个缓存块，不重复计。',
+    pick: (day) => day.injected,
+    value: (d) => `${d.totals.injected} 个会话`,
+    sub: (d) => `本周期召回 ${d.used} 条记忆`
+  }
+]
+
+function activityDayText(key, day) {
+  if ((key === 'updated' || key === 'cleaned') && !day.recorded) {
+    return '开始统计前没有记录'
+  }
+  if (key === 'created') {
+    const parts = Object.entries(day.created || {})
+      .filter(([, n]) => n > 0)
+      .map(([origin, n]) => `${originName(origin)} ${n}`)
+    const total = Object.values(day.created || {}).reduce((n, v) => n + v, 0)
+    return `${total} 条新记忆${parts.length ? `（${parts.join(' / ')}）` : ''}`
+  }
+  if (key === 'recall') {
+    return day.searches
+      ? `${day.found}/${day.searches} 次有结果 · 返回 ${day.recalled} 条`
+      : '没有 agent 搜索'
+  }
+  if (key === 'updated') return `${day.updated} 次更新`
+  if (key === 'cleaned') {
+    const parts = Object.entries(day.cleaned || {})
+      .filter(([, n]) => n > 0)
+      .map(([origin, n]) => `${originName(origin)} ${n}`)
+    const total = Object.values(day.cleaned || {}).reduce((n, v) => n + v, 0)
+    return `${total} 条离开使用${parts.length ? `（${parts.join(' / ')}）` : ''}`
+  }
+  return `${day.injected} 个会话注入`
+}
+
+function sparkline(series, meta) {
+  const box = el('div', 'spark')
+  const values = series.map((day) => meta.pick(day))
+  const max = meta.scale ?? Math.max(...values.filter((v) => typeof v === 'number'), 1)
+  series.forEach((day, i) => {
+    const bar = document.createElement('i')
+    const value = values[i]
+    if (typeof value !== 'number') {
+      bar.className = 'zero'
+      bar.style.background = 'transparent'
+      bar.style.height = '2px'
+      bar.title = `${day.day} · 无数据`
+    } else {
+      bar.style.height = value > 0 ? `${Math.max(3, Math.round((value / max) * 24))}px` : '2px'
+      if (value === 0) bar.className = 'zero'
+      bar.title = `${day.day} · ${activityDayText(meta.key, day)}`
+    }
+    if (i === series.length - 1) bar.classList.add('today')
+    box.append(bar)
+  })
+  return box
+}
+
+function renderActivityChart() {
+  const box = $('#activityChart')
+  if (!box) return
+  const data = state.activity.data
+  const meta = ACTIVITY_TILES.find((item) => item.key === state.activity.open)
+  if (!data || !meta) {
+    box.hidden = true
+    box.replaceChildren()
+    return
+  }
+  box.hidden = false
+  box.replaceChildren()
+  const readout = el('p', 'activity-readout', meta.def)
+  const values = data.series.map((day) => meta.pick(day))
+  const max = meta.scale ?? Math.max(...values.filter((v) => typeof v === 'number'), 1)
+  const bars = el('div', 'activity-bars')
+  data.series.forEach((day, i) => {
+    const value = values[i]
+    const bar = document.createElement('button')
+    bar.type = 'button'
+    bar.title = `${day.day} · ${activityDayText(meta.key, day)}`
+    bar.setAttribute('aria-label', bar.title)
+    const fill = document.createElement('i')
+    if (typeof value !== 'number') {
+      bar.className = 'empty'
+      bar.tabIndex = -1
+    } else {
+      fill.style.height = value > 0 ? `${Math.max(3, Math.round((value / max) * 118))}px` : '2px'
+      if (value === 0) fill.className = 'zero'
+    }
+    if (i === data.series.length - 1) bar.classList.add('today')
+    bar.append(fill)
+    const show = () => {
+      readout.textContent = `${day.day} · ${activityDayText(meta.key, day)}`
+    }
+    const reset = () => {
+      readout.textContent = meta.def
+    }
+    bar.addEventListener('mouseenter', show)
+    bar.addEventListener('focus', show)
+    bar.addEventListener('mouseleave', reset)
+    bar.addEventListener('blur', reset)
+    bars.append(bar)
+  })
+  const axis = el('div', 'activity-axis')
+  axis.append(el('span', '', data.series[0].day.slice(5)))
+  if (data.series.length > 2) {
+    axis.append(el('span', '', data.series[Math.floor(data.series.length / 2)].day.slice(5)))
+  }
+  axis.append(el('span', '', data.series[data.series.length - 1].day.slice(5)))
+  const note = el('p', 'activity-note')
+  if (data.series.some((day) => day.backfilled)) {
+    note.textContent = `从 ${data.since} 开始逐日统计；之前只有「新增」按记忆自身的日期回填，其余指标没有历史。`
+  } else if (data.series.every((day) => !day.recorded)) {
+    note.textContent = '还没有逐日统计；过几天再来看趋势。'
+  } else {
+    note.textContent = '只存计数，不存记忆内容；数据留在本机。'
+  }
+  box.append(readout, bars, axis, note)
+}
+
+function renderActivity() {
+  const wrap = $('#activityTiles')
+  if (!wrap) return
+  const data = state.activity.data
+  wrap.replaceChildren()
+  if (!data) {
+    wrap.append(el('div', 'mem-none', '正在读取…'))
+    return
+  }
+  const since = $('#activitySince')
+  const bits = [`近 ${data.days} 天`, `使用中 ${data.active} 条`]
+  if (data.candidate) bits.push(`待确认 ${data.candidate} 条`)
+  if (data.series.some((day) => !day.recorded)) bits.push(`${data.since} 起逐日统计`)
+  since.textContent = bits.join(' · ')
+  for (const meta of ACTIVITY_TILES) {
+    const tile = document.createElement('button')
+    tile.type = 'button'
+    tile.className = `stat-tile${state.activity.open === meta.key ? ' active' : ''}`
+    tile.title = meta.def
+    tile.append(
+      el('span', 'stat-label', meta.label),
+      el('strong', 'stat-value', meta.value(data)),
+      el('span', 'stat-sub', meta.sub(data)),
+      sparkline(data.series, meta)
+    )
+    tile.addEventListener('click', () => {
+      state.activity.open = state.activity.open === meta.key ? null : meta.key
+      renderActivity()
+    })
+    wrap.append(tile)
+  }
+  renderActivityChart()
+}
+
+async function loadActivity() {
+  if (state.backend !== 'embedded') return
+  try {
+    state.activity.data = await api(`api/activity?days=${state.activity.days}`)
+    renderActivity()
+  } catch (err) {
+    const wrap = $('#activityTiles')
+    if (wrap) wrap.replaceChildren(el('div', 'mem-none', `活动读取失败：${err.message}`))
   }
 }
 
@@ -436,11 +683,14 @@ function memRow(memory) {
   const row = el('div', `mem${open ? ' open' : ''}`)
   const head = el('div', 'mem-head')
   const main = el('div', 'mem-main')
-  main.append(el('div', 'mem-name', open ? memory.text : firstLine(memory.text)))
+  main.append(el('div', `mem-name${open ? ' open' : ''}`, open ? memory.text : folded(memory.text)))
   const scope = memory.scope === 'global' ? '全局' : memory.project ? `项目 · ${memory.project}` : '项目'
   const bits = [scope, ...(memory.tags || []).map((t) => `#${t}`)]
   if (memory.source === 'user') bits.push('手动')
   else if (memory.agent) bits.push(`来自 ${memory.agent}`)
+  if (memory.accessCount > 0) {
+    bits.push(`召回 ${memory.accessCount} 次${memory.lastAccessAt ? ` · ${ago(memory.lastAccessAt)}` : ''}`)
+  }
   main.append(el('div', 'mem-sub', bits.join(' · ')))
   const tags = el('div', 'mem-tags')
   if (memory.source === 'user') tags.append(el('span', 'tag lock', '手写'))
@@ -642,6 +892,7 @@ function memDetail(memory) {
           state.mem.open = null
           state.mem.draft = null
           await loadMemory()
+          void loadActivity()
         } catch (err) {
           notice(`保存失败：${err.message}`)
         }
@@ -670,6 +921,7 @@ async function act(path, body) {
   try {
     await api(path, { method: 'POST', body })
     await loadMemory()
+    void loadActivity()
   } catch (err) {
     notice(`操作失败：${err.message}`)
   }
@@ -1088,6 +1340,7 @@ function wire() {
     if (state.view === 'memory') {
       await loadDistill()
       await loadMemory()
+      await loadActivity()
     } else if (state.view === 'projects') {
       await loadProjects()
       if (state.selected) await loadTab()
@@ -1126,6 +1379,30 @@ function wire() {
   })
   $('#digestRun').addEventListener('click', () => void runJob('api/digest/run'))
   $('#dreamRun').addEventListener('click', () => void runJob('api/dream/run'))
+  $('#dreamUndo').addEventListener('click', async () => {
+    try {
+      const res = await api('api/dream/undo', { method: 'POST', body: {} })
+      notice(
+        `已撤销上次整理：恢复 ${res.restored || 0} 条记忆${
+          res.removed ? ` · 删除 ${res.removed} 条合并结果` : ''
+        }${res.kept ? ` · ${res.kept} 项因你之后改过而保留` : ''}。`
+      )
+      await loadDistill()
+      await loadMemory()
+      await loadActivity()
+    } catch (err) {
+      notice(`撤销失败：${err.message}`)
+    }
+  })
+  for (const button of document.querySelectorAll('#activityRange button')) {
+    button.addEventListener('click', () => {
+      state.activity.days = Number(button.dataset.days) === 30 ? 30 : 7
+      for (const other of document.querySelectorAll('#activityRange button')) {
+        other.classList.toggle('active', other === button)
+      }
+      void loadActivity()
+    })
+  }
   $('#memAdd').addEventListener('click', () => {
     state.mem.open = 'new'
     state.mem.draft = null

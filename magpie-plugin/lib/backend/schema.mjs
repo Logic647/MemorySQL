@@ -3,7 +3,7 @@
 //
 // 时间口径与 MemorySQL 保持一致：sessions 的时间是 **unix 秒**，
 // projects/memories.updated_at 是 **毫秒**。
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 const TABLES = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -122,6 +122,26 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
 END;
 `
 
+export function localDay(at = Date.now()) {
+  const d = new Date(at)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+// 记忆活动：只存计数，从不存记忆正文。按本地日期逐日累加。
+// metric: created / updated / cleaned / searches / found / recalled / injected
+// origin: created 的由谁（user/agent/inferred）、cleaned 的由谁（you/agent/tidy/expiry）
+const STATS = `
+CREATE TABLE IF NOT EXISTS memory_stats (
+  day    TEXT NOT NULL,
+  metric TEXT NOT NULL,
+  origin TEXT NOT NULL DEFAULT '',
+  n      INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, metric, origin)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_stats_day ON memory_stats(day);
+`
+
 const DIGESTS = `
 CREATE TABLE IF NOT EXISTS project_digests (
   id               INTEGER PRIMARY KEY,
@@ -173,7 +193,17 @@ export function migrate(db) {
     db.exec('ALTER TABLE memories ADD COLUMN why TEXT')
   }
   db.exec(DIGESTS)
+  // v3 记忆活动统计：建表每次检查（自愈），第一次升级时记下从哪天开始逐日计数；
+  // 之前的日子（只有「新增」能从记忆自身的 created_at 回填）在读取时回填。
+  db.exec(STATS)
+  const since = db.prepare("SELECT value FROM meta WHERE key = 'stats_since'").get()
+  if (!since) {
+    db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('stats_since', ?)").run(localDay())
+  }
   if (current < 2) {
     db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '2')").run()
+  }
+  if (current < 3) {
+    db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '3')").run()
   }
 }

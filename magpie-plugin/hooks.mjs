@@ -138,7 +138,7 @@ function bindCapture(body, ctx, options) {
 
 async function contextBlock(ctx, options, key, backend) {
   const hit = blocks.get(key)
-  if (hit && Date.now() - hit.at < BLOCK_TTL) return { text: hit.text }
+  if (hit && Date.now() - hit.at < BLOCK_TTL) return { text: hit.text, cached: true }
   const text = await backend.call(
     'memory_get_context',
     {
@@ -150,7 +150,7 @@ async function contextBlock(ctx, options, key, backend) {
   )
   if (!text || !text.trim()) return { empty: true }
   blocks.set(key, { text, at: Date.now() })
-  return { text }
+  return { text, cached: false }
 }
 
 export async function onRequest(body, ctx) {
@@ -188,6 +188,11 @@ export async function onRequest(body, ctx) {
     if (bytes === 0) {
       ctx.report?.('skipped')
       return undefined
+    }
+    // 只计「首次为这个会话取到并注入」的次数；同一会话后续请求复用缓存块
+    // 不算新注入。页面上的「注入」数字据此统计，不是每条请求都 +1。
+    if (got.cached === false && typeof backend.noteInjection === 'function') {
+      backend.noteInjection()
     }
     ctx.report?.('ready', bytes)
     // 钩子拿到的是请求副本；必须把改动后的 body 返回去，否则原地修改会被丢弃

@@ -176,6 +176,13 @@ async function api(req, res, url, options, backendPromise) {
       if (!requireUi()) return
       return json(res, 200, ui.pinMemory(body))
     }
+    if (url.pathname === '/api/activity') {
+      if (!requireUi()) return
+      return json(res, 200, {
+        ok: true,
+        ...ui.activity(clamp(q.get('days'), 7, 1, 400))
+      })
+    }
     if (url.pathname === '/api/distill') {
       if (!requireUi()) return
       if (method === 'GET') return json(res, 200, { ok: true, ...(await ui.distillState()) })
@@ -188,6 +195,10 @@ async function api(req, res, url, options, backendPromise) {
     if (url.pathname === '/api/dream/run' && method === 'POST') {
       if (!requireUi()) return
       return json(res, 200, ui.runDream())
+    }
+    if (url.pathname === '/api/dream/undo' && method === 'POST') {
+      if (!requireUi()) return
+      return json(res, 200, ui.undoDream())
     }
     if (url.pathname === '/api/digest/run' && method === 'POST') {
       if (!requireUi()) return
@@ -235,7 +246,12 @@ async function api(req, res, url, options, backendPromise) {
       if (agent) args.agent = agent
       if (backend.kind === 'embedded') {
         // 页面要结构化命中（会话 id / 命中片段），agent 工具仍用文本输出。
-        const text = await backend.call('memory_search', { ...args, format: 'json' }, { timeoutMs: 12_000 })
+        // internal: 页面搜索不计入「召回率」（那是 agent 搜索的指标）。
+        const text = await backend.call(
+          'memory_search',
+          { ...args, format: 'json', internal: true },
+          { timeoutMs: 12_000 }
+        )
         let hits = []
         try {
           hits = JSON.parse(text || '[]')
