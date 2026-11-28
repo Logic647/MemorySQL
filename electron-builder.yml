@@ -44,6 +44,13 @@ extraResources:
 # 关闭重复重建以避免构建期再下载工具链
 npmRebuild: false
 
+# macOS 未配正式 Apple 证书时,由这个 afterPack 钩子补做**完整的 ad-hoc 签名**
+# (codesign --sign -)并立即 `codesign --verify --deep --strict` 校验。
+# 不做这一步的话,产物缺 _CodeSignature 但可执行文件带残缺 adhoc 头,
+# macOS 15+/Apple Silicon 会把浏览器下载的包判成「已损坏」,连「仍要打开」入口
+# 都不给(2026-11-28 Apple Silicon 实测)。检测到 CSC_LINK 时钩子自动跳过。
+afterPack: ./scripts/adhoc-sign-mac.mjs
+
 # 自动更新:electron-updater 读 GitHub Releases 的 latest.yml;
 # NSIS 差分更新靠 .exe.blockmap。发版流程见 docs/RELEASE.md
 publish:
@@ -132,11 +139,12 @@ mac:
     - "!node_modules/fastembed/**"
     - "!node_modules/@huggingface/**"
     - "!node_modules/@anush008/**"
-  # 未签名:没有 Apple Developer ID 就签不了。CI 上把 identity 显式置 null,
-  # 免得 electron-builder 去翻钥匙串里不存在的证书。
-  # 代价是首次启动 Gatekeeper 会拦,用户需「右键 -> 打开」或
-  #   xattr -dr com.apple.quarantine /Applications/MemorySQL.app
-  # 这条已写进 README 与发版说明。要正式签名见 docs/RELEASE.md。
+  # 未配置 Apple Developer ID:electron-builder 不做签名(identity: null +
+  # CI 的 CSC_IDENTITY_AUTO_DISCOVERY=false)。**但产物不能留残缺签名** ——
+  # 由上面的 afterPack 钩子(scripts/adhoc-sign-mac.mjs)补做完整的 ad-hoc 签名
+  # 并通过 codesign --verify --deep --strict,否则 macOS 15+/Apple Silicon 会
+  # 把浏览器下载的包判成「已损坏」,连「设置 → 隐私与安全性 → 仍要打开」都不给。
+  # 用户侧说明见 README;转正式签名 + 公证的注意事项见 docs/RELEASE.md。
   identity: null
   target:
     # dmg 给人装;zip 是 electron-updater 在 macOS 上的更新载体 ——

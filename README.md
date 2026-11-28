@@ -18,8 +18,11 @@
 ---
 
 > [!NOTE]
-> **macOS 包未签名**:首次启动 Gatekeeper 会拦下未验证的应用。选「**右键 → 打开**」确认一次即可,之后正常双击启动。
-> 不想每次都这样,可在终端执行一次:
+> **macOS 包未做 Apple 公证**(没有 Developer ID,使用 ad-hoc 签名,已通过
+> `codesign --verify --deep --strict` 校验)。首次双击不会报「已损坏」,而是提示
+> 「**Apple 无法验证“MemorySQL”是否包含恶意软件**」:点「完成」,再到
+> **系统设置 → 隐私与安全性** 底部点「**仍要打开**」确认一次,之后正常双击启动。
+> 想跳过这一步,也可以在终端执行一次:
 > 
 > ```bash
 > xattr -dr com.apple.quarantine /Applications/MemorySQL.app

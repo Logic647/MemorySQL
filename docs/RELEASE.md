@@ -31,9 +31,24 @@
 
 ## macOS 发布注意事项
 
-- **未签名**:目前没有 Apple Developer ID,`electron-builder.yml` 里 `mac.identity: null`。
-  首次启动 Gatekeeper 会拦,用户需「右键 → 打开」或执行
-  `xattr -dr com.apple.quarantine /Applications/MemorySQL.app`。README 顶部已写明。
+- **无 Apple 证书,但有完整 ad-hoc 签名** ⚠️(2026-11-28 Apple Silicon 实测后补)
+  目前没有 Apple Developer ID,`electron-builder.yml` 里 `mac.identity: null` +
+  CI 的 `CSC_IDENTITY_AUTO_DISCOVERY: 'false'` 让 electron-builder **完全跳过签名**。
+  这会产生一个致命组合:产物 `Contents/` 下缺 `_CodeSignature`,而 Electron 可执行文件
+  仍带编译期的残缺 `adhoc,linker-signed` 头 → `codesign --verify --deep --strict` 报
+  「code has no resources but signature indicates they must be present」;新版 macOS
+  会把「quarantine + 残缺签名」判成**「已损坏,应移到废纸篓」**,连
+  「系统设置 → 隐私与安全性 → 仍要打开」的入口都不给。
+
+  现在由 `afterPack: ./scripts/adhoc-sign-mac.mjs` 在打包后补做**完整的 ad-hoc 签名**
+  (逐个签 `app.asar.unpacked` 里的 `.node`/`.dylib` → `codesign --force --deep --sign -` 整个 .app),
+  **并立即 `codesign --verify --deep --strict` 校验,失败即让 mac job 失败** ——
+  残缺包不会再发出去。用户侧看到的是正常的「Apple 无法验证」提示,可在图形界面点「仍要打开」。
+  README 顶部已写明;`xattr -dr com.apple.quarantine /Applications/MemorySQL.app` 仍是终端捷径。
+  - **绝对不要给 ad-hoc 包加 `--options runtime`(Hardened Runtime)**:
+    运行时加载 `better-sqlite3`、`sqlite-vec`(vec0.dylib)与动态下载的
+    `native-runtime-darwin-*.zip`(onnxruntime-node),没有
+    `com.apple.security.cs.disable-library-validation` 会直接崩在动态库加载。
 - **dmg 与 zip 缺一不可**:dmg 给人装,**zip 才是 electron-updater 替换用的载荷**。
   只发 dmg 的话 mac 用户装上之后再也收不到自动更新,且**没有任何报错**。
 - **两个架构分别出包**:`macos-14`(arm64)与 `macos-13`(x64)各出一个,不做 universal。
@@ -83,6 +98,13 @@
      `CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`
   2. `electron-builder.yml` 删掉 `identity: null`,补 `notarize: true` 与 `hardenedRuntime: true`
   3. CI 里去掉 `CSC_IDENTITY_AUTO_DISCOVERY: 'false'`
+     (`scripts/adhoc-sign-mac.mjs` 检测到 `CSC_LINK` 会自动跳过,不用改钩子)
+
+  ⚠️ 开启 `hardenedRuntime: true` 时**必须同时提供 `build/entitlements.mac.plist`**,
+  至少包含:`com.apple.security.cs.allow-jit`、
+  `com.apple.security.cs.allow-unsigned-executable-memory`、
+  `com.apple.security.cs.disable-library-validation`。否则运行时加载 `vec0.dylib`
+  与动态下载的 `native-runtime` 会被 Hardened Runtime 拦截闪退。
 
   转完后 mac 用户双击即开,不再有 Gatekeeper 提示。
 

@@ -4,6 +4,38 @@
 
 ---
 
+## 2026-11-28 · macOS「已损坏无法打开」修复:补完整 Ad-Hoc 签名(未发版)
+
+**问题**(另一 agent 在 Apple Silicon 实测):macOS 包下载后双击提示
+「已损坏,应移到废纸篓」,**连「系统设置 → 隐私与安全性 → 仍要打开」都不给**。
+根因是 `mac.identity: null` + CI `CSC_IDENTITY_AUTO_DISCOVERY=false` 让
+electron-builder 完全跳过签名:产物 `Contents/` 缺 `_CodeSignature`,而 Electron
+可执行文件仍带编译期的残缺 `adhoc,linker-signed` 头 → `codesign --verify --deep
+--strict` 报「code has no resources but signature indicates they must be present」;
+macOS 15+/Apple Silicon 把「quarantine + 残缺签名」判成**损坏**而非「未验证开发者」。
+
+**修复**:
+- 新增 `scripts/adhoc-sign-mac.mjs`(afterPack 钩子):`xattr -cr` 清扩展属性 →
+  逐个签 `app.asar.unpacked` 里的 `.node`/`.dylib` → `codesign --force --deep
+  --sign -` 整个 .app → **`codesign --verify --deep --strict` 校验,失败即让 mac
+  job 失败**(残缺包不会再发出去)。只在 darwin 且没有 `CSC_LINK` 时执行,将来接正式
+  证书自动让位。
+- `electron-builder.yml` 挂 `afterPack: ./scripts/adhoc-sign-mac.mjs`,更新
+  `identity: null` 注释。
+- **刻意不加 `--options runtime`(Hardened Runtime)**:运行时要加载 better-sqlite3、
+  sqlite-vec(vec0.dylib)与动态下载的 native-runtime(onnxruntime),没有
+  `disable-library-validation` 会崩在动态库加载。
+- README 的 macOS 提示更新:删掉新版 macOS 已移除的「右键 → 打开」,改为
+  「点完成 → 系统设置 → 隐私与安全性 → 仍要打开」;`xattr` 命令保留作捷径。
+- `docs/RELEASE.md` 补 ad-hoc 签名说明,以及**转正式签名时开 `hardenedRuntime: true`
+  必须同时提供含 `allow-jit` / `allow-unsigned-executable-memory` /
+  `disable-library-validation` 的 `build/entitlements.mac.plist`**,否则同样闪退。
+
+**验证**:`node --check scripts/adhoc-sign-mac.mjs`;新增 `test/mac-adhoc-sign.test.ts`
+5 条护栏(钩子已挂载/必须 verify/不许加 --options runtime/只在 darwin 且无证书时执行/
+先签原生二进制);vitest **735/739**(4 skip)、typecheck 0。**mac 侧实际生效需等下一次
+CI 的 package job 日志出现 `[adhoc-sign-mac] Verified ad-hoc signature`**。
+
 ## 2026-11-23 · v0.7.9 已发版
 
 **https://github.com/Logic647/MemorySQL/releases/tag/v0.7.9**(20 资产,三清单公网 200,
