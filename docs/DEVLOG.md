@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-11-28 · v0.7.10 已发版
+
+**https://github.com/Logic647/MemorySQL/releases/tag/v0.7.10**(20 资产,三清单公网 200,
+mac 双架构已合并,`latest.yml` 声明 size 与 exe 一致 104,384,215 B)。
+tag `87a5972`,CI tag run **46156289243 6/6 全绿**。
+
+唯一内容 = 上一条(macOS ad-hoc 签名修复)。**两个 mac job 的日志确认生效**:
+arm64 / x64 各 `[adhoc-sign-mac] native binaries: 3` + `Verified ad-hoc signature`,
+`codesign --verify` 输出 `valid on disk` / `satisfies its Designated Requirement`。
+因此本版之后 mac 用户下载不再看到「已损坏」,改为正常的「Apple 无法验证」+ 设置里「仍要打开」。
+
 ## 2026-11-28 · macOS「已损坏无法打开」修复:补完整 Ad-Hoc 签名(未发版)
 
 **问题**(另一 agent 在 Apple Silicon 实测):macOS 包下载后双击提示
