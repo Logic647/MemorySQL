@@ -33,8 +33,11 @@ macOS 15+/Apple Silicon 把「quarantine + 残缺签名」判成**损坏**而非
 
 **验证**:`node --check scripts/adhoc-sign-mac.mjs`;新增 `test/mac-adhoc-sign.test.ts`
 5 条护栏(钩子已挂载/必须 verify/不许加 --options runtime/只在 darwin 且无证书时执行/
-先签原生二进制);vitest **735/739**(4 skip)、typecheck 0。**mac 侧实际生效需等下一次
-CI 的 package job 日志出现 `[adhoc-sign-mac] Verified ad-hoc signature`**。
+先签原生二进制);vitest **735/739**(4 skip)、typecheck 0。
+**CI 实测通过**(main run `46154840249`,6/6 全绿):两个 mac job 的日志都出现
+`[adhoc-sign-mac] native binaries: 3` 与 `Verified ad-hoc signature`,
+`codesign --verify` 输出 `valid on disk` / `satisfies its Designated Requirement`。
+**注意:对已发布的 0.7.9 安装包不生效,需下一次发版(mac 用户才拿得到修复)。**
 
 ## 2026-11-23 · v0.7.9 已发版
 
