@@ -2533,8 +2533,9 @@ Leave out anything you would not change. If nothing should change, answer {}.`
         }
         kept += 1
       }
-      // 只保留最近一次撤销；记录本身留在库里作审计，不再可撤。
-      run('UPDATE tidy_changes SET undone = 1 WHERE undone = 0')
+      // 只标记本次 run；更早的撤销记录保留，必要时还能继续往前撤。
+      const runId = changes[0]?.runId
+      if (runId) run('UPDATE tidy_changes SET undone = 1 WHERE run_id = ?', runId)
     })
     distill.changes = []
     distill.dreamUndoAt = Date.now()

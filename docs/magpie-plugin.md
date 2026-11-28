@@ -378,7 +378,8 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
 - **整理撤销改存库**：新表 `tidy_changes`（schema v4）在每次合并/归档的同一事务里记
   `run_id/action/ids/from/at`；后面的作用域失败、宿主重启、`distill.json` 损坏都拆不开
   改了什么和怎么撤。不再 `slice(0,200)`，无变更的一轮也不会清掉上一轮的撤销。
-  `undoDream()` 从库里取最近未撤销的 run，恢复后统一标记 `undone=1`；页面用
+  `undoDream()` 从库里取最近未撤销的 run，恢复后只标记本 run `undone=1`（更早的记录留着，
+  可继续往前撤）；页面用
   `distillState().undoCount` 显示按钮。0.7.0 存在 `distill.json.changes` 的旧记录
   启动时搬进库一次（`importLegacyTidyChanges`）。
 - **设置文件损坏不覆盖**：`loadState` 解析失败先把文件改名成 `distill.json.bad-<ts>`
