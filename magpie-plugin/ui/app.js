@@ -243,9 +243,10 @@ function renderDistill() {
   const archived = changes.length - merged
   const undoBtn = $('#dreamUndo')
   if (undoBtn) {
-    // 旧版本写下的 changes 没有 at，无法安全撤销：只有带时间戳的才显示按钮。
-    undoBtn.hidden = !changes.some((c) => Number.isFinite(c.at))
+    // 撤销记录在库里（distill.json 丢了也还在），页面只看 undoCount。
+    undoBtn.hidden = !(d.undoCount > 0)
     undoBtn.disabled = !!d.running
+    undoBtn.textContent = d.undoCount > 0 ? `撤销上次整理（${d.undoCount} 项）` : '撤销上次整理'
   }
   let dreamLine
   let dreamBad = false
@@ -257,6 +258,8 @@ function renderDistill() {
     dreamLine = `已撤销上次整理 · 恢复 ${d.dreamUndoRestored || 0} 条${
       d.dreamUndoKept ? ` · ${d.dreamUndoKept} 项因你之后改过而保留` : ''
     }`
+  } else if (!changes.length && d.undoCount > 0) {
+    dreamLine = `有 ${d.undoCount} 项整理可撤销`
   } else if (d.dreamt) {
     dreamLine = `上次整理 ${ago(d.dreamt)}${
       merged || archived ? ` · 合并 ${merged} 条 / 归档 ${archived} 条` : ' · 没有需要变更的记忆'
@@ -275,8 +278,9 @@ function renderDistill() {
 
   const hint = $('#distillHint')
   if (hint) {
-    hint.hidden = true
-    hint.textContent = ''
+    hint.hidden = !d.stateRecovery
+    hint.textContent = d.stateRecovery || ''
+    hint.className = `muted hint${d.stateRecovery ? ' err' : ''}`
   }
 }
 

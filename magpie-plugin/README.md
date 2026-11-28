@@ -7,7 +7,7 @@
 - **10 个工具**：`memorysql_get_context`、`search`、`list_sessions`、`get_session`、`list_projects`、`get_project_brief`、`get_project_digest`、`write`、`log_progress`、`stats`
 - **网关自动续接（默认关）**：会话第一次经过 magpie 时，把「续接包」注入第一条用户消息；同一会话后续请求复用同一份，prompt cache 不受影响。在记忆页打开「记忆注入」后生效
 - **按 agent 注入**：可以注入到全部 agent，也可以只选某几个（默认全部）；列表复用 magpie 已识别的 agent（含还没会话的）
-- **会话回写**：内置存储默认把每轮 user/assistant 文本写进本地会话档案（app 后端默认关，避免和 MemorySQL 自己的文件捕获双写）
+- **会话回写（默认开）**：内置存储默认把本机每个经 magpie 网关的 agent 对话（user/assistant 文本）写进本地会话档案；app 后端默认关，避免和 MemorySQL 自己的文件捕获双写。数据只在本机，不需要时可在插件选项 `capture: false` 关掉
 - **记忆页**：待确认、搜索/作用域/状态分段、逐条确认/归档/编辑/删除；多行记忆折叠显示首行、展开按原样换行，并显示被召回次数
 - **记忆活动**：近 7 / 30 天的新增、召回率、更新率、清理率和注入会话数，带每日趋势；页面自己的搜索不计入召回率
 - **LLM 项目总结**：会话安静达到「安静期」（默认 30 分钟）后，用 magpie 里已配置的模型自动生成/更新项目滚动总结；也可以点「立即生成」
@@ -86,7 +86,7 @@ magpie plugin dump     # 看钩子/选项
 
 - 按 `(agent, externalId)` 去重；`externalId` 优先用 agent 的原生 session id。
 - 消息级 diff：后续轮次只追加新尾部。
-- 客户端只发当前轮/被上下文窗口裁过时，默认不截短已存历史（`replace: true` 才覆盖）。
+- 客户端压缩/裁剪历史时只追加新尾部，**绝不删已存消息**；压缩摘要不覆盖原文（`replace: true` 才显式整场重写）。
 - 捕获的是客户端自己的历史，**不含**注入的续接包。
 - 工具调用不写入，保持档案精简。
 
@@ -121,7 +121,7 @@ magpie plugin dump     # 看钩子/选项
 
 **整理记忆**：按「间隔」（默认每 24 小时，可改，从上一次整理算起）或点「立即整理」，用同一个模型合并说同一件事的记忆、归档过时记忆；手写/置顶（`locked`）不动。状态行始终显示**上一次整理时间**（关闭时也显示），例如「关闭 · 上次整理 3 小时前 · 合并 1 条 / 归档 2 条」。
 
-整理完可以点「撤销上次整理」：合并出来的新记忆删掉、被合并/归档的恢复原状态（候选仍回候选）。只撤销整理之后没人动过的条目——你改过、置顶、删掉或又归档过的会保留，并在状态行说明保留了几项。
+整理完可以点「撤销上次整理」：合并出来的新记忆删掉、被合并/归档的恢复原状态（候选仍回候选）。只撤销整理之后没人动过的条目——你改过、置顶、删掉或又归档过的会保留，并在状态行说明保留了几项。撤销记录存在库里的 `tidy_changes`（和每次合并/归档同一事务），后面的作用域失败或宿主重启都还能撤；`distill.json` 只放展示状态，读坏时先备份成 `.bad-<时间>` 再用默认值，不会悄悄覆盖。
 
 ### 4. 工具
 
@@ -208,6 +208,7 @@ CORS，别的站点就算嵌一个 sandbox 也读不到 token，不能直连 loo
 ## 隐私
 
 - 内置库只在本机；插件不向任何外部服务上传记忆/会话。
+- **会话回写默认开启**：本机每个经 magpie 网关的 agent 对话（user/assistant 文本）都会写进 `memory.db`，这是插件的会话档案来源；不想归档就在插件选项里设 `capture: false`（app 后端默认关）。归档内容只在本机。
 - **自动续接会把本地记忆/会话摘要随请求发给模型厂商**（和 magpie 自己的 Memory 注入 instructions 一样），但**默认关闭**，要在记忆页打开「记忆注入」并选择 agent 后才会发生。magpie 的 masking 在请求出口处执行，注入内容也会被一起脱敏。
 - **项目总结/整理记忆会把会话或记忆文本发给 magpie 网关背后的模型厂商**（默认用 magpie 记忆蒸馏的模型）；不想发就关掉这两个开关。
 - 不想让某个 agent 看到记忆：把它加进 `skipAgents`；不想让远程请求看到：保持 `recallRemote` / `captureRemote` 为 false。
@@ -219,10 +220,12 @@ CORS，别的站点就算嵌一个 sandbox 也读不到 token，不能直连 loo
 ## 开发
 
 ```sh
-node --test        # 43 项单测：内嵌存储、搜索结构化命中、会话删除/回写不复活、
-                   # 记忆注入开关/目标 agent、记忆活动统计与回填、整理撤销、
-                   # 多行记忆、项目总结（安静期/LLM）、整理/蒸馏、
-                   # 协议注入、钩子召回/捕获、页面服务与 token/CORS、迁移自愈
+node --test        # 54 项单测（Windows 跳过 1 项文件权限）：内嵌存储、搜索结构化命中、
+                   # 会话删除/回写不复活、压缩不删历史、记忆注入开关/目标 agent、
+                   # 记忆活动统计与回填、整理撤销（重启/部分失败）、多行记忆、
+                   # 项目总结（安静期/LLM）、整理/蒸馏、协议注入、钩子召回/捕获、
+                   # 页面服务与 token/CORS、迁移自愈
+bun test           # 同一套测试也能跑在 magpie 的 Bun 宿主里（CI 用）
 magpie plugin add .   # 加载到本机 magpie
 magpie plugin         # 看工具/钩子/页面是否都在
 ```
@@ -232,9 +235,9 @@ LLM 单测注入 mock 模型；真实模型 E2E 用 magpie 网关上的 `workbud
 
 ### 发布
 
-1. `npm publish`（包名 `@logic647/tools-memorysql` 或改成 `@magpie-community/tools-memorysql`）
-2. GitHub 仓库加 topic `magpie-plugin` → Discover → 非官方插件
-3. 想进官方评审列表：给 [magpie-community/plugins](https://github.com/magpie-community/plugins) 提 PR，在 `registry.json` 加一条（`kind: "tools"` 或 `page`，带 en/zh summary）
+1. 包在 [magpie-community/plugins](https://github.com/magpie-community/plugins) 的 `packages/memorysql`；版本推到 `main` 后由仓库的发布流程打 tarball（`dist` 分支）并按需发布 npm，不需要手动 `npm publish`
+2. 上游开发副本在 [Logic647/MemorySQL](https://github.com/Logic647/MemorySQL) 的 `magpie-plugin/`
+3. GitHub 仓库可加 topic `magpie-plugin` → Discover → 非官方插件；进官方列表仍走 community 仓库的 registry PR
 
 ---
 

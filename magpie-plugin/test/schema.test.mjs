@@ -26,9 +26,10 @@ test('migrate 幂等：新库跑两次不报错', async (t) => {
   migrate(db)
   assert.equal(
     db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value,
-    '3'
+    '4'
   )
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE name='memory_stats'").get())
+  assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE name='tidy_changes'").get())
   const since = db.prepare("SELECT value FROM meta WHERE key='stats_since'").get()
   assert.match(since.value, /^\d{4}-\d{2}-\d{2}$/)
   assert.equal(

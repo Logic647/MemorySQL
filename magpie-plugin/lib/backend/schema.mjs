@@ -3,7 +3,7 @@
 //
 // 时间口径与 MemorySQL 保持一致：sessions 的时间是 **unix 秒**，
 // projects/memories.updated_at 是 **毫秒**。
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 const TABLES = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -142,6 +142,25 @@ CREATE TABLE IF NOT EXISTS memory_stats (
 CREATE INDEX IF NOT EXISTS idx_memory_stats_day ON memory_stats(day);
 `
 
+// 整理想做的每一步都记在库里，和合并/归档在同一个事务里提交。
+// 这样后面的作用域失败、宿主重启、distill.json 损坏都不会丢掉「怎么撤」。
+const TIDY = `
+CREATE TABLE IF NOT EXISTS tidy_changes (
+  id        INTEGER PRIMARY KEY,
+  run_id    TEXT NOT NULL,
+  action    TEXT NOT NULL,
+  memory_id INTEGER,
+  new_id    INTEGER,
+  ids       TEXT,
+  from_json TEXT,
+  text      TEXT,
+  why       TEXT,
+  at        INTEGER NOT NULL,
+  undone    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_tidy_run ON tidy_changes(run_id, undone);
+`
+
 const DIGESTS = `
 CREATE TABLE IF NOT EXISTS project_digests (
   id               INTEGER PRIMARY KEY,
@@ -196,6 +215,8 @@ export function migrate(db) {
   // v3 记忆活动统计：建表每次检查（自愈），第一次升级时记下从哪天开始逐日计数；
   // 之前的日子（只有「新增」能从记忆自身的 created_at 回填）在读取时回填。
   db.exec(STATS)
+  // v4 整理撤销记录：同样每次建表自愈。
+  db.exec(TIDY)
   const since = db.prepare("SELECT value FROM meta WHERE key = 'stats_since'").get()
   if (!since) {
     db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('stats_since', ?)").run(localDay())
@@ -205,5 +226,8 @@ export function migrate(db) {
   }
   if (current < 3) {
     db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '3')").run()
+  }
+  if (current < 4) {
+    db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '4')").run()
   }
 }

@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-11-28 · magpie 插件 0.7.1：按 PR #1403 审查修复（数据安全 + 测试进包）
+
+yetone 在 #1403 给出 CHANGES_REQUESTED（7 must / 5 should / 7 nit），逐条修：
+
+**数据安全**
+- **整理撤销改存库**：schema v4 `tidy_changes`，每次 merge/archive 在同一事务记录
+  `run_id/action/ids/from/at`。部分作用域失败、宿主重启、`distill.json` 坏掉都还能撤；
+  去掉 `slice(0,200)`；无变更的一轮不再清掉上一轮撤销。0.7.0 的 JSON 记录启动时搬库一次。
+  页面按钮改用 `distillState().undoCount`。
+- **设置文件坏**：先改名 `distill.json.bad-<ts>` 再回默认值；改名失败则不再写盘。
+- **权限**：数据目录 0700、`memory.db`/`-wal`/`-shm` 0600、`distill.json` 0600。
+- **项目串台**：`importSession` 按 `.git` 仓库根或精确 cwd 建项目，不复用最长祖先；
+  `projectsByCwd` 跳过 `$HOME`/盘符根；`context`/`brief` 显式 cwd/project 没命中时只给
+  全局记忆，不回落最近活跃项目；`memory_write` 显式 project/cwd 没命中直接报错。
+- **压缩不删历史**：`syncMessages` 纯追加；常路径只查总数+最后一条；压缩时用最后一条
+  做锚点找最长后缀，只追加新尾部。4000 条会话过 cap 的追加 **842ms→14ms**。
+
+**其它修复**
+- `internal` 从工具参数挪到 `backend.call` 的调用方选项，模型不能自己跳过召回统计。
+- 续接包/简报/项目列表的提示改 `memorysql_*`（agent 实际看到的工具名）。
+- `onResponse` 忽略 `ctx.success===false`；`close()` 清定时器；`status.version` 读
+  package.json；删掉永远匹配不到的 `claude_code`；`list_sessions` 去掉
+  `includeSubagents`；CSP 加 `frame-ancestors 'none'`。
+- **审查 #10 是误报**：现行 magpie main 的 `GatewayContext` 有 `Kind`
+  （`hookKind` 从 `x-claude-code-agent-id`/Codex `collab_spawn` 判 subagent），
+  `gatewayOrigin` 本机共享 key 返回 `magpie-key`；保留判断，另加 `ctx.subagent` 兼容。
+
+**测试**
+- 把上游 10 个测试文件搬进 `packages/memorysql/test`（社区包），`bun test` 跑
+  **54 项（53 pass + Windows 跳过文件权限 1）**；新增 tidy 重启/部分失败、坏设置、
+  cwd 越界、`$HOME` 子项目、压缩、LLM 期间用户改动、工具参数绕过统计、2→4 迁移、
+  文件权限。smoke 自己 trap fetch 断言 0 网络；另用 preload 拦 `127.0.0.1:3425`
+  跑全套确认没有真实网关请求。
+- 社区包版本 **0.7.1**，rebase 到 origin/main 后 registry/README 补「默认归档本机会话
+  （capture:false 可关）」披露；`bun test`/`check`/`bumped` 通过。
+
+---
+
 ## 2026-11-25 · magpie 插件：借鉴 magpie 记忆活动统计 + 整理撤销 + 多行记忆
 
 **触发**：magpie 当天给 Memory 加了「活动统计」（`internal/memory/stats.go`：

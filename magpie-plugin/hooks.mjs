@@ -77,7 +77,8 @@ function isSkipped(ctx, options) {
   const key = agentKey(ctx.agent)
   if (key && ALWAYS_SKIP.has(key)) return true
   if (key && options.skipAgents.has(key)) return true
-  if (options.skipSubagents && ctx.kind === 'subagent') return true
+  // magpie 的上下文里有 kind（hookKind: subagent），旧宿主/别处可能给布尔值。
+  if (options.skipSubagents && (ctx.kind === 'subagent' || ctx.subagent === true)) return true
   return false
 }
 
@@ -208,6 +209,7 @@ export async function onRequest(body, ctx) {
 
 export async function onResponse(reply, ctx) {
   try {
+    if (ctx.success === false) return
     const backend = await getBackend(ctx.options)
     const options = normalize(ctx.options, backend.kind === 'embedded')
     const saved = ctx.state?.memorysql

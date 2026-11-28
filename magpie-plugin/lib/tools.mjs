@@ -109,8 +109,7 @@ export function toolsFor(options = {}, backendPromise = null) {
           agent: str('按 agent 过滤，如 codex / hermes / zcode'),
           since: num('只看最近 N 天，如 7'),
           limit: num('返回条数，默认 20，上限 100'),
-          offset: num('分页偏移，默认 0'),
-          includeSubagents: bool('是否包含子代理会话（默认 false）')
+          offset: num('分页偏移，默认 0')
         }
       },
       execute: proxy('list_sessions', options, backendPromise)

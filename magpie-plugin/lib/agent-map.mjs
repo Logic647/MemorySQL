@@ -7,7 +7,6 @@ const MAP = new Map(
   Object.entries({
     claude: 'claudecode',
     'claude code': 'claudecode',
-    claude_code: 'claudecode',
     claudecode: 'claudecode',
     codex: 'codex',
     'openai codex': 'codex',

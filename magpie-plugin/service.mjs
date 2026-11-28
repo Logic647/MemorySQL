@@ -62,7 +62,8 @@ function securityHeaders(res, port) {
     `img-src 'self' data: ${origin}`,
     `connect-src 'self' ${origin}`,
     "base-uri 'none'",
-    "form-action 'none'"
+    "form-action 'none'",
+    "frame-ancestors 'none'"
   ].join('; '))
   res.setHeader('referrer-policy', 'no-referrer')
   res.setHeader('x-content-type-options', 'nosniff')
@@ -249,8 +250,8 @@ async function api(req, res, url, options, backendPromise) {
         // internal: 页面搜索不计入「召回率」（那是 agent 搜索的指标）。
         const text = await backend.call(
           'memory_search',
-          { ...args, format: 'json', internal: true },
-          { timeoutMs: 12_000 }
+          { ...args, format: 'json' },
+          { timeoutMs: 12_000, internal: true }
         )
         let hits = []
         try {

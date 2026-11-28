@@ -373,6 +373,45 @@ schema 一改就漂移。app 模式走 MCP 契约；embedded 模式用自己的�
 - 未做：真实 agent 经网关的多天活动数据（本地只用模拟请求验证计数）；
   整理取消（在途一轮仍不可中断）。
 
+2026-11-28（审查修复，0.7.1）：
+
+- **整理撤销改存库**：新表 `tidy_changes`（schema v4）在每次合并/归档的同一事务里记
+  `run_id/action/ids/from/at`；后面的作用域失败、宿主重启、`distill.json` 损坏都拆不开
+  改了什么和怎么撤。不再 `slice(0,200)`，无变更的一轮也不会清掉上一轮的撤销。
+  `undoDream()` 从库里取最近未撤销的 run，恢复后统一标记 `undone=1`；页面用
+  `distillState().undoCount` 显示按钮。0.7.0 存在 `distill.json.changes` 的旧记录
+  启动时搬进库一次（`importLegacyTidyChanges`）。
+- **设置文件损坏不覆盖**：`loadState` 解析失败先把文件改名成 `distill.json.bad-<ts>`
+  再退回默认值；改名失败则 `stateWritable=false`，不再写盘。页面显示 `stateRecovery`。
+- **文件权限**：数据目录 0700；`memory.db`（含 `-wal/-shm`）0600；`distill.json.tmp`
+  与最终文件 0600。Windows 不保留 POSIX 位，测试跳过。
+- **项目归属/范围**：`importSession` 按「有 `.git` 的仓库根，否则精确 cwd」建项目，
+  不再复用最长祖先项目（一个 `$HOME` 会话不会吞掉子目录）；`projectsByCwd` 的祖先
+  匹配排除 `$HOME`/盘符根。`context`/`brief` 给了 cwd/project 却没命中时只给全局记忆，
+  不再回落到最近活跃项目（否则会把别的项目路径、记忆、会话标题注入新项目第一轮）。
+  `memory_write` 给了 project/cwd 没命中时报错，不再悄悄写成全局。
+- **压缩不删档案**：`syncMessages` 改为只追加。常见纯追加只读「总条数 + 最后一条」，
+  不扫整场；客户端历史变短/压缩时，用「已存最后一条」做锚点在客户端历史里找最长
+  重叠后缀，只追加它后面的新内容。绝不因为客户端视图变化删除已存消息；
+  `replace: true` 才显式整场重写。实测 4000 条会话：过 cap 的追加从 842ms 降到 14ms
+  （纯追加 24ms，含 4000 条入参校验）。
+- **统计/工具**：`internal` 从工具参数移到 `backend.call(name,args,{internal})` 的调用方
+  选项，模型传 `internal:true` 也绕不过召回统计。续接包/简报/项目列表提示改成
+  agent 实际看到的 `memorysql_*` 名称。
+- **其它**：`onResponse` 在 `ctx.success===false` 时不回写；`close()` 清定时器；
+  `status().version` 读 package.json；删除 map 里永远匹配不到的 `claude_code` key；
+  `list_sessions` 去掉没实现的 `includeSubagents`；页面 CSP 加 `frame-ancestors 'none'`。
+- **测试搬进社区包**：`packages/memorysql/test` 现含 54 项（53 pass + Windows 跳过的
+  文件权限 1 项），`bun test` 运行；新增 tidy 重启/部分失败、坏 `distill.json`、
+  cwd 越界、`$HOME` 子项目、压缩、LLM 期间用户改动、工具参数绕过统计、迁移 2→4、
+  文件权限。用 `--preload` 把 `127.0.0.1:3425` 的 fetch 拦住跑过：没有真实网关请求；
+  smoke 内部也 trap fetch 并断言 0 次。
+- **审查意见 #10 复核**：当前 magpie main 的 `GatewayContext` **有** `Kind`
+  （`internal/gateway/middleware.go` 的 `hookKind`，`subagent` 来自
+  `x-claude-code-agent-id` / Codex `collab_spawn`），`gatewayOrigin` 也会在本机返回
+  **`magpie-key`**（自己机器上的共享 key）。所以 `skipSubagents` 和 `magpie-key`
+  判断在现行 magpie 上有效，保留；同时加了 `ctx.subagent===true` 的兼容判断。
+
 ## 7. 待办
 
 - 用真实 agent 跑一次「首轮注入 + 第二轮缓存命中」的网关 E2E(embedded + app 各一次)。

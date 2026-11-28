@@ -26,6 +26,14 @@ const KIND_QUOTA = { persona: 6, preference: 8, fact: 10, decision: 8 }
 const VALID_KINDS = new Set(['fact', 'preference', 'persona', 'decision'])
 const MAX_CAPTURE_MESSAGES = 5000
 
+// 版本只从 package.json 读，避免 status() 与发布版本各说各话。
+let VERSION = '0.0.0'
+try {
+  VERSION = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version || VERSION
+} catch {
+  /* 打包/测试环境读不到就保留占位 */
+}
+
 function clip(text, max) {
   const t = String(text ?? '').replace(/\s+/g, ' ').trim()
   return t.length > max ? `${t.slice(0, max)}…` : t
@@ -142,10 +150,41 @@ function sessionLine(row) {
 export async function createEmbeddedBackend(options = {}) {
   const dataDir = resolveDataDir(options)
   const inMemory = dataDir === ':memory:' || options.memory === true
-  if (!inMemory) fs.mkdirSync(dataDir, { recursive: true })
+  if (!inMemory) {
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 })
+    // mkdir 的 mode 只对新目录生效；老目录收紧一次。
+    try {
+      fs.chmodSync(dataDir, 0o700)
+    } catch {
+      /* Windows 不认 POSIX 权限位 */
+    }
+  }
   const file = inMemory ? ':memory:' : path.join(dataDir, 'memory.db')
+  if (!inMemory) {
+    // SQLite 建库默认按 umask（常见 0644）；先建 0600 再打开。
+    try {
+      const fd = fs.openSync(file, 'a', 0o600)
+      fs.closeSync(fd)
+      fs.chmodSync(file, 0o600)
+    } catch {
+      /* 文件系统不支持 mode 时继续，数据仍只在本机 */
+    }
+  }
   const db = await openDatabase(file)
   migrate(db)
+
+  function secureFile(target) {
+    try {
+      fs.chmodSync(target, 0o600)
+    } catch {
+      /* 同上 */
+    }
+  }
+  function secureDbFiles() {
+    if (inMemory) return
+    for (const suffix of ['', '-wal', '-shm']) secureFile(`${file}${suffix}`)
+  }
+  secureDbFiles()
 
   const all = (sql, ...params) => db.prepare(sql).all(...params)
   const get = (sql, ...params) => db.prepare(sql).get(...params)
@@ -314,16 +353,43 @@ export async function createEmbeddedBackend(options = {}) {
   }
 
   // ----- 项目 -------------------------------------------------------------
+  // cwd 属于哪个项目根：有 .git 就用仓库根，否则用 cwd 本身。
+  // 不能把「最长祖先项目」当成 cwd 的项目——一个 $HOME 项目会把所有子目录吞掉。
+  function projectRootFor(cwd) {
+    if (!cwd) return null
+    const raw = String(cwd).trim()
+    if (!raw) return null
+    let dir = path.resolve(raw)
+    for (;;) {
+      try {
+        if (fs.existsSync(path.join(dir, '.git'))) return dir
+      } catch {
+        /* 路径不可读就按 cwd 本身 */
+      }
+      const parent = path.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+    return raw
+  }
+
   function projectsByCwd(cwd) {
     const target = normPath(cwd)
     if (!target) return []
+    const home = normPath(os.homedir())
+    const isHomeOrRoot = (value) =>
+      value === home ||
+      value === '/' ||
+      /^[a-z]:$/.test(value) ||
+      path.dirname(value) === value
     const rows = all('SELECT id, name, path FROM projects WHERE deleted = 0 AND path IS NOT NULL')
     let best = null
     let bestLen = -1
     for (const row of rows) {
       const p = normPath(row.path)
       if (!p) continue
-      if (target === p || target.startsWith(`${p}/`)) {
+      // 祖先匹配只在项目不是 $HOME / 盘符根时成立；否则一个家目录项目会吞掉所有仓库。
+      if (target === p || (target.startsWith(`${p}/`) && !isHomeOrRoot(p))) {
         if (p.length > bestLen) {
           best = row
           bestLen = p.length
@@ -365,14 +431,11 @@ export async function createEmbeddedBackend(options = {}) {
   }
 
   function findProject({ project, cwd } = {}) {
-    if (cwd && cwd.trim()) {
-      const byCwd = projectsByCwd(cwd)
-      if (byCwd[0]) return byCwd[0]
-    }
-    if (project && project.trim()) {
-      const byName = projectsByKeyword(project.trim())
-      if (byName[0]) return byName[0]
-    }
+    const explicit = Boolean((cwd && cwd.trim()) || (project && project.trim()))
+    const strict = findProjectStrict({ project, cwd })
+    // 给了 cwd/project 却没命中：返回 null，让调用方只给全局记忆；
+    // 只有完全没指定时才回落到最近活跃项目。
+    if (strict || explicit) return strict
     return activeProject()
   }
 
@@ -391,7 +454,9 @@ export async function createEmbeddedBackend(options = {}) {
 
   function ensureProject(cwd) {
     if (!cwd) return null
-    const existing = get('SELECT id FROM projects WHERE path = ?', cwd)
+    const wanted = normPath(cwd)
+    const rows = all('SELECT id, path FROM projects WHERE path IS NOT NULL')
+    const existing = rows.find((row) => normPath(row.path) === wanted)
     if (existing) return existing.id
     const name = path.basename(cwd) || cwd
     return Number(run('INSERT INTO projects (path, name, updated_at) VALUES (?, ?, ?)', cwd, name, Date.now()).lastInsertRowid)
@@ -450,7 +515,7 @@ export async function createEmbeddedBackend(options = {}) {
         ids.push(row.id)
       }
     }
-    if (ids.length === 0) lines.push('(暂无 — 可调用 memory_write 写入)')
+    if (ids.length === 0) lines.push('(暂无 — 可调用 memorysql_write 写入)')
     return { text: lines.join('\n'), ids }
   }
 
@@ -510,13 +575,15 @@ export async function createEmbeddedBackend(options = {}) {
     const keyword = typeof args.project === 'string' ? args.project : undefined
     const cwd = typeof args.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : undefined
     const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
+    const explicit = Boolean((cwd && cwd.trim()) || (keyword && keyword.trim()))
     const matched = resolveProjects({ project: keyword, cwd })
-    const active = activeProject()
+    const active = explicit ? null : activeProject()
     const project = matched[0] ?? active
     const projectIds = matched.length > 0 ? matched.map((p) => p.id) : active ? [active.id] : null
     const globalRows = loadMemories('global', null, agent)
     const projectRows = projectIds ? loadMemories('project', projectIds, agent) : []
-    const sessions = recentSessions(projectIds, 5)
+    // 指定了 cwd/project 却没命中：只给全局记忆，绝不把最近活跃项目塞进来。
+    const sessions = explicit && !project ? [] : recentSessions(projectIds, 5)
     // 全新库：没有项目/记忆/会话时返回空，网关钩子据此跳过注入
     if (!project && globalRows.length === 0 && sessions.length === 0) return ''
     const globalBlock = renderMemoryBlock('## 全局记忆', globalRows, 2200)
@@ -536,7 +603,7 @@ export async function createEmbeddedBackend(options = {}) {
     if (sessions.length > 0) {
       parts.push('- 最近会话:')
       for (const s of sessions) parts.push(`  - ${sessionLine(s)}`)
-    } else {
+    } else if (project) {
       parts.push('- (该项目暂无会话记录)')
     }
     if (args.include_last_session === true && sessions.length > 0) {
@@ -547,7 +614,7 @@ export async function createEmbeddedBackend(options = {}) {
       '\n> 项目自带的 AGENTS.md / CLAUDE.md 等指令文件和文档优先于这里的记忆；两者冲突时以项目文件为准，并指出哪条记忆过时。项目内的规则、约定写进这些文件，记忆只放跨项目仍然成立的事实。'
     )
     parts.push(
-      '\n> 深读某条会话用 memory_get_session({id});需要更多历史用 memory_list_sessions 或 memory_search({query});拿到新结论/偏好用 memory_write({kind, content, project?}) 记录;收工时用 memory_log_progress 汇报进度。'
+      '\n> 深读某条会话用 memorysql_get_session({id});需要更多历史用 memorysql_list_sessions 或 memorysql_search({query});拿到新结论/偏好用 memorysql_write({kind, content, project?}) 记录;收工时用 memorysql_log_progress 汇报进度。'
     )
     return parts.join('\n')
   }
@@ -576,10 +643,11 @@ export async function createEmbeddedBackend(options = {}) {
     const keyword = typeof args.project === 'string' ? args.project : undefined
     const cwd = typeof args.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : undefined
     const agent = typeof args.agent === 'string' && args.agent.trim() ? args.agent.trim() : undefined
+    const explicit = Boolean((cwd && cwd.trim()) || (keyword && keyword.trim()))
     const project = findProject({ project: keyword, cwd })
     const matched = resolveProjects({ project: keyword, cwd })
     const projectIds = matched.length > 0 ? matched.map((p) => p.id) : project ? [project.id] : null
-    const sessions = recentSessions(projectIds, 8)
+    const sessions = explicit && !project ? [] : recentSessions(projectIds, 8)
     const globalRows = loadMemories('global', null, agent)
     const projectRows = projectIds ? loadMemories('project', projectIds, agent) : []
     const globalBlock = renderMemoryBlock('## 全局记忆', globalRows, 2200)
@@ -604,9 +672,9 @@ export async function createEmbeddedBackend(options = {}) {
     const progress = projectProgress(projectIds, agent)
     parts.push('\n## 待确认进度(收工汇报候选)')
     if (progress.length > 0) for (const p of progress) parts.push(`- #${p.id} ${clip(p.content, 200)}`)
-    else parts.push('(暂无 — agent 收工时用 memory_log_progress 汇报)')
+    else parts.push('(暂无 — agent 收工时用 memorysql_log_progress 汇报)')
     parts.push(
-      '\n> 本简报由内置存储从会话与记忆汇编。深读历史: memory_get_session({id});收工汇报: memory_log_progress({project, done, next?, issues?})。'
+      '\n> 本简报由内置存储从会话与记忆汇编。深读历史: memorysql_get_session({id});收工汇报: memorysql_log_progress({project, done, next?, issues?})。'
     )
     return parts.join('\n')
   }
@@ -690,7 +758,7 @@ export async function createEmbeddedBackend(options = {}) {
       if (r.lastActive) bits.push(`最后活跃 ${fmtDate(r.lastActive)}`)
       return `${i + 1}. #${r.id} ${r.name}${r.path ? ` — ${r.path}` : ''}\n   ${bits.join(' · ')}`
     })
-    return `# 项目列表(共 ${rows.length} 个)\n${lines.join('\n')}\n\n> 看某个项目: memory_get_project_brief({project}) 或 memory_get_context({project})。`
+    return `# 项目列表(共 ${rows.length} 个)\n${lines.join('\n')}\n\n> 看某个项目: memorysql_get_project_brief({project}) 或 memorysql_get_context({project})。`
   }
 
   function listSessions(args = {}) {
@@ -814,7 +882,8 @@ export async function createEmbeddedBackend(options = {}) {
     return `"${query.replace(/"/g, '""')}"`
   }
 
-  function search(args = {}) {
+  function search(args = {}, callOptions = {}) {
+    const internal = callOptions.internal === true
     const query = String(args.query ?? '').trim()
     if (!query) return '参数错误:query 不能为空'
     const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100)
@@ -1066,12 +1135,12 @@ export async function createEmbeddedBackend(options = {}) {
     hits.sort((a, b) => a.score - b.score)
     const top = hits.slice(0, limit)
     // 页面自己的搜索只是翻看，不算「被召回」，也不推高记忆热度。
-    if (args.internal !== true) {
+    if (!internal) {
       touchMemories(top.filter((h) => h.memoryId).map((h) => h.memoryId))
     }
-    // agent 的整库检索算一次「搜索」；页面自己的搜索（internal）不计入，
+    // agent 的整库检索算一次「搜索」；页面自己的搜索不计入，
     // 否则召回率会被用户翻记忆页的行为冲淡。
-    if (args.internal !== true && (!kind || kind === 'memory')) {
+    if (!internal && (!kind || kind === 'memory')) {
       const recalled = top.filter((h) => h.kind === 'memory').length
       note('searches', 1)
       if (recalled > 0) {
@@ -1100,7 +1169,8 @@ export async function createEmbeddedBackend(options = {}) {
     const hasProjectArg = Boolean(args.project || args.cwd)
     const project = hasProjectArg ? findProjectStrict({ project: args.project, cwd: args.cwd }) : null
     const scopeArg = args.scope === 'project' || args.scope === 'global' ? args.scope : undefined
-    const scope = scopeArg ?? (project ? 'project' : 'global')
+    // 给了 project/cwd 就应当写成项目记忆；没命中就报错，不能悄悄落到全局。
+    const scope = scopeArg ?? (hasProjectArg ? 'project' : 'global')
     if (scope === 'project' && !project) {
       return `写入失败:未找到项目「${args.project ?? args.cwd ?? ''}」,无法写入项目记忆(可先不带 project 写成全局记忆)`
     }
@@ -1125,6 +1195,7 @@ export async function createEmbeddedBackend(options = {}) {
       ).lastInsertRowid
     )
     note('created', 1, 'agent')
+    secureDbFiles()
     const bits = [`kind=${kind}`, `scope=${scope}`]
     if (agent) bits.push(`agent=${agent}`)
     if (project) bits.push(`project=${project.name}`)
@@ -1159,6 +1230,7 @@ export async function createEmbeddedBackend(options = {}) {
       ).lastInsertRowid
     )
     note('created', 1, 'agent')
+    secureDbFiles()
     const bits = [`#${id}`]
     if (matched) bits.push(`关联项目 ${matched.name}`)
     else bits.push('项目未匹配,未关联')
@@ -1203,31 +1275,118 @@ export async function createEmbeddedBackend(options = {}) {
     )
   }
 
-  function syncMessages(sessionId, messages) {
-    const stored = all(
-      'SELECT id, role, content, ts, tool_name FROM session_messages WHERE session_id = ? ORDER BY seq',
-      sessionId
-    )
-    let keep = 0
-    while (keep < stored.length && keep < messages.length && sameMessage(stored[keep], messages[keep])) {
-      keep += 1
-    }
-    if (keep === stored.length && keep === messages.length) return
-    if (keep < stored.length) {
-      run('DELETE FROM session_messages WHERE session_id = ? AND seq >= ?', sessionId, keep)
-    }
-    for (let seq = keep; seq < messages.length; seq += 1) {
-      const m = messages[seq]
+  function insertMessages(sessionId, list, startSeq) {
+    for (let i = 0; i < list.length; i += 1) {
+      const m = list[i]
       run(
         'INSERT INTO session_messages (session_id, seq, role, content, ts, tool_name) VALUES (?, ?, ?, ?, ?, ?)',
         sessionId,
-        seq,
+        startSeq + i,
         m.role,
         m.content,
         m.ts ?? null,
         m.toolName ?? null
       )
     }
+  }
+
+  function messageStats(sessionId) {
+    const row = get(
+      `SELECT count(*) AS n, max(ts) AS lastTs FROM session_messages WHERE session_id = ?`,
+      sessionId
+    )
+    const tools = get(
+      "SELECT count(*) AS n FROM session_messages WHERE session_id = ? AND role = 'tool'",
+      sessionId
+    )
+    return {
+      count: Number(row?.n ?? 0),
+      lastTs: row?.lastTs ?? null,
+      toolCalls: Number(tools?.n ?? 0)
+    }
+  }
+
+  // 只追加，不因为客户端压缩/裁剪视图就删除已存历史。
+  // 常见情况（纯追加）只读「最后一条 + 总数」，不扫整场会话。
+  function syncMessages(sessionId, messages, { replace = false } = {}) {
+    if (replace) {
+      run('DELETE FROM session_messages WHERE session_id = ?', sessionId)
+      insertMessages(sessionId, messages, 0)
+      return messageStats(sessionId)
+    }
+    const storedCount = Number(
+      get('SELECT count(*) AS n FROM session_messages WHERE session_id = ?', sessionId)?.n ?? 0
+    )
+    if (storedCount === 0) {
+      insertMessages(sessionId, messages, 0)
+      return messageStats(sessionId)
+    }
+    const last = get(
+      `SELECT seq, role, content, ts, tool_name FROM session_messages
+        WHERE session_id = ? ORDER BY seq DESC LIMIT 1`,
+      sessionId
+    )
+    // 纯追加：客户端把已存的最后一条原样带回来了。
+    if (messages.length > storedCount && sameMessage(last, messages[storedCount - 1])) {
+      insertMessages(sessionId, messages.slice(storedCount), last.seq + 1)
+      return messageStats(sessionId)
+    }
+    // 客户端这次没有更多内容（压缩后的历史以同一条结尾）：不动档案。
+    if (messages.length <= storedCount && sameMessage(last, messages[messages.length - 1])) {
+      return messageStats(sessionId)
+    }
+
+    // 压缩/改写：找「已存历史的最长后缀」在客户端历史里出现的位置，
+    // 只追加它后面的新消息。摘要等新前缀不写档案（它只是已有内容的压缩）。
+    const tail = all(
+      `SELECT seq, role, content, ts, tool_name FROM session_messages
+        WHERE session_id = ? ORDER BY seq DESC LIMIT 200`,
+      sessionId
+    ).reverse()
+    let overlap = 0
+    let at = -1
+    // 用「档案最后一条」做锚点：在客户端历史里从后往前找它，再往前扩展。
+    // 比逐长度扫整段快得多，压缩后的历史通常只有一两个候选。
+    let candidates = 0
+    for (let j = messages.length - 1; j >= 0 && candidates < 20; j -= 1) {
+      if (!sameMessage(last, messages[j])) continue
+      candidates += 1
+      let k = 1
+      while (
+        k < tail.length &&
+        j - k >= 0 &&
+        sameMessage(tail[tail.length - 1 - k], messages[j - k])
+      ) {
+        k += 1
+      }
+      if (k > overlap) {
+        overlap = k
+        at = j - k + 1
+      }
+      if (overlap === tail.length) break
+    }
+    if (overlap > 0) {
+      const start = at + overlap
+      if (start < messages.length) {
+        insertMessages(sessionId, messages.slice(start), last.seq + 1)
+      }
+      return messageStats(sessionId)
+    }
+    // 客户端发的是档案的前缀：没有新内容。
+    if (messages.length <= storedCount) {
+      const head = all(
+        `SELECT seq, role, content, ts, tool_name FROM session_messages
+          WHERE session_id = ? ORDER BY seq LIMIT ?`,
+        sessionId,
+        messages.length
+      )
+      if (head.length === messages.length && head.every((m, i) => sameMessage(m, messages[i]))) {
+        return messageStats(sessionId)
+      }
+    }
+    // 完全对不上：追加全部，宁可多一条，也不删已经存下的历史。
+    insertMessages(sessionId, messages, last.seq + 1)
+    return messageStats(sessionId)
   }
 
   function importSession(args = {}) {
@@ -1257,7 +1416,7 @@ export async function createEmbeddedBackend(options = {}) {
     if (messages.length === 0) return '导入失败:没有有效消息'
 
     const existing = get(
-      'SELECT id, message_count, raw_path, cwd, project_id, deleted FROM sessions WHERE agent_type = ? AND external_id = ?',
+      'SELECT id, message_count, raw_path, cwd, project_id, title, deleted FROM sessions WHERE agent_type = ? AND external_id = ?',
       agent,
       externalId
     )
@@ -1269,9 +1428,7 @@ export async function createEmbeddedBackend(options = {}) {
       if (!gatewayOwned) {
         return `已存在更完整的会话 #${existing.id}(${existing.message_count} 条,来自源文件),跳过网关回写。`
       }
-      if (args.replace !== true) {
-        return `跳过:本次 ${messages.length} 条,少于已存的 ${existing.message_count} 条(网关回写默认不截短历史;确需替换传 replace=true)。`
-      }
+      // 网关捕获的会话允许变短：syncMessages 只追加，不删已存历史。
     }
 
     const titleArg = typeof args.title === 'string' ? args.title.trim() : ''
@@ -1280,9 +1437,10 @@ export async function createEmbeddedBackend(options = {}) {
     const startedAt = Number(args.startedAt)
     const endedAt = Number(args.endedAt)
     const cwdArg = typeof args.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : undefined
-    const matchedCwd = cwdArg ? projectsByCwd(cwdArg) : []
-    const cwd = matchedCwd[0]?.path ?? cwdArg
-    const projectId = ensureProject(cwd)
+    // 项目按仓库根（有 .git）或精确 cwd 建；不要复用最长祖先项目，
+    // 否则一次 $HOME 会话会把所有子目录都记到 $HOME 项目里。
+    const cwd = cwdArg
+    const projectId = cwdArg ? ensureProject(projectRootFor(cwdArg)) : null
     let lastMessageAt = null
     for (const m of messages) {
       if (m.ts && (lastMessageAt == null || m.ts > lastMessageAt)) lastMessageAt = m.ts
@@ -1291,11 +1449,13 @@ export async function createEmbeddedBackend(options = {}) {
     const toolCalls = messages.filter((m) => m.role === 'tool').length
     const now = Date.now()
     const rawPath = `magpie-gateway:${agent}`
+    const result = { count: messages.length }
 
     const outcome = db.tx(() => {
       let sessionId
       if (existing) {
         sessionId = existing.id
+        const sync = syncMessages(sessionId, messages, { replace: args.replace === true })
         run(
           `UPDATE sessions SET project_id = COALESCE(?, project_id), cwd = COALESCE(?, cwd),
              started_at = COALESCE(?, started_at), ended_at = COALESCE(?, ended_at),
@@ -1306,15 +1466,15 @@ export async function createEmbeddedBackend(options = {}) {
           cwd ?? null,
           Number.isFinite(startedAt) && startedAt > 0 ? Math.floor(startedAt) : null,
           Number.isFinite(endedAt) && endedAt > 0 ? Math.floor(endedAt) : null,
-          lastMessageAt,
-          title,
+          sync.lastTs ?? lastMessageAt,
+          titleArg || existing.title || title,
           rawPath,
-          messages.length,
-          toolCalls,
+          sync.count,
+          sync.toolCalls,
           now,
           sessionId
         )
-        syncMessages(sessionId, messages)
+        result.count = sync.count
         return 'updated'
       }
       sessionId = Number(
@@ -1336,22 +1496,12 @@ export async function createEmbeddedBackend(options = {}) {
           now
         ).lastInsertRowid
       )
-      for (let seq = 0; seq < messages.length; seq += 1) {
-        const m = messages[seq]
-        run(
-          'INSERT INTO session_messages (session_id, seq, role, content, ts, tool_name) VALUES (?, ?, ?, ?, ?, ?)',
-          sessionId,
-          seq,
-          m.role,
-          m.content,
-          m.ts ?? null,
-          m.toolName ?? null
-        )
-      }
+      insertMessages(sessionId, messages, 0)
       return 'imported'
     })
     const row = get('SELECT id FROM sessions WHERE agent_type = ? AND external_id = ?', agent, externalId)
-    return JSON.stringify({ id: row?.id ?? null, outcome, messages: messages.length })
+    secureDbFiles()
+    return JSON.stringify({ id: row?.id ?? null, outcome, messages: result.count })
   }
 
   // ----- LLM 项目总结与整理 ------------------------------------------------
@@ -1369,6 +1519,7 @@ export async function createEmbeddedBackend(options = {}) {
 
   const UI_KINDS = ['persona', 'preference', 'fact', 'decision']
   const statePath = inMemory ? null : path.join(dataDir, 'distill.json')
+  let stateWritable = true
   const defaultState = () => ({
     // 旧「从对话学习」状态保留（手动 API 仍可用），页面不再暴露
     on: false,
@@ -1420,8 +1571,24 @@ export async function createEmbeddedBackend(options = {}) {
       loaded.digestQuietMinutes = int(loaded.digestQuietMinutes, 30, 1, 1440)
       loaded.dreamEveryHours = int(loaded.dreamEveryHours, 24, 1, 720)
       loaded.dreamSince = Number(loaded.dreamSince) || 0
+      try {
+        fs.chmodSync(statePath, 0o600)
+      } catch {
+        /* Windows 不认 POSIX 权限位 */
+      }
       return loaded
-    } catch {
+    } catch (err) {
+      // 读坏了 ≠ 没有设置：先把坏文件留一份，别让下一次 saveState 悄悄覆盖。
+      if (err?.code !== 'ENOENT') {
+        try {
+          const bad = `${statePath}.bad-${Date.now()}`
+          fs.renameSync(statePath, bad)
+          base.stateRecovery = `设置文件无法读取，已备份为 ${path.basename(bad)}（当前用默认设置）`
+        } catch {
+          stateWritable = false
+          base.stateRecovery = '设置文件无法读取（当前用默认设置，原文件未改动）'
+        }
+      }
       return base
     }
   }
@@ -1432,19 +1599,36 @@ export async function createEmbeddedBackend(options = {}) {
   distill.of = 0
   distill.left = 0
   if (!distill.model) distill.model = magpieMemoryModel() || ''
+  importLegacyTidyChanges()
+  // distill.json 坏了但库里还有撤销记录：把展示用的 changes 补回来。
+  if (distill.stateRecovery) {
+    const pending = tidyChanges()
+    if (pending.length > 0) distill.changes = pending
+  }
 
   function saveState() {
-    if (!statePath) return
+    if (!statePath || !stateWritable) return
     const data = { ...distill }
     delete data.running
     delete data.job
     delete data.doing
     delete data.of
     delete data.left
+    delete data.stateRecovery
     try {
       const tmp = `${statePath}.tmp`
-      fs.writeFileSync(tmp, JSON.stringify(data, null, 2))
+      fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 })
+      try {
+        fs.chmodSync(tmp, 0o600)
+      } catch {
+        /* Windows */
+      }
       fs.renameSync(tmp, statePath)
+      try {
+        fs.chmodSync(statePath, 0o600)
+      } catch {
+        /* Windows */
+      }
     } catch {
       /* 状态文件只是展示用 */
     }
@@ -1584,6 +1768,7 @@ export async function createEmbeddedBackend(options = {}) {
         (before.why ?? null) !== (why || null) ||
         Number(before.locked) !== 1
       if (changed) note('updated', 1)
+      secureDbFiles()
       return { ok: true, id }
     }
     const dup = get('SELECT id FROM memories WHERE content = ? AND deleted = 0 LIMIT 1', text)
@@ -1604,6 +1789,7 @@ export async function createEmbeddedBackend(options = {}) {
       ).lastInsertRowid
     )
     note('created', 1, 'user')
+    secureDbFiles()
     return { ok: true, id: newId }
   }
 
@@ -2018,12 +2204,110 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     return generateDigestById(project.id)
   }
 
+  // ----- 整理撤销记录 -----------------------------------------------------
+  // 每一步和合并/归档在同一个事务里写进 tidy_changes：后面的作用域失败、
+  // 宿主重启、distill.json 损坏都拆不开「改了什么」和「怎么撤」。
+  function parseJson(value, fallback) {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return fallback
+    }
+  }
+
+  function recordTidyMerge(runId, ids, from, text, newId, at) {
+    run(
+      `INSERT INTO tidy_changes(run_id, action, ids, from_json, text, new_id, at)
+       VALUES (?, 'merge', ?, ?, ?, ?, ?)`,
+      runId,
+      JSON.stringify(ids),
+      JSON.stringify(from),
+      text,
+      newId,
+      at
+    )
+  }
+
+  function recordTidyArchive(runId, id, from, why, at) {
+    run(
+      `INSERT INTO tidy_changes(run_id, action, memory_id, from_json, why, at)
+       VALUES (?, 'archive', ?, ?, ?, ?)`,
+      runId,
+      id,
+      String(from ?? 'active'),
+      String(why ?? ''),
+      at
+    )
+  }
+
+  // 最近一次还没撤销的整理；没有 runId 时取最新 run。
+  function tidyChanges(runId = null) {
+    const target =
+      runId ??
+      get("SELECT run_id FROM tidy_changes WHERE undone = 0 ORDER BY id DESC LIMIT 1")?.run_id
+    if (!target) return []
+    return all(
+      `SELECT run_id, action, memory_id, new_id, ids, from_json, text, why, at
+         FROM tidy_changes WHERE run_id = ? AND undone = 0 ORDER BY id`,
+      target
+    ).map((row) => {
+      if (row.action === 'merge') {
+        return {
+          runId: row.run_id,
+          action: 'merge',
+          ids: parseJson(row.ids, []),
+          from: parseJson(row.from_json, []),
+          text: row.text ?? '',
+          newId: row.new_id,
+          at: row.at
+        }
+      }
+      return {
+        runId: row.run_id,
+        action: 'archive',
+        id: row.memory_id,
+        from: row.from_json ?? 'active',
+        why: row.why ?? '',
+        at: row.at
+      }
+    })
+  }
+
+  // 0.7.0 的撤销记录只在 distill.json 里；升级后搬进库里一次。
+  function importLegacyTidyChanges() {
+    const existing = Number(get('SELECT count(*) AS n FROM tidy_changes')?.n ?? 0)
+    if (existing > 0) return
+    const legacy = (Array.isArray(distill.changes) ? distill.changes : []).filter((c) =>
+      Number.isFinite(c?.at)
+    )
+    if (legacy.length === 0) return
+    const runId = `legacy-${legacy[0].at}`
+    try {
+      db.tx(() => {
+        for (const c of legacy) {
+          if (c.action === 'merge' && Array.isArray(c.ids) && c.ids.length >= 2) {
+            recordTidyMerge(runId, c.ids, c.from ?? [], c.text ?? '', c.newId, c.at)
+          } else if (c.action === 'archive' && Number.isFinite(Number(c.id))) {
+            recordTidyArchive(runId, Number(c.id), c.from ?? 'active', c.why ?? '', c.at)
+          }
+        }
+      })
+    } catch {
+      /* 旧记录搬不过来不影响新整理 */
+    }
+  }
+
   async function runDreamJob() {
     if (distill.running) return
     distill.running = true
     distill.job = 'dream'
     distill.dreamError = ''
+    distill.dreamUndoAt = 0
+    distill.dreamUndoRestored = 0
+    distill.dreamUndoKept = 0
     saveState()
+    const runId = `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    let changes = []
     try {
       const model = await llm.resolveModel(distill.model)
       if (!model) throw new Error('没有可用模型')
@@ -2031,10 +2315,9 @@ Leave out anything you would not change. If nothing should change, answer {}.`
       for (const p of all('SELECT id, name FROM projects WHERE deleted = 0 ORDER BY updated_at DESC LIMIT 3')) {
         scopes.push({ scope: 'project', projectId: p.id, name: p.name })
       }
-      const changes = []
       for (const sc of scopes) {
         const rows = all(
-          `SELECT id, kind, content, status, created_at, access_count FROM memories
+          `SELECT id, kind, content, status, updated_at, created_at, access_count FROM memories
             WHERE deleted = 0 AND status IN ('active','candidate') AND locked = 0 AND scope = ?
               ${sc.scope === 'project' ? 'AND project_id = ?' : ''}
             ORDER BY updated_at DESC LIMIT 120`,
@@ -2070,6 +2353,26 @@ Leave out anything you would not change. If nothing should change, answer {}.`
             const text = String(m.text ?? '').trim()
             if (!text) continue
             const kind = UI_KINDS.includes(m.kind) ? m.kind : 'fact'
+            // LLM 想事情的这段时间，用户可能归档/删除/改过某条；只合并全都没动过的。
+            const members = ids.map((n) => {
+              const before = byNum.get(n)
+              return {
+                before,
+                now: get(
+                  'SELECT status, updated_at, locked, deleted FROM memories WHERE id = ?',
+                  before.id
+                )
+              }
+            })
+            const untouched = members.every(
+              (item) =>
+                item.now &&
+                item.now.deleted === 0 &&
+                Number(item.now.locked) === 0 &&
+                (item.now.status === 'active' || item.now.status === 'candidate') &&
+                item.now.updated_at === item.before.updated_at
+            )
+            if (!untouched) continue
             const now = Date.now()
             const newId = Number(
               run(
@@ -2084,21 +2387,28 @@ Leave out anything you would not change. If nothing should change, answer {}.`
                 now
               ).lastInsertRowid
             )
-            for (const n of ids) {
+            const from = []
+            for (const item of members) {
               const res = run(
-                "UPDATE memories SET status='superseded', updated_at=? WHERE id=? AND locked=0",
+                `UPDATE memories SET status='superseded', updated_at=?
+                  WHERE id=? AND locked=0 AND status=? AND updated_at=?`,
                 now,
-                byNum.get(n).id
+                item.before.id,
+                item.before.status,
+                item.before.updated_at
               )
-              // 被合并掉的旧记忆 = 离开使用；合并产生的这一条算「更新」不算新增。
-              if (Number(res?.changes) > 0) note('cleaned', 1, 'tidy')
+              if (Number(res?.changes) === 0) {
+                throw new Error('记忆在整理期间被修改，本次合并已回滚')
+              }
+              from.push({ id: item.before.id, status: item.before.status })
+              note('cleaned', 1, 'tidy')
             }
             note('updated', 1)
+            recordTidyMerge(runId, ids.map((n) => byNum.get(n).id), from, text, newId, now)
             changes.push({
               action: 'merge',
               ids: ids.map((n) => byNum.get(n).id),
-              // 撤销时按各自原来的状态恢复（候选不会因为撤销被顺手确认）
-              from: ids.map((n) => ({ id: byNum.get(n).id, status: byNum.get(n).status })),
+              from,
               text,
               newId,
               at: now
@@ -2110,11 +2420,16 @@ Leave out anything you would not change. If nothing should change, answer {}.`
             if (!row) continue
             const now = Date.now()
             const res = run(
-              "UPDATE memories SET status='archived', updated_at=? WHERE id=? AND locked=0",
+              `UPDATE memories SET status='archived', updated_at=?
+                WHERE id=? AND locked=0 AND status=? AND updated_at=?`,
               now,
-              row.id
+              row.id,
+              row.status,
+              row.updated_at
             )
-            if (Number(res?.changes) > 0) note('cleaned', 1, 'tidy')
+            if (Number(res?.changes) === 0) continue
+            note('cleaned', 1, 'tidy')
+            recordTidyArchive(runId, row.id, row.status, String(a.why ?? '').slice(0, 300), now)
             changes.push({
               action: 'archive',
               id: row.id,
@@ -2125,14 +2440,12 @@ Leave out anything you would not change. If nothing should change, answer {}.`
           }
         })
       }
-      distill.changes = changes.slice(0, 200)
-      distill.dreamUndoAt = 0
-      distill.dreamUndoRestored = 0
-      distill.dreamUndoKept = 0
       distill.dreamt = Date.now()
     } catch (err) {
       distill.dreamError = String(err?.message ?? err).slice(0, 400)
     } finally {
+      // 失败前已经提交的作用域也保留在 changes/DB 里，仍可撤销。
+      distill.changes = changes
       distill.running = false
       distill.job = ''
       saveState()
@@ -2144,7 +2457,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
   // 原样保留（宁可少恢复，也不覆盖用户之后的决定）。
   function undoDream() {
     if (distill.running) return { ok: false, error: '整理正在进行，等它结束再撤销' }
-    const changes = Array.isArray(distill.changes) ? distill.changes : []
+    const changes = tidyChanges()
     if (changes.length === 0) return { ok: false, error: '没有可撤销的整理记录' }
     let restored = 0
     let removed = 0
@@ -2218,6 +2531,8 @@ Leave out anything you would not change. If nothing should change, answer {}.`
         }
         kept += 1
       }
+      // 只保留最近一次撤销；记录本身留在库里作审计，不再可撤。
+      run('UPDATE tidy_changes SET undone = 1 WHERE undone = 0')
     })
     distill.changes = []
     distill.dreamUndoAt = Date.now()
@@ -2273,6 +2588,8 @@ Leave out anything you would not change. If nothing should change, answer {}.`
       ...distill,
       models,
       agents,
+      // 撤销记录在库里：即使 distill.json 丢了、后面的作用域失败，也还能撤。
+      undoCount: tidyChanges().length,
       defaultModel: distill.model || magpieMemoryModel() || ''
     }
   }
@@ -2414,6 +2731,8 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     }
   }
 
+  let tickTimeout = null
+  let tickInterval = null
   if (!inMemory) {
     const tick = () => {
       try {
@@ -2427,8 +2746,10 @@ Leave out anything you would not change. If nothing should change, answer {}.`
         /* 定时器不能把宿主带崩 */
       }
     }
-    setTimeout(tick, 60_000).unref?.()
-    setInterval(tick, 10 * 60_000).unref?.()
+    tickTimeout = setTimeout(tick, 60_000)
+    tickTimeout.unref?.()
+    tickInterval = setInterval(tick, 10 * 60_000)
+    tickInterval.unref?.()
   }
 
   const ui = {
@@ -2470,10 +2791,10 @@ Leave out anything you would not change. If nothing should change, answer {}.`
     recallConfig,
     // 网关钩子成功注入一次续接包时调用（同一会话复用缓存块不重复计）
     noteInjection,
-    async call(name, args = {}) {
+    async call(name, args = {}, callOptions = {}) {
       const handler = handlers[name]
       if (!handler) throw new Error(`内置存储不支持工具 ${name}`)
-      return handler(args)
+      return handler(args, callOptions)
     },
     async status() {
       let statsValue = null
@@ -2485,13 +2806,17 @@ Leave out anything you would not change. If nothing should change, answer {}.`
       return {
         ok: true,
         backend: 'embedded',
-        version: '0.7.0',
+        version: VERSION,
         port: null,
         tools: Object.keys(handlers).length,
         stats: statsValue
       }
     },
     close() {
+      if (tickTimeout) clearTimeout(tickTimeout)
+      if (tickInterval) clearInterval(tickInterval)
+      tickTimeout = null
+      tickInterval = null
       db.close()
     }
   }
