@@ -1467,7 +1467,7 @@ export async function createEmbeddedBackend(options = {}) {
           Number.isFinite(startedAt) && startedAt > 0 ? Math.floor(startedAt) : null,
           Number.isFinite(endedAt) && endedAt > 0 ? Math.floor(endedAt) : null,
           sync.lastTs ?? lastMessageAt,
-          titleArg || existing.title || title,
+          existing.title || titleArg || title,
           rawPath,
           sync.count,
           sync.toolCalls,
@@ -2344,6 +2344,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
         const byNum = new Map(rows.map((r, i) => [i + 1, r]))
         const merges = Array.isArray(obj.merge) ? obj.merge : []
         const archives = Array.isArray(obj.archive) ? obj.archive : []
+        const applied = []
         db.tx(() => {
           for (const m of merges) {
             const ids = [
@@ -2405,7 +2406,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
             }
             note('updated', 1)
             recordTidyMerge(runId, ids.map((n) => byNum.get(n).id), from, text, newId, now)
-            changes.push({
+            applied.push({
               action: 'merge',
               ids: ids.map((n) => byNum.get(n).id),
               from,
@@ -2430,7 +2431,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
             if (Number(res?.changes) === 0) continue
             note('cleaned', 1, 'tidy')
             recordTidyArchive(runId, row.id, row.status, String(a.why ?? '').slice(0, 300), now)
-            changes.push({
+            applied.push({
               action: 'archive',
               id: row.id,
               from: row.status,
@@ -2439,6 +2440,7 @@ Leave out anything you would not change. If nothing should change, answer {}.`
             })
           }
         })
+        changes.push(...applied)
       }
       distill.dreamt = Date.now()
     } catch (err) {
