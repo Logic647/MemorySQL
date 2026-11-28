@@ -827,7 +827,11 @@ test('文件权限：数据目录 0700，库与设置 0600（POSIX）', async (t
   const dir = path.join(tempDir('msql-modes-'), 'memorysql')
   const backend = await createEmbeddedBackend({ dataDir: dir })
   t.after(() => {
-    backend.close()
+    try {
+      backend.close()
+    } catch {
+      /* already closed */
+    }
     cleanup(path.dirname(dir))
   })
   await backend.call('memory_write', { kind: 'fact', content: '权限测试' })

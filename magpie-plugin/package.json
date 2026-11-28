@@ -1,7 +1,7 @@
 {
   "name": "@logic647/tools-memorysql",
   "version": "0.7.1",
-  "description": "Cross-agent session archive and project handoff inside magpie: a built-in local SQLite knowledge base with per-agent memory injection, memory activity and recall stats, LLM project summaries and memory tidying with undo, conversation capture, 10 memory/session tools, and a MemorySQL page. No separate app needed.",
+  "description": "Cross-agent session archive and project handoff inside magpie: a built-in local SQLite knowledge base that archives local agent conversations by default (capture: false opts out), per-agent memory injection, memory activity and recall stats, LLM project summaries and memory tidying with undo, 10 memory/session tools, and a MemorySQL page. No separate app needed.",
   "type": "module",
   "main": "./index.mjs",
   "files": [

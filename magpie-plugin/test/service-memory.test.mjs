@@ -128,7 +128,7 @@ test('页面搜索返回结构化命中；会话可从页面删除', async (t) =
   const auth = { 'x-memorysql-token': token, 'content-type': 'application/json' }
 
   // 页面服务与测试共用同一个 embedded 后端实例（getBackend 的缓存 key 相同）
-  const backend = await getBackend({ backend: 'embedded', dataDir: ':memory:' })
+  const backend = await getBackend({ backend: 'embedded', dataDir: ':memory:', llm })
   const imported = JSON.parse(
     await backend.call('memory_import_session', {
       agent: 'zcode',

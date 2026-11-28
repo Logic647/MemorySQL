@@ -9,7 +9,14 @@ let cached = null
 
 export async function getBackend(options = {}) {
   const kind = options.backend === 'app' ? 'app' : 'embedded'
-  const key = [kind, options.dataDir ?? '', options.port ?? '', options.endpoint ?? ''].join('\0')
+  // 测试会注入 mock LLM；把它算进缓存键，避免同一 dataDir 的 mock/真实后端串用。
+  const key = [
+    kind,
+    options.dataDir ?? '',
+    options.port ?? '',
+    options.endpoint ?? '',
+    options.llm ? 'llm' : ''
+  ].join('\0')
   if (cached && cached.key === key) return cached.promise
   const promise =
     kind === 'app' ? Promise.resolve(createAppBackend(options)) : createEmbeddedBackend(options)
